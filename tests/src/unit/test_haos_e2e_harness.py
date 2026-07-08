@@ -91,6 +91,16 @@ def test_build_image_injects_enabled_esphome_mcp_entry(tmp_path: Path) -> None:
     }
 
 
+def test_build_image_detects_store_only_addon_metadata_as_not_installed() -> None:
+    """Supervisor can return add-on info with state=unknown before install."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+
+    assert build_image._addon_is_installed(None) is False
+    assert build_image._addon_is_installed({"state": "unknown", "options": {}}) is False
+    assert build_image._addon_is_installed({"state": "started", "installed": False}) is False
+    assert build_image._addon_is_installed({"state": "started", "options": {}}) is True
+
+
 def test_streamable_http_parser_handles_json_and_multiline_sse() -> None:
     """Streamable HTTP parsing accepts JSON bodies and skips non-result SSE events."""
     streamable_http = _load_module("esphome_mcp_test_streamable_http", STREAMABLE_HTTP_PATH)
