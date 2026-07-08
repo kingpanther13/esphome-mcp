@@ -670,6 +670,15 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
     )
 
 
+def _remove_runtime_artifacts(config_dir: Path) -> None:
+    """Drop files from the first boot that must not be baked into the image."""
+    for relative in (".ha_run.lock", ".HA_RESTORE"):
+        path = config_dir / relative
+        if path.exists():
+            path.unlink()
+            LOG.info("Removed stale Home Assistant runtime artifact %s", relative)
+
+
 def bake_component_into_config(qcow2: Path) -> None:
     """Copy live HA config out, inject this component, and tar it back in."""
     repo_root = Path(__file__).resolve().parent.parent.parent
@@ -711,6 +720,7 @@ def bake_component_into_config(qcow2: Path) -> None:
 
         _inject_esphome_mcp_entry(config_dir)
         _inject_esphome_registry_fixtures(config_dir)
+        _remove_runtime_artifacts(config_dir)
 
         db_src = config_dir / "home-assistant_v2.db"
         if db_src.exists():
