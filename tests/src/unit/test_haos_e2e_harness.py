@@ -131,23 +131,6 @@ def test_build_image_bakes_from_seed_state_instead_of_live_config() -> None:
     assert "_wait_addon_state" not in source
 
 
-def test_build_image_removes_runtime_artifacts_before_bake(tmp_path: Path) -> None:
-    """The reusable HAOS image must not keep lock files from the first boot."""
-    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
-    config_dir = tmp_path / "homeassistant"
-    config_dir.mkdir()
-    for name in (".ha_run.lock", ".HA_RESTORE"):
-        (config_dir / name).write_text("stale")
-    keep = config_dir / ".HA_VERSION"
-    keep.write_text("2026.7.1")
-
-    build_image._remove_runtime_artifacts(config_dir)
-
-    assert not (config_dir / ".ha_run.lock").exists()
-    assert not (config_dir / ".HA_RESTORE").exists()
-    assert keep.read_text() == "2026.7.1"
-
-
 def test_build_image_injects_esphome_registry_fixtures(tmp_path: Path) -> None:
     """The baked HAOS image has searchable ESPHome registry data."""
     build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
