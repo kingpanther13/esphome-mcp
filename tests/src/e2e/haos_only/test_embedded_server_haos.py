@@ -24,14 +24,19 @@ from ..utilities.streamable_http import parse_mcp_response
 
 LOG = logging.getLogger(__name__)
 
-READY_TIMEOUT_S = 600
+HAOS_BOOT_TIMEOUT_S = 180 + 600
+WEBHOOK_READY_TIMEOUT_S = 600
+DEVICE_BUILDER_READY_TIMEOUT_S = 180
+PYTEST_TIMEOUT_S = (
+    HAOS_BOOT_TIMEOUT_S + WEBHOOK_READY_TIMEOUT_S + DEVICE_BUILDER_READY_TIMEOUT_S + 120
+)
 READY_POLL_S = 5
 
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.slow,
     pytest.mark.haos_only,
-    pytest.mark.timeout(READY_TIMEOUT_S + 180),
+    pytest.mark.timeout(PYTEST_TIMEOUT_S),
 ]
 
 
@@ -98,7 +103,7 @@ def embedded_server() -> Iterator[tuple[str, str | None]]:
         raise AssertionError(f"HAOS image does not exist: {image_path}")
 
     with boot_haos_qemu(image_path) as base_url:
-        deadline = time.monotonic() + READY_TIMEOUT_S
+        deadline = time.monotonic() + WEBHOOK_READY_TIMEOUT_S
         session_id: str | None = None
         ready = False
         while time.monotonic() < deadline:
@@ -112,7 +117,7 @@ def embedded_server() -> Iterator[tuple[str, str | None]]:
         if not ready:
             raise AssertionError(
                 "ESPHome MCP did not become reachable through the HA webhook "
-                f"within {READY_TIMEOUT_S}s at /api/webhook/"
+                f"within {WEBHOOK_READY_TIMEOUT_S}s at /api/webhook/"
                 f"{ESPHOME_MCP_SERVER_WEBHOOK_ID}."
             )
         LOG.info("ESPHome MCP webhook is ready")
@@ -240,7 +245,7 @@ class TestEmbeddedServerOnHaos:
         embedded_server: tuple[str, str | None],
     ) -> None:
         base_url, session_id = embedded_server
-        deadline = time.monotonic() + 180
+        deadline = time.monotonic() + DEVICE_BUILDER_READY_TIMEOUT_S
         last_payload: dict[str, Any] | None = None
         while time.monotonic() < deadline:
             parsed = _tool_call(
