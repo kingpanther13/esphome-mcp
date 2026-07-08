@@ -27,6 +27,7 @@ def test_hacs_metadata_exists() -> None:
     component_hacs = json.loads((COMPONENT / "hacs.json").read_text())
 
     assert root_hacs["name"] == "ESPHome MCP"
+    assert root_hacs["homeassistant"] == "2025.9.1"
     assert component_hacs["name"] == "ESPHome MCP"
 
 
