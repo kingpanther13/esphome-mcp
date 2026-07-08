@@ -334,9 +334,7 @@ async def _relay_response(
             await response.write_eof()
         return response
 
-    return web.Response(
-        status=upstream.status, body=await upstream.read(), headers=headers
-    )
+    return web.Response(status=upstream.status, body=await upstream.read(), headers=headers)
 
 
 # ---------------------------------------------------------------------------

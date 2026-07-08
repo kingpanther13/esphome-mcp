@@ -7,16 +7,19 @@ import logging
 import os
 import threading
 from contextlib import suppress
+from functools import partial
 from typing import TYPE_CHECKING, Literal
 
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    DATA_LAST_PIP_SPEC,
     DATA_SECRET_PATH,
     DEFAULT_BIND_HOST,
+    DEFAULT_PIP_SPEC,
     DEFAULT_SERVER_PORT,
-    DOMAIN,
     OPT_BIND_HOST,
+    OPT_PIP_SPEC,
     OPT_SERVER_PORT,
     SERVER_CONFIG_SUBDIR,
 )
@@ -29,14 +32,13 @@ _LOGGER = logging.getLogger(__name__)
 _READY_TIMEOUT_SECONDS = 30.0
 _READY_POLL_INTERVAL_SECONDS = 0.5
 _STOP_JOIN_TIMEOUT_SECONDS = 10.0
+_PIP_INSTALL_TIMEOUT_SECONDS = 300
 
 
 class EmbeddedServerError(Exception):
     """Raised when the in-process ESPHome MCP server cannot start."""
 
-    def __init__(
-        self, message: str, *, kind: Literal["package", "start"] = "start"
-    ) -> None:
+    def __init__(self, message: str, *, kind: Literal["package", "start"] = "start") -> None:
         """Store the message and failure kind."""
         super().__init__(message)
         self.kind = kind
@@ -52,6 +54,7 @@ class EmbeddedServerManager:
         self._port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
         self._bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
         self._secret_path = str(entry.data.get(DATA_SECRET_PATH, ""))
+        self._pip_spec = str(entry.options.get(OPT_PIP_SPEC) or DEFAULT_PIP_SPEC).strip()
         self._config_dir = hass.config.path(SERVER_CONFIG_SUBDIR)
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -75,6 +78,7 @@ class EmbeddedServerManager:
                 "Server secret path missing from the config entry; reload the integration."
             )
 
+        await self._async_ensure_package()
         await self._hass.async_add_executor_job(os.makedirs, self._config_dir, 0o755, True)
         self._thread_exc = None
         self._thread = threading.Thread(
@@ -217,3 +221,66 @@ class EmbeddedServerManager:
         with suppress(OSError, TimeoutError):
             await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
         return True
+
+    async def _async_ensure_package(self) -> None:
+        """Ensure FastMCP server dependencies are importable inside Home Assistant."""
+        from homeassistant.requirements import (
+            RequirementsNotFound,
+            async_process_requirements,
+            pip_kwargs,
+        )
+        from homeassistant.util.package import install_package
+
+        stored_spec = self._entry.data.get(DATA_LAST_PIP_SPEC)
+        importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
+        try:
+            if stored_spec == self._pip_spec and importable:
+                await async_process_requirements(
+                    self._hass,
+                    f"ESPHome MCP server ({self._pip_spec})",
+                    [self._pip_spec],
+                    is_built_in=False,
+                )
+            else:
+                kwargs = pip_kwargs(self._hass.config.config_dir)
+                kwargs["timeout"] = max(
+                    int(kwargs.get("timeout") or 0),
+                    _PIP_INSTALL_TIMEOUT_SECONDS,
+                )
+                installed = await self._hass.async_add_executor_job(
+                    partial(install_package, self._pip_spec, upgrade=True, **kwargs)
+                )
+                if not installed:
+                    raise EmbeddedServerError(
+                        f"Could not install the server requirement ({self._pip_spec!r}); "
+                        "see the Home Assistant log for pip output.",
+                        kind="package",
+                    )
+        except RequirementsNotFound as err:
+            raise EmbeddedServerError(
+                f"Could not install the server requirement ({self._pip_spec!r}): {err}",
+                kind="package",
+            ) from err
+
+        if not await self._hass.async_add_executor_job(_server_dependencies_importable):
+            raise EmbeddedServerError(
+                f"Installed the server requirement ({self._pip_spec!r}) but FastMCP "
+                "server dependencies are still not importable.",
+                kind="package",
+            )
+
+        if stored_spec != self._pip_spec:
+            self._hass.config_entries.async_update_entry(
+                self._entry,
+                data={**self._entry.data, DATA_LAST_PIP_SPEC: self._pip_spec},
+            )
+
+
+def _server_dependencies_importable() -> bool:
+    """Return True when the runtime packages needed by the server can import."""
+    try:
+        import fastmcp  # noqa: F401
+        import uvicorn  # noqa: F401
+    except ImportError:
+        return False
+    return True

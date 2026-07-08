@@ -8,6 +8,11 @@ DEFAULT_BIND_HOST = "0.0.0.0"
 BIND_HOST_ALL = "0.0.0.0"
 BIND_HOST_LOOPBACK = "127.0.0.1"
 
+# Installed at runtime through Home Assistant's requirements manager when the
+# in-process server entry is enabled. Keeping this out of manifest.json lets HAOS
+# boot with the baked entry disabled, matching ha-mcp's embedded server pattern.
+DEFAULT_PIP_SPEC = "fastmcp==3.4.2"
+
 SERVER_CONFIG_SUBDIR = ".esphome_mcp"
 
 OPT_SERVER_PORT = "server_port"
@@ -18,6 +23,7 @@ OPT_WEBHOOK_ID_OVERRIDE = "webhook_id_override"
 OPT_SECRET_PATH_OVERRIDE = "secret_path_override"
 OPT_REGENERATE_SECRETS = "regenerate_secrets"
 OPT_ENABLE_WEBHOOK = "enable_webhook"
+OPT_PIP_SPEC = "pip_spec"
 
 DATA_WEBHOOK_ID = "webhook_id"
 DATA_SECRET_PATH = "secret_path"
@@ -25,6 +31,7 @@ DATA_MANAGER = "manager"
 DATA_WEBHOOK = "webhook"
 DATA_BRINGUP_TASK = "bringup_task"
 DATA_LAST_OPTIONS = "last_options"
+DATA_LAST_PIP_SPEC = "last_pip_spec"
 
 WEBHOOK_AUTH_NONE = "none"
 WEBHOOK_AUTH_HA = "ha_auth"

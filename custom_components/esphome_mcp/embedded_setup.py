@@ -143,8 +143,7 @@ def _surface_connect_urls(
 
     if bind_host == BIND_HOST_ALL:
         urls.append(
-            f"http://<home-assistant-ip>:{port}{entry.data[DATA_SECRET_PATH]}"
-            " (direct access)"
+            f"http://<home-assistant-ip>:{port}{entry.data[DATA_SECRET_PATH]} (direct access)"
         )
 
     url_lines = "\n".join(f"- {url}" for url in urls)

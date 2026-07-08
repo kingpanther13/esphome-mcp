@@ -5,6 +5,7 @@
     "cloud",
     "esphome",
     "frontend",
+    "hassio",
     "http"
   ],
   "codeowners": [
@@ -17,8 +18,5 @@
   "documentation": "https://github.com/kingpanther13/esphome-mcp",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/kingpanther13/esphome-mcp/issues",
-  "requirements": [
-    "fastmcp==3.4.2"
-  ],
   "version": "0.1.0"
 }

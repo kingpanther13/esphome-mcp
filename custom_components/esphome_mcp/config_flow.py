@@ -20,11 +20,13 @@ from .const import (
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
     DEFAULT_BIND_HOST,
+    DEFAULT_PIP_SPEC,
     DEFAULT_SERVER_PORT,
     DOMAIN,
     OPT_BIND_HOST,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
+    OPT_PIP_SPEC,
     OPT_REGENERATE_SECRETS,
     OPT_SECRET_PATH_OVERRIDE,
     OPT_SERVER_PORT,
@@ -49,9 +51,7 @@ class EspHomeMcpConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         """Return the options flow."""
         return EspHomeMcpOptionsFlow()
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Confirm and create the single ESPHome MCP server entry."""
         await self.async_set_unique_id(_UNIQUE_ID)
         self._abort_if_unique_id_configured()
@@ -64,9 +64,7 @@ class EspHomeMcpConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
 class EspHomeMcpOptionsFlow(OptionsFlow):
     """Options flow for the in-process ESPHome MCP server."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show or apply server options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=self._normalize(user_input))
@@ -122,6 +120,10 @@ class EspHomeMcpOptionsFlow(OptionsFlow):
                     OPT_SECRET_PATH_OVERRIDE,
                     default=opts.get(OPT_SECRET_PATH_OVERRIDE, ""),
                 ): str,
+                vol.Optional(
+                    OPT_PIP_SPEC,
+                    default=opts.get(OPT_PIP_SPEC) or DEFAULT_PIP_SPEC,
+                ): str,
                 vol.Optional(OPT_REGENERATE_SECRETS, default=False): bool,
             }
         )
@@ -139,9 +141,12 @@ class EspHomeMcpOptionsFlow(OptionsFlow):
             OPT_EXTERNAL_URL,
             OPT_WEBHOOK_ID_OVERRIDE,
             OPT_SECRET_PATH_OVERRIDE,
+            OPT_PIP_SPEC,
         ):
             cleaned[key] = str(cleaned.get(key, "") or "").strip()
         cleaned[OPT_EXTERNAL_URL] = cleaned[OPT_EXTERNAL_URL].rstrip("/")
+        if cleaned[OPT_PIP_SPEC] == DEFAULT_PIP_SPEC:
+            cleaned[OPT_PIP_SPEC] = ""
         return cleaned
 
     def _connect_url_hint(self) -> str:
