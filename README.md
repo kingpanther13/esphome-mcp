@@ -20,7 +20,8 @@ The webhook URL works through Nabu Casa Remote UI because it is registered as a 
 `esp_manage_addon` is the ESPHome-focused starting point copied from ha-mcp's
 add-on management tool. It supports Supervisor lifecycle/config actions for the
 ESPHome add-on and proxies ESPHome dashboard HTTP/WebSocket calls through the
-same ingress framing headers used by Home Assistant add-on ingress.
+same Supervisor ingress-session path HA Core uses for Home Assistant add-on
+ingress.
 
 The preferred workflow tools target ESPHome Device Builder's current multiplexed
 `/ws` API (`devices/list`, `yaml/search`, `devices/get_config`,
@@ -32,7 +33,7 @@ the HA ESPHome integration registry view.
 
 ## Testing
 
-Unit tests cover Supervisor action routing, add-on ingress header construction,
+Unit tests cover Supervisor action routing, add-on ingress-session routing,
 current Device Builder WebSocket command framing, stream cancellation, and tool
 wrapper command selection. The component E2E workflow builds or restores a HAOS
 qcow2, installs ESPHome Device Builder, bakes this custom component into

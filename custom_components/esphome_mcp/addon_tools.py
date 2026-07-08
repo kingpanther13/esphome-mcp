@@ -301,36 +301,86 @@ def _normalize_path(path: str) -> str | None:
     return normalized
 
 
-def _route_for_addon(
+def _ha_core_base_url(hass: HomeAssistant) -> str:
+    """Return the loopback HA Core URL usable from inside the custom component."""
+    http = getattr(hass, "http", None)
+    port = getattr(http, "server_port", None) or 8123
+    return f"http://127.0.0.1:{port}"
+
+
+async def _create_ingress_session(hass: HomeAssistant) -> dict[str, Any]:
+    """Mint a Supervisor ingress session token through HA's hassio client."""
+    response = await _supervisor_api_call(
+        hass,
+        "/ingress/session",
+        method="POST",
+        data={},
+        timeout=30,
+    )
+    if not response.get("success"):
+        return response
+    result = response.get("result")
+    session = result.get("session") if isinstance(result, dict) else None
+    if not isinstance(session, str) or not session:
+        return _error(
+            "Supervisor returned no ingress session token.",
+            code="bad_ingress_session",
+            supervisor_response=response,
+        )
+    return {"success": True, "session": session}
+
+
+def _debug_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Redact per-call ingress credentials before returning debug payloads."""
+    safe = dict(headers)
+    if "Cookie" in safe:
+        safe["Cookie"] = "ingress_session=**REDACTED**"
+    return safe
+
+
+async def _route_for_addon(
+    hass: HomeAssistant,
     addon: dict[str, Any],
     normalized_path: str,
     *,
     port: int | None,
     websocket: bool,
 ) -> tuple[str, dict[str, str]] | dict[str, Any]:
-    """Build the direct add-on URL and ingress headers."""
+    """Build an add-on URL for the custom component runtime.
+
+    Default ingress traffic goes through HA Core's ``/api/hassio_ingress`` proxy
+    with a fresh Supervisor ingress-session cookie. ESPHome Device Builder's
+    current trusted ingress site rejects direct Core-container peers with 403,
+    so the custom component must make Supervisor the peer by using the HA Core
+    proxy. ``port`` remains an explicit direct-network escape hatch.
+    """
     addon_ip = addon.get("ip_address")
-    if not addon_ip:
-        return _error("ESPHome add-on is missing ip_address.", code="bad_addon_info")
 
     scheme = "ws" if websocket else "http"
     headers: dict[str, str] = {}
     if port is not None:
+        if not addon_ip:
+            return _error("ESPHome add-on is missing ip_address.", code="bad_addon_info")
         return f"{scheme}://{addon_ip}:{port}/{normalized_path}", headers
 
     if not addon.get("ingress"):
         return _error("ESPHome add-on does not support ingress.", code="no_ingress")
-    ingress_port = addon.get("ingress_port")
     ingress_entry = addon.get("ingress_entry")
-    if not ingress_port or not ingress_entry:
+    if not ingress_entry:
         return _error(
             "ESPHome add-on is missing ingress route details.",
             code="bad_addon_info",
         )
 
-    headers["X-Ingress-Path"] = str(ingress_entry)
-    headers["X-Hass-Source"] = "core.ingress"
-    return f"{scheme}://{addon_ip}:{ingress_port}/{normalized_path}", headers
+    session = await _create_ingress_session(hass)
+    if not session.get("success"):
+        return session
+    headers["Cookie"] = f"ingress_session={session['session']}"
+
+    base = _ha_core_base_url(hass).rstrip("/")
+    if websocket:
+        base = base.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    return f"{base}{ingress_entry}/{normalized_path}", headers
 
 
 def _parse_http_body(content_type: str, body: bytes) -> Any:
@@ -358,6 +408,7 @@ def _truncate_response(data: Any) -> tuple[Any, bool]:
 
 
 async def _call_addon_http(
+    hass: HomeAssistant,
     addon: dict[str, Any],
     *,
     slug: str,
@@ -374,7 +425,7 @@ async def _call_addon_http(
     if normalized is None:
         return _error("Path contains '..' traversal component.", code="invalid_path")
 
-    route = _route_for_addon(addon, normalized, port=port, websocket=False)
+    route = await _route_for_addon(hass, addon, normalized, port=port, websocket=False)
     if isinstance(route, dict):
         return route
     url, headers = route
@@ -412,7 +463,7 @@ async def _call_addon_http(
                 if debug:
                     result["_debug"] = {
                         "url": url,
-                        "request_headers": headers,
+                        "request_headers": _debug_headers(headers),
                         "response_headers": dict(response.headers),
                     }
                 if response.status >= 400:
@@ -468,6 +519,7 @@ async def _collect_ws(
 
 
 async def _call_addon_ws(
+    hass: HomeAssistant,
     addon: dict[str, Any],
     *,
     slug: str,
@@ -485,7 +537,7 @@ async def _call_addon_ws(
     if normalized is None:
         return _error("Path contains '..' traversal component.", code="invalid_path")
 
-    route = _route_for_addon(addon, normalized, port=port, websocket=True)
+    route = await _route_for_addon(hass, addon, normalized, port=port, websocket=True)
     if isinstance(route, dict):
         return route
     url, headers = route
@@ -538,7 +590,7 @@ async def _call_addon_ws(
         "slug": slug,
     }
     if debug:
-        result["_debug"] = {"url": url, "request_headers": headers, "body": body}
+        result["_debug"] = {"url": url, "request_headers": _debug_headers(headers), "body": body}
     return result
 
 
@@ -558,6 +610,7 @@ def _bounded_limit(limit: int, *, default: int = 100, maximum: int = 500) -> int
 
 
 async def _call_device_builder_ws_command(
+    hass: HomeAssistant,
     addon: dict[str, Any],
     *,
     slug: str,
@@ -569,7 +622,7 @@ async def _call_device_builder_ws_command(
     message_limit: int | None = None,
 ) -> dict[str, Any]:
     """Call ESPHome Device Builder's current multiplexed ``/ws`` API."""
-    route = _route_for_addon(addon, "ws", port=None, websocket=True)
+    route = await _route_for_addon(hass, addon, "ws", port=None, websocket=True)
     if isinstance(route, dict):
         return route
     url, headers = route
@@ -726,7 +779,7 @@ async def _call_device_builder_ws_command(
     if debug:
         response["_debug"] = {
             "url": url,
-            "request_headers": headers,
+            "request_headers": _debug_headers(headers),
             "server_info": server_info,
             "message_count": len(messages),
             "command_message_count": command_message_count,
@@ -760,6 +813,7 @@ async def _device_builder_command(
             slug=resolved_slug,
         )
     return await _call_device_builder_ws_command(
+        hass,
         addon,
         slug=resolved_slug,
         command=command,
@@ -1162,6 +1216,7 @@ async def manage_esphome_addon(
 
     if websocket:
         return await _call_addon_ws(
+            hass,
             addon,
             slug=resolved_slug,
             path=effective_path,
@@ -1180,6 +1235,7 @@ async def manage_esphome_addon(
             code="invalid_mode",
         )
     return await _call_addon_http(
+        hass,
         addon,
         slug=resolved_slug,
         path=effective_path,

@@ -51,6 +51,11 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
+def _hass(*, port: int = 8123) -> SimpleNamespace:
+    """Minimal HA object for route helpers that only need hass.http.server_port."""
+    return SimpleNamespace(http=SimpleNamespace(server_port=port))
+
+
 def _esphome_addon(**overrides: Any) -> dict[str, Any]:
     addon: dict[str, Any] = {
         "slug": "5c53de3b_esphome",
@@ -160,25 +165,68 @@ def _install_fake_ws(
     ws = _FakeWebSocket(frames)
     _FakeClientSession.ws = ws
     monkeypatch.setattr(addon_tools.aiohttp, "ClientSession", _FakeClientSession)
+
+    async def create_ingress_session(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "session": "test-ingress-session"}
+
+    monkeypatch.setattr(addon_tools, "_create_ingress_session", create_ingress_session)
     return ws
 
 
-def test_ingress_route_uses_home_assistant_core_headers() -> None:
-    """Ingress routing mirrors HA add-on ingress headers."""
-    route = addon_tools._route_for_addon(
-        _esphome_addon(),
-        "ws",
-        port=None,
-        websocket=True,
+def test_ingress_route_uses_home_assistant_core_proxy_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Custom-component ingress routes through HA Core with a Supervisor session."""
+
+    async def create_ingress_session(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "session": "test-ingress-session"}
+
+    monkeypatch.setattr(addon_tools, "_create_ingress_session", create_ingress_session)
+
+    route = _run(
+        addon_tools._route_for_addon(
+            _hass(port=8124),
+            _esphome_addon(),
+            "ws",
+            port=None,
+            websocket=True,
+        )
     )
 
     assert route == (
-        "ws://172.30.33.2:6052/ws",
-        {
-            "X-Ingress-Path": "/api/hassio_ingress/esphome",
-            "X-Hass-Source": "core.ingress",
-        },
+        "ws://127.0.0.1:8124/api/hassio_ingress/esphome/ws",
+        {"Cookie": "ingress_session=test-ingress-session"},
     )
+
+
+def test_direct_port_route_uses_addon_ip_without_ingress_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit direct-port mode is the only path that bypasses HA Core ingress."""
+
+    async def create_ingress_session(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("direct port routes must not mint ingress sessions")
+
+    monkeypatch.setattr(addon_tools, "_create_ingress_session", create_ingress_session)
+
+    route = _run(
+        addon_tools._route_for_addon(
+            _hass(),
+            _esphome_addon(),
+            "ws",
+            port=6052,
+            websocket=True,
+        )
+    )
+
+    assert route == ("ws://172.30.33.2:6052/ws", {})
+
+
+def test_debug_headers_redact_ingress_cookie() -> None:
+    """Debug payloads never leak the per-call Supervisor ingress session."""
+    assert addon_tools._debug_headers(
+        {"Cookie": "ingress_session=test-ingress-session", "X-Test": "ok"}
+    ) == {"Cookie": "ingress_session=**REDACTED**", "X-Test": "ok"}
 
 
 def test_explicit_install_uses_store_action_without_resolving_installed_addon(
@@ -434,6 +482,7 @@ def test_http_and_ws_proxy_reject_path_traversal(
 
     http_result = _run(
         addon_tools._call_addon_http(
+            _hass(),
             addon,
             slug="5c53de3b_esphome",
             path="/api/%2e%2e/secrets.yaml",
@@ -447,6 +496,7 @@ def test_http_and_ws_proxy_reject_path_traversal(
     )
     ws_result = _run(
         addon_tools._call_addon_ws(
+            _hass(),
             addon,
             slug="5c53de3b_esphome",
             path="/ws/../secrets",
@@ -561,6 +611,7 @@ def test_device_builder_ws_reads_server_info_then_sends_current_command(
 
     result = _run(
         addon_tools._call_device_builder_ws_command(
+            _hass(),
             _esphome_addon(),
             slug="5c53de3b_esphome",
             command="devices/list",
@@ -576,8 +627,9 @@ def test_device_builder_ws_reads_server_info_then_sends_current_command(
         "server_version": "2026.6.0",
         "requires_auth": False,
     }
-    assert _FakeClientSession.url == "ws://172.30.33.2:6052/ws"
-    assert _FakeClientSession.headers["X-Hass-Source"] == "core.ingress"
+    assert _FakeClientSession.url == "ws://127.0.0.1:8123/api/hassio_ingress/esphome/ws"
+    assert _FakeClientSession.headers["Cookie"] == "ingress_session=test-ingress-session"
+    assert result["_debug"]["request_headers"]["Cookie"] == "ingress_session=**REDACTED**"
     assert ws.sent == [{"command": "devices/list", "message_id": "esp-mcp-1", "args": {}}]
     assert ws.closed is True
 
@@ -593,6 +645,7 @@ def test_device_builder_ws_reports_untrusted_ingress_auth_failure(
 
     result = _run(
         addon_tools._call_device_builder_ws_command(
+            _hass(),
             _esphome_addon(),
             slug="5c53de3b_esphome",
             command="devices/list",
@@ -625,6 +678,7 @@ def test_device_builder_ws_reports_failure_before_server_info(
 
     result = _run(
         addon_tools._call_device_builder_ws_command(
+            _hass(),
             _esphome_addon(),
             slug="5c53de3b_esphome",
             command="devices/list",
@@ -659,6 +713,7 @@ def test_device_builder_ws_command_error_frame_returns_tool_error(
 
     result = _run(
         addon_tools._call_device_builder_ws_command(
+            _hass(),
             _esphome_addon(),
             slug="5c53de3b_esphome",
             command="devices/validate",
@@ -700,6 +755,7 @@ def test_device_builder_ws_ignores_malformed_and_unrelated_frames(
 
     result = _run(
         addon_tools._call_device_builder_ws_command(
+            _hass(),
             _esphome_addon(),
             slug="5c53de3b_esphome",
             command="devices/get_config",
@@ -744,6 +800,7 @@ def test_device_builder_ws_stream_message_limit_stops_without_terminal_event(
 
     result = _run(
         addon_tools._call_device_builder_ws_command(
+            _hass(),
             _esphome_addon(),
             slug="5c53de3b_esphome",
             command="firmware/follow_job",
@@ -778,6 +835,7 @@ def test_device_builder_stoppable_stream_sends_stop_stream(
 
     result = _run(
         addon_tools._call_device_builder_ws_command(
+            _hass(),
             _esphome_addon(),
             slug="5c53de3b_esphome",
             command="devices/logs",

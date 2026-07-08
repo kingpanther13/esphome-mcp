@@ -55,15 +55,16 @@ def test_server_defaults_are_scaffolded() -> None:
 
 
 def test_esphome_addon_tool_contract_is_scaffolded() -> None:
-    """The ESPHome add-on tool keeps the intended ha-mcp ingress shape."""
+    """The ESPHome add-on tool keeps the intended ha-mcp custom-component ingress shape."""
     addon_tools = (COMPONENT / "addon_tools.py").read_text()
 
     assert "manage_esphome_addon" in addon_tools
     assert "supervisor.send_command" in addon_tools
-    assert 'headers["X-Ingress-Path"]' in addon_tools
-    assert 'headers["X-Hass-Source"] = "core.ingress"' in addon_tools
+    assert "_create_ingress_session" in addon_tools
+    assert 'headers["Cookie"] = f"ingress_session=' in addon_tools
+    assert "/api/hassio_ingress" in addon_tools
     assert 'path or "/devices"' in addon_tools
-    assert '_route_for_addon(addon, "ws"' in addon_tools
+    assert 'await _route_for_addon(hass, addon, "ws"' in addon_tools
 
 
 def test_device_builder_specific_tools_use_current_ws_commands() -> None:
