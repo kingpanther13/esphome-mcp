@@ -149,6 +149,48 @@ def test_build_image_injects_esphome_registry_fixtures(tmp_path: Path) -> None:
     assert entity["original_device_class"] == "temperature"
 
 
+def test_build_image_preinstalls_component_manifest_requirements(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """The HAOS bake avoids a first-boot manifest-requirements install."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    config_dir = tmp_path / "homeassistant"
+    component_dir = config_dir / "custom_components" / "esphome_mcp"
+    component_dir.mkdir(parents=True)
+    (component_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "domain": "esphome_mcp",
+                "requirements": ["fastmcp==3.4.2", "fastmcp==3.4.2"],
+            }
+        )
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN202 - mirrors build helper
+        calls.append(cmd)
+        assert "PIP_EXTRA_INDEX_URL" not in kwargs["env"]
+
+    monkeypatch.setattr(build_image, "_run", fake_run)
+
+    build_image._preinstall_component_requirements(config_dir, component_dir)
+
+    target = (
+        config_dir
+        / "deps"
+        / "lib"
+        / f"python{build_image.sys.version_info.major}.{build_image.sys.version_info.minor}"
+        / "site-packages"
+    )
+    assert target.exists()
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert "--only-binary=:all:" in cmd
+    assert str(target) in cmd
+    assert cmd.count("fastmcp==3.4.2") == 1
+
+
 def test_build_image_detects_store_only_addon_metadata_as_not_installed() -> None:
     """Supervisor can return add-on info with state=unknown before install."""
     build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
