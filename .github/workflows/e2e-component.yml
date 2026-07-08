@@ -35,12 +35,18 @@ jobs:
       - name: Compute image cache key
         id: key
         run: |
+          esphome_addon_hash=$(
+            curl -fsSL https://raw.githubusercontent.com/esphome/home-assistant-addon/main/esphome/config.yaml \
+              | sha256sum | cut -d' ' -f1 | head -c16
+          )
           hash=$(git ls-tree -r HEAD \
             tests/haos_image_build \
             tests/initial_test_state \
             custom_components/esphome_mcp \
+            | { cat; echo "esphome-addon:$esphome_addon_hash"; } \
             | sha256sum | cut -d' ' -f1 | head -c16)
           echo "cache-key=esphome-mcp-haos-image-$hash" >> "$GITHUB_OUTPUT"
+          echo "esphome-addon-hash=$esphome_addon_hash" >> "$GITHUB_OUTPUT"
 
       - name: Restore image from cache
         id: restore-cache
@@ -51,7 +57,7 @@ jobs:
 
       - name: Report image acquisition path
         run: |
-          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }}"
+          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }}"
 
       - name: Install QEMU, OVMF, and libguestfs
         run: |

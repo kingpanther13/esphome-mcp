@@ -35,6 +35,55 @@ PYTEST_TIMEOUT_S = (
     HAOS_BOOT_TIMEOUT_S + WEBHOOK_READY_TIMEOUT_S + DEVICE_BUILDER_READY_TIMEOUT_S + 120
 )
 READY_POLL_S = 5
+DEVICE_BUILDER_CONFIG_TIMEOUT_S = 180
+FIRMWARE_JOB_TIMEOUT_S = 120
+
+EXPECTED_ESP_TOOLS = {
+    "esp_overview",
+    "esp_list_devices",
+    "esp_list_entities",
+    "esp_manage_addon",
+    "esp_dashboard_devices",
+    "esp_search_yaml",
+    "esp_get_yaml",
+    "esp_update_yaml",
+    "esp_validate_yaml",
+    "esp_device_logs",
+    "esp_compile_firmware",
+    "esp_install_firmware",
+    "esp_firmware_jobs",
+    "esp_get_firmware_job",
+    "esp_follow_firmware_job",
+}
+
+E2E_DEVICE_NAME = "ESP MCP E2E"
+E2E_CONFIGURATION = "esp-mcp-e2e.yaml"
+E2E_MARKER = "ESP MCP E2E Temperature"
+E2E_UPDATED_MARKER = "ESP MCP E2E Humidity"
+E2E_YAML = """\
+esphome:
+  name: esp-mcp-e2e
+  friendly_name: ESP MCP E2E
+
+host:
+
+api:
+
+logger:
+
+sensor:
+  - platform: template
+    name: ESP MCP E2E Temperature
+    id: esp_mcp_e2e_temperature
+    unit_of_measurement: C
+    accuracy_decimals: 1
+    lambda: return 21.5;
+    update_interval: 60s
+"""
+E2E_UPDATED_YAML = E2E_YAML.replace(E2E_MARKER, E2E_UPDATED_MARKER).replace(
+    "esp_mcp_e2e_temperature",
+    "esp_mcp_e2e_humidity",
+)
 
 pytestmark = [
     pytest.mark.e2e,
@@ -97,7 +146,7 @@ def _initialize(base_url: str) -> tuple[bool, str | None]:
 
 
 @pytest.fixture(scope="module")
-def embedded_server() -> Iterator[tuple[str, str | None]]:
+def embedded_server() -> Iterator[tuple[str, str | None, str]]:
     """Boot HAOS, enable the baked ESPHome MCP entry, and wait for its webhook."""
     image_raw = os.environ.get(HAOS_IMAGE_ENV)
     if not image_raw:
@@ -134,7 +183,8 @@ def embedded_server() -> Iterator[tuple[str, str | None]]:
                     "and supervisor-runtime.log in the HAOS diagnostics artifact."
                 )
             LOG.info("ESPHome MCP webhook is ready")
-            yield base_url, session_id
+            configuration = _prepare_device_builder_fixture(base_url, session_id)
+            yield base_url, session_id, configuration
         finally:
             collect_runtime_logs(base_url, token)
 
@@ -144,6 +194,8 @@ def _tool_call(
     session_id: str | None,
     name: str,
     arguments: dict[str, Any] | None = None,
+    *,
+    timeout: float = 60.0,
 ) -> dict[str, Any]:
     resp = _mcp_post(
         base_url,
@@ -154,6 +206,7 @@ def _tool_call(
             "params": {"name": name, "arguments": arguments or {}},
         },
         session_id=session_id,
+        timeout=timeout,
     )
     parsed = _parse_mcp(resp)
     assert parsed is not None, f"unparseable tools/call response: {resp.text[:500]}"
@@ -177,12 +230,150 @@ def _tool_payload(parsed: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _device_builder_command(
+    base_url: str,
+    session_id: str | None,
+    command: str,
+    args: dict[str, Any],
+    *,
+    message_limit: int = 2,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    parsed = _tool_call(
+        base_url,
+        session_id,
+        "esp_manage_addon",
+        {
+            "path": "/ws",
+            "websocket": True,
+            "wait_for_close": True,
+            "message_limit": message_limit,
+            "body": {
+                "command": command,
+                "message_id": "haos-e2e-command",
+                "args": args,
+            },
+            "debug": True,
+            "timeout": int(timeout),
+        },
+        timeout=timeout,
+    )
+    payload = _tool_payload(parsed)
+    assert payload["success"] is True, payload
+    messages = payload.get("messages", [])
+    assert isinstance(messages, list), payload
+    server_info = next(
+        (
+            message
+            for message in messages
+            if isinstance(message, dict) and "server_version" in message
+        ),
+        None,
+    )
+    assert isinstance(server_info, dict), payload
+    assert server_info.get("requires_auth") is False, payload
+    assert server_info.get("ha_ingress") is True, payload
+    matching = [
+        message
+        for message in messages
+        if isinstance(message, dict) and message.get("message_id") == "haos-e2e-command"
+    ]
+    assert matching, payload
+    for message in matching:
+        if "error_code" in message:
+            raise AssertionError(message)
+        if "result" in message:
+            return message
+        if message.get("event") == "result":
+            return message
+    raise AssertionError(payload)
+
+
+def _prepare_device_builder_fixture(base_url: str, session_id: str | None) -> str:
+    create = _device_builder_command(
+        base_url,
+        session_id,
+        "devices/create",
+        {
+            "name": E2E_DEVICE_NAME,
+            "file_content": E2E_YAML,
+            "overwrite": True,
+        },
+        timeout=DEVICE_BUILDER_CONFIG_TIMEOUT_S,
+    )
+    result = create.get("result")
+    assert isinstance(result, dict), create
+    configuration = str(result.get("configuration") or "")
+    assert configuration == E2E_CONFIGURATION, create
+
+    deadline = time.monotonic() + DEVICE_BUILDER_READY_TIMEOUT_S
+    last_payload: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        last_payload = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_dashboard_devices",
+                {"query": E2E_DEVICE_NAME, "limit": 10, "debug": True},
+            )
+        )
+        if last_payload.get("success") is True and any(
+            device.get("configuration") == configuration
+            for device in last_payload.get("configured", [])
+            if isinstance(device, dict)
+        ):
+            return configuration
+        time.sleep(5)
+
+    raise AssertionError(f"ESPHome Device Builder did not list {configuration!r}: {last_payload}")
+
+
+def _assert_device_builder_configured(
+    payload: dict[str, Any],
+    configuration: str,
+) -> None:
+    assert payload["success"] is True, payload
+    assert "configured_count" in payload
+    assert "configured" in payload
+    assert any(
+        device.get("configuration") == configuration
+        for device in payload.get("configured", [])
+        if isinstance(device, dict)
+    ), payload
+
+
+def _job_id_from_payload(payload: dict[str, Any]) -> str:
+    assert payload["success"] is True, payload
+    job = payload.get("job")
+    assert isinstance(job, dict), payload
+    job_id = str(job.get("job_id") or "")
+    assert job_id, payload
+    return job_id
+
+
+def _cancel_firmware_job(
+    base_url: str,
+    session_id: str | None,
+    job_id: str,
+) -> None:
+    try:
+        _device_builder_command(
+            base_url,
+            session_id,
+            "firmware/cancel",
+            {"job_id": job_id},
+            timeout=FIRMWARE_JOB_TIMEOUT_S,
+        )
+    except AssertionError as err:
+        LOG.warning("Could not cancel firmware job %s: %s", job_id, err)
+
+
 class TestEmbeddedServerOnHaos:
     def test_initialize_and_list_esp_tools(
         self,
-        embedded_server: tuple[str, str | None],
+        embedded_server: tuple[str, str | None, str],
     ) -> None:
-        base_url, session_id = embedded_server
+        base_url, session_id, _configuration = embedded_server
         resp = _mcp_post(
             base_url,
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
@@ -194,20 +385,14 @@ class TestEmbeddedServerOnHaos:
         tools = parsed["result"].get("tools", [])
         names = {tool.get("name") for tool in tools}
 
-        assert "esp_overview" in names
-        assert "esp_list_devices" in names
-        assert "esp_list_entities" in names
-        assert "esp_manage_addon" in names
-        assert "esp_dashboard_devices" in names
-        assert "esp_search_yaml" in names
-        assert "esp_compile_firmware" in names
+        assert EXPECTED_ESP_TOOLS <= names
         assert all(str(name).startswith("esp_") for name in names)
 
     def test_overview_tool_runs_inside_haos(
         self,
-        embedded_server: tuple[str, str | None],
+        embedded_server: tuple[str, str | None, str],
     ) -> None:
-        base_url, session_id = embedded_server
+        base_url, session_id, _configuration = embedded_server
         parsed = _tool_call(base_url, session_id, "esp_overview")
         payload = _tool_payload(parsed)
 
@@ -217,9 +402,9 @@ class TestEmbeddedServerOnHaos:
 
     def test_home_assistant_esphome_registry_search_tools(
         self,
-        embedded_server: tuple[str, str | None],
+        embedded_server: tuple[str, str | None, str],
     ) -> None:
-        base_url, session_id = embedded_server
+        base_url, session_id, _configuration = embedded_server
         devices = _tool_payload(
             _tool_call(
                 base_url,
@@ -257,9 +442,9 @@ class TestEmbeddedServerOnHaos:
 
     def test_device_builder_list_tool_reaches_supervisor_addon_ingress(
         self,
-        embedded_server: tuple[str, str | None],
+        embedded_server: tuple[str, str | None, str],
     ) -> None:
-        base_url, session_id = embedded_server
+        base_url, session_id, configuration = embedded_server
         deadline = time.monotonic() + DEVICE_BUILDER_READY_TIMEOUT_S
         last_payload: dict[str, Any] | None = None
         while time.monotonic() < deadline:
@@ -275,6 +460,229 @@ class TestEmbeddedServerOnHaos:
             time.sleep(5)
 
         assert last_payload is not None
-        assert last_payload["success"] is True, last_payload
-        assert "configured_count" in last_payload
-        assert "configured" in last_payload
+        _assert_device_builder_configured(last_payload, configuration)
+
+        legacy_devices = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_manage_addon",
+                {"path": "/devices", "debug": True},
+            )
+        )
+        assert legacy_devices["success"] is True, legacy_devices
+        assert legacy_devices["status_code"] == 200, legacy_devices
+        response = legacy_devices.get("response")
+        assert isinstance(response, dict), legacy_devices
+        assert "configured" in response
+        assert "importable" in response
+
+    def test_device_builder_yaml_tools_round_trip(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, session_id, configuration = embedded_server
+
+        read_original = _tool_payload(
+            _tool_call(base_url, session_id, "esp_get_yaml", {"configuration": configuration})
+        )
+        assert read_original["success"] is True, read_original
+        assert E2E_MARKER in read_original.get("content", "")
+
+        search_original = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_search_yaml",
+                {"query": E2E_MARKER, "max_results": 10},
+            )
+        )
+        assert search_original["success"] is True, search_original
+        assert search_original["count"] >= 1, search_original
+
+        updated = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_update_yaml",
+                {
+                    "configuration": configuration,
+                    "content": E2E_UPDATED_YAML,
+                    "allow_wipe": False,
+                },
+            )
+        )
+        assert updated["success"] is True, updated
+
+        read_updated = _tool_payload(
+            _tool_call(base_url, session_id, "esp_get_yaml", {"configuration": configuration})
+        )
+        assert read_updated["success"] is True, read_updated
+        assert E2E_UPDATED_MARKER in read_updated.get("content", "")
+
+        search_updated = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_search_yaml",
+                {"query": E2E_UPDATED_MARKER, "max_results": 10},
+            )
+        )
+        assert search_updated["success"] is True, search_updated
+        assert search_updated["count"] >= 1, search_updated
+
+    def test_device_builder_validate_tool_runs_on_created_device(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, session_id, configuration = embedded_server
+        payload = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_validate_yaml",
+                {
+                    "configuration": configuration,
+                    "message_limit": 200,
+                    "debug": True,
+                },
+                timeout=300,
+            )
+        )
+
+        assert payload["success"] is True, payload
+        assert payload["command"] == "devices/validate"
+        terminal = payload.get("terminal_event")
+        assert isinstance(terminal, dict), payload
+        assert terminal.get("event") == "result", payload
+        data = terminal.get("data")
+        assert isinstance(data, dict), payload
+        assert data.get("success") is True or data.get("code") == 0, payload
+
+    def test_device_builder_log_tool_reports_offline_result(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, session_id, configuration = embedded_server
+        payload = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_device_logs",
+                {
+                    "configuration": configuration,
+                    "port": "OTA",
+                    "message_limit": 25,
+                    "timeout": 30,
+                    "debug": True,
+                },
+                timeout=90,
+            )
+        )
+
+        assert payload["success"] is True, payload
+        assert payload["command"] == "devices/logs"
+        assert payload["closed_by"] in {
+            "event_result",
+            "message_limit",
+            "silence",
+            "timeout",
+        }, payload
+
+    def test_device_builder_firmware_job_tools_round_trip(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, session_id, configuration = embedded_server
+        compile_payload = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_compile_firmware",
+                {
+                    "configuration": configuration,
+                    "force_local": True,
+                    "debug": True,
+                },
+                timeout=FIRMWARE_JOB_TIMEOUT_S,
+            )
+        )
+        compile_job_id = _job_id_from_payload(compile_payload)
+        try:
+            jobs = _tool_payload(
+                _tool_call(
+                    base_url,
+                    session_id,
+                    "esp_firmware_jobs",
+                    {"configuration": configuration, "limit": 10},
+                    timeout=FIRMWARE_JOB_TIMEOUT_S,
+                )
+            )
+            assert jobs["success"] is True, jobs
+            assert any(
+                job.get("job_id") == compile_job_id
+                for job in jobs.get("jobs", [])
+                if isinstance(job, dict)
+            ), jobs
+
+            single = _tool_payload(
+                _tool_call(
+                    base_url,
+                    session_id,
+                    "esp_get_firmware_job",
+                    {"job_id": compile_job_id},
+                    timeout=FIRMWARE_JOB_TIMEOUT_S,
+                )
+            )
+            assert single["success"] is True, single
+            assert single["found"] is True, single
+            assert single["job"]["job_id"] == compile_job_id
+
+            follow = _tool_payload(
+                _tool_call(
+                    base_url,
+                    session_id,
+                    "esp_follow_firmware_job",
+                    {
+                        "job_id": compile_job_id,
+                        "message_limit": 25,
+                        "timeout": 60,
+                    },
+                    timeout=FIRMWARE_JOB_TIMEOUT_S,
+                )
+            )
+            assert follow["success"] is True, follow
+            assert follow["job_id"] == compile_job_id
+        finally:
+            _cancel_firmware_job(base_url, session_id, compile_job_id)
+
+    def test_device_builder_install_tool_queues_or_reports_offline_precondition(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, session_id, configuration = embedded_server
+        payload = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_install_firmware",
+                {
+                    "configuration": configuration,
+                    "port": "OTA",
+                    "force_local": True,
+                    "debug": True,
+                },
+                timeout=FIRMWARE_JOB_TIMEOUT_S,
+            )
+        )
+
+        if payload.get("success"):
+            job_id = _job_id_from_payload(payload)
+            _cancel_firmware_job(base_url, session_id, job_id)
+            return
+
+        assert payload.get("error_code") in {
+            "invalid_args",
+            "precondition_failed",
+            "unavailable",
+        }, payload

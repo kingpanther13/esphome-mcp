@@ -320,6 +320,74 @@ def test_manage_addon_defaults_to_devices_http_proxy(
     assert seen["method"] == "GET"
 
 
+def test_http_proxy_devices_endpoint_sends_json_body_and_redacts_debug_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Device Builder /devices proxy sends JSON bodies through trusted ingress."""
+    captured: dict[str, Any] = {}
+
+    async def create_ingress_session(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "session": "test-ingress-session"}
+
+    class FakeResponse:
+        status = 200
+        headers = {"Content-Type": "application/json; charset=utf-8"}
+
+        async def read(self) -> bytes:
+            return b'{"devices": [{"name": "kitchen"}]}'
+
+    class FakeRequestContext:
+        async def __aenter__(self) -> FakeResponse:
+            return FakeResponse()
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    class FakeHTTPClientSession:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            return None
+
+        async def __aenter__(self) -> FakeHTTPClientSession:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def request(self, method: str, url: str, **kwargs: Any) -> FakeRequestContext:
+            captured.update({"method": method, "url": url, **kwargs})
+            return FakeRequestContext()
+
+    monkeypatch.setattr(addon_tools, "_create_ingress_session", create_ingress_session)
+    monkeypatch.setattr(addon_tools.aiohttp, "ClientSession", FakeHTTPClientSession)
+
+    result = _run(
+        addon_tools._call_addon_http(
+            _hass(port=8124),
+            _esphome_addon(),
+            slug="5c53de3b_esphome",
+            path="/devices",
+            method="post",
+            body={"configuration": "kitchen.yaml"},
+            port=None,
+            timeout=30,
+            debug=True,
+            request_headers={"Cookie": "caller=ignored", "X-Test": "ok"},
+        )
+    )
+
+    assert result["success"] is True
+    assert result["response"] == {"devices": [{"name": "kitchen"}]}
+    assert captured["method"] == "POST"
+    assert captured["url"] == "http://127.0.0.1:8124/api/hassio_ingress/esphome/devices"
+    assert captured["headers"] == {
+        "Cookie": "ingress_session=test-ingress-session",
+        "X-Test": "ok",
+    }
+    assert captured["json"] == {"configuration": "kitchen.yaml"}
+    assert "data" not in captured
+    assert result["_debug"]["request_headers"]["Cookie"] == "ingress_session=**REDACTED**"
+
+
 def test_manage_addon_rejects_non_esphome_store_install_slug(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -739,6 +807,44 @@ def test_device_builder_ws_command_error_frame_returns_tool_error(
     ]
 
 
+def test_generic_ws_proxy_sends_json_command_body_and_pages_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Generic /ws proxy mode forwards caller envelopes and applies paging."""
+    ws = _install_fake_ws(
+        monkeypatch,
+        [
+            _text_frame({"message_id": "one", "result": 1}),
+            _text_frame({"message_id": "two", "result": 2}),
+            _text_frame({"message_id": "three", "result": 3}),
+        ],
+    )
+    body = {"command": "devices/list", "message_id": "caller-1", "args": {}}
+
+    result = _run(
+        addon_tools._call_addon_ws(
+            _hass(),
+            _esphome_addon(),
+            slug="5c53de3b_esphome",
+            path="/ws",
+            body=body,
+            port=None,
+            timeout=30,
+            debug=True,
+            wait_for_close=True,
+            message_limit=1,
+            message_offset=1,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["messages"] == [{"message_id": "two", "result": 2}]
+    assert result["message_count"] == 1
+    assert result["closed_by"] == "message_limit"
+    assert result["_debug"]["url"] == "ws://127.0.0.1:8123/api/hassio_ingress/esphome/ws"
+    assert ws.sent == [body]
+
+
 def test_device_builder_ws_ignores_malformed_and_unrelated_frames(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -817,6 +923,57 @@ def test_device_builder_ws_stream_message_limit_stops_without_terminal_event(
     assert result["events"] == [
         {"message_id": "esp-mcp-1", "event": "output", "data": "one"},
         {"message_id": "esp-mcp-1", "event": "output", "data": "two"},
+    ]
+    assert result["_debug"]["stop_stream_sent"] is False
+
+
+def test_device_builder_ws_result_event_terminates_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streaming Device Builder commands stop cleanly on result events."""
+    _install_fake_ws(
+        monkeypatch,
+        [
+            _text_frame({"server_version": "2026.6.0", "requires_auth": False}),
+            _text_frame({"message_id": "esp-mcp-1", "event": "output", "data": "ok"}),
+            _text_frame(
+                {
+                    "message_id": "esp-mcp-1",
+                    "event": "result",
+                    "data": {"success": True},
+                }
+            ),
+        ],
+    )
+
+    result = _run(
+        addon_tools._call_device_builder_ws_command(
+            _hass(),
+            _esphome_addon(),
+            slug="5c53de3b_esphome",
+            command="devices/validate",
+            args={"configuration": "kitchen.yaml"},
+            timeout=30,
+            debug=True,
+            stream=True,
+            message_limit=10,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["closed_by"] == "event_result"
+    assert result["terminal_event"] == {
+        "message_id": "esp-mcp-1",
+        "event": "result",
+        "data": {"success": True},
+    }
+    assert result["events"] == [
+        {"message_id": "esp-mcp-1", "event": "output", "data": "ok"},
+        {
+            "message_id": "esp-mcp-1",
+            "event": "result",
+            "data": {"success": True},
+        },
     ]
     assert result["_debug"]["stop_stream_sent"] is False
 
@@ -1331,6 +1488,104 @@ def test_firmware_jobs_wrapper_filters_results(
                 "configuration": "kitchen.yaml",
             }
         ],
+    }
+
+
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [
+        (
+            "firmware/compile",
+            {"configuration": "kitchen.yaml", "force_local": True},
+        ),
+        (
+            "firmware/install",
+            {
+                "configuration": "kitchen.yaml",
+                "port": "OTA",
+                "force_local": True,
+                "bootloader": False,
+            },
+        ),
+    ],
+)
+def test_firmware_queue_wrapper_returns_job_and_preserves_args(
+    monkeypatch: pytest.MonkeyPatch,
+    command: str,
+    args: dict[str, Any],
+) -> None:
+    """Firmware queue helper preserves compile/install command payloads."""
+    seen: dict[str, Any] = {}
+    job = {"job_id": "job-1", "status": "queued"}
+
+    async def device_builder_command(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        seen.update(kwargs)
+        return {"success": True, "result": job}
+
+    monkeypatch.setattr(addon_tools, "_device_builder_command", device_builder_command)
+
+    result = _run(
+        addon_tools.queue_device_builder_firmware_job(
+            object(),
+            slug="5c53de3b_esphome",
+            command=command,
+            args=args,
+            timeout=60,
+            debug=True,
+        )
+    )
+
+    assert result == {"success": True, "job": job}
+    assert seen == {
+        "slug": "5c53de3b_esphome",
+        "command": command,
+        "args": args,
+        "timeout": 60,
+        "debug": True,
+    }
+
+
+def test_follow_job_uses_terminal_job_output_when_stream_has_no_output_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Job following falls back to the terminal job output array."""
+    terminal_event = {
+        "event": "result",
+        "data": {"job_id": "job-1", "exit_code": 0, "output": ["one", 2]},
+    }
+
+    async def device_builder_command(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        assert kwargs["stream"] is True
+        assert kwargs["message_limit"] == 5
+        return {
+            "success": True,
+            "events": [terminal_event],
+            "terminal_event": terminal_event,
+            "closed_by": "event_result",
+        }
+
+    monkeypatch.setattr(addon_tools, "_device_builder_command", device_builder_command)
+
+    result = _run(
+        addon_tools.follow_device_builder_firmware_job(
+            object(),
+            slug=None,
+            job_id="job-1",
+            message_limit=5,
+            timeout=60,
+            debug=False,
+        )
+    )
+
+    assert result == {
+        "success": True,
+        "job_id": "job-1",
+        "output": ["one", "2"],
+        "output_line_count": 2,
+        "job": {"job_id": "job-1", "exit_code": 0, "output": ["one", 2]},
+        "exit_code": 0,
+        "terminal_event": terminal_event,
+        "closed_by": "event_result",
     }
 
 

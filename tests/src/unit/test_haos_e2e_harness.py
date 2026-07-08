@@ -100,6 +100,7 @@ def test_build_image_installs_official_esphome_device_builder_before_bake() -> N
     """The HAOS image builder installs ESPHome Device Builder before component bake."""
     build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
     source = BUILD_IMAGE_PATH.read_text()
+    workflow = E2E_COMPONENT_WORKFLOW.read_text()
 
     assert build_image.HAOS_VERSION == "18.1"
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.repo == (
@@ -110,6 +111,11 @@ def test_build_image_installs_official_esphome_device_builder_before_bake() -> N
     assert source.index("install_esphome_device_builder(ws)") < source.index(
         "bake_component_into_config(qcow2)"
     )
+    assert (
+        "raw.githubusercontent.com/esphome/home-assistant-addon/main/esphome/config.yaml"
+        in workflow
+    )
+    assert "esphome-addon-hash" in workflow
 
 
 def test_build_image_bakes_from_seed_state_instead_of_live_config() -> None:
@@ -256,10 +262,21 @@ def test_embedded_e2e_module_tracks_expected_webhook_and_tool_names() -> None:
         "esp_manage_addon",
         "esp_dashboard_devices",
         "esp_search_yaml",
+        "esp_get_yaml",
+        "esp_update_yaml",
+        "esp_validate_yaml",
+        "esp_device_logs",
         "esp_compile_firmware",
+        "esp_install_firmware",
+        "esp_firmware_jobs",
+        "esp_get_firmware_job",
+        "esp_follow_firmware_job",
     }
 
     assert expected_tools <= string_constants
     assert "Kitchen ESPHome" in string_constants
     assert "Kitchen ESPHome Temperature" in string_constants
+    assert "ESP MCP E2E" in string_constants
+    assert "devices/create" in string_constants
+    assert "firmware/cancel" in string_constants
     assert "ESPHOME_MCP_SERVER_WEBHOOK_ID" in EMBEDDED_E2E_PATH.read_text()
