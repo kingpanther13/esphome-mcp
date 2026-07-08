@@ -5,6 +5,7 @@
     "cloud",
     "esphome",
     "frontend",
+    "hassio",
     "http"
   ],
   "codeowners": [

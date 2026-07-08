@@ -15,6 +15,7 @@ def test_manifest_is_hacs_ready() -> None:
 
     assert manifest["domain"] == "esphome_mcp"
     assert manifest["config_flow"] is True
+    assert "hassio" in manifest["after_dependencies"]
     assert "webhook" in manifest["dependencies"]
     assert "fastmcp==3.4.2" in manifest["requirements"]
     assert manifest["version"] == "0.1.0"
