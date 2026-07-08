@@ -136,6 +136,7 @@ jobs:
               || echo "log glob copy failed"
           fi
           ls -laR /tmp/haos-embedded-diagnostics/ || true
+          ls -laR /tmp/haos-diagnostics/ || true
           python scripts/redact_diagnostics_secrets.py /tmp/haos-embedded-diagnostics
 
       - name: Upload HAOS embedded diagnostics
@@ -145,6 +146,7 @@ jobs:
           name: haos-embedded-diagnostics
           path: |
             /tmp/haos-embedded-diagnostics/
+            /tmp/haos-diagnostics/
             /tmp/haos-e2e-serial.log
           if-no-files-found: warn
           retention-days: 7

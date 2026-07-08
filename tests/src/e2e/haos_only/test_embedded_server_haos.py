@@ -15,9 +15,13 @@ import requests
 from haos_runtime import (
     ESPHOME_FIXTURE_DEVICE_ID,
     ESPHOME_FIXTURE_ENTITY_ID,
+    ESPHOME_MCP_SERVER_ENTRY_ID,
     ESPHOME_MCP_SERVER_WEBHOOK_ID,
     HAOS_IMAGE_ENV,
     boot_haos_qemu,
+    collect_runtime_logs,
+    enable_config_entry,
+    login_for_token,
 )
 
 from ..utilities.streamable_http import parse_mcp_response
@@ -94,7 +98,7 @@ def _initialize(base_url: str) -> tuple[bool, str | None]:
 
 @pytest.fixture(scope="module")
 def embedded_server() -> Iterator[tuple[str, str | None]]:
-    """Boot HAOS and wait until the baked ESPHome MCP webhook answers."""
+    """Boot HAOS, enable the baked ESPHome MCP entry, and wait for its webhook."""
     image_raw = os.environ.get(HAOS_IMAGE_ENV)
     if not image_raw:
         pytest.skip(f"{HAOS_IMAGE_ENV} is not set")
@@ -103,25 +107,36 @@ def embedded_server() -> Iterator[tuple[str, str | None]]:
         raise AssertionError(f"HAOS image does not exist: {image_path}")
 
     with boot_haos_qemu(image_path) as base_url:
-        deadline = time.monotonic() + WEBHOOK_READY_TIMEOUT_S
-        session_id: str | None = None
-        ready = False
-        while time.monotonic() < deadline:
-            try:
-                ready, session_id = _initialize(base_url)
-            except requests.exceptions.RequestException:
-                ready = False
-            if ready:
-                break
-            time.sleep(READY_POLL_S)
-        if not ready:
-            raise AssertionError(
-                "ESPHome MCP did not become reachable through the HA webhook "
-                f"within {WEBHOOK_READY_TIMEOUT_S}s at /api/webhook/"
-                f"{ESPHOME_MCP_SERVER_WEBHOOK_ID}."
+        token = login_for_token(base_url)
+        try:
+            enable_config_entry(base_url, token, ESPHOME_MCP_SERVER_ENTRY_ID)
+            LOG.info(
+                "Enabled %s; waiting for the ESPHome MCP webhook",
+                ESPHOME_MCP_SERVER_ENTRY_ID,
             )
-        LOG.info("ESPHome MCP webhook is ready")
-        yield base_url, session_id
+            deadline = time.monotonic() + WEBHOOK_READY_TIMEOUT_S
+            session_id: str | None = None
+            ready = False
+            while time.monotonic() < deadline:
+                try:
+                    ready, session_id = _initialize(base_url)
+                except requests.exceptions.RequestException:
+                    ready = False
+                if ready:
+                    break
+                time.sleep(READY_POLL_S)
+            if not ready:
+                raise AssertionError(
+                    "ESPHome MCP did not become reachable through the HA webhook "
+                    f"within {WEBHOOK_READY_TIMEOUT_S}s of enabling "
+                    f"{ESPHOME_MCP_SERVER_ENTRY_ID} at /api/webhook/"
+                    f"{ESPHOME_MCP_SERVER_WEBHOOK_ID}. See ha-core-runtime.log "
+                    "and supervisor-runtime.log in the HAOS diagnostics artifact."
+                )
+            LOG.info("ESPHome MCP webhook is ready")
+            yield base_url, session_id
+        finally:
+            collect_runtime_logs(base_url, token)
 
 
 def _tool_call(

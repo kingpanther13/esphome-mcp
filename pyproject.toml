@@ -14,6 +14,7 @@ dev = [
     "pytest-timeout>=2.4",
     "requests>=2.32",
     "ruff>=0.13",
+    "websockets>=15",
 ]
 
 [tool.pytest.ini_options]

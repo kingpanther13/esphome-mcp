@@ -554,7 +554,7 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
                     "webhook_id": ESPHOME_MCP_WEBHOOK_ID,
                     "secret_path": ESPHOME_MCP_SECRET_PATH,
                 },
-                "disabled_by": None,
+                "disabled_by": "user",
                 "discovery_keys": {},
                 "domain": ESPHOME_MCP_DOMAIN,
                 "entry_id": ESPHOME_MCP_ENTRY_ID,
@@ -576,7 +576,7 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
             }
         )
     ce_path.write_text(json.dumps(ce_data, indent=2))
-    LOG.info("Injected enabled ESPHome MCP config entry (%s)", ESPHOME_MCP_ENTRY_ID)
+    LOG.info("Injected disabled ESPHome MCP config entry (%s)", ESPHOME_MCP_ENTRY_ID)
 
 
 def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
@@ -668,48 +668,6 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
     )
 
 
-def _component_requirements(component_dir: Path) -> list[str]:
-    """Read pip requirements from the custom component manifest."""
-    manifest = json.loads((component_dir / "manifest.json").read_text())
-    reqs: list[str] = []
-    for req in manifest.get("requirements", []):
-        if isinstance(req, str) and req not in reqs:
-            reqs.append(req)
-    return reqs
-
-
-def _preinstall_component_requirements(config_dir: Path, component_dir: Path) -> None:
-    """Bake custom-component requirements into Home Assistant's config deps path."""
-    reqs = _component_requirements(component_dir)
-    if not reqs:
-        return
-
-    py_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
-    target = config_dir / "deps" / "lib" / py_version / "site-packages"
-    target.mkdir(parents=True, exist_ok=True)
-    LOG.info("Preinstalling custom-component requirements into %s: %s", target, reqs)
-
-    env_without_extra_index = os.environ.copy()
-    env_without_extra_index.pop("PIP_EXTRA_INDEX_URL", None)
-    base = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--no-cache-dir",
-        "--target",
-        str(target),
-    ]
-    try:
-        _run(
-            base[:4] + ["--only-binary=:all:"] + base[4:] + reqs,
-            env=env_without_extra_index,
-        )
-    except subprocess.CalledProcessError:
-        LOG.warning("Binary-only requirement install failed; retrying with normal pip resolution")
-        _run(base + reqs)
-
-
 def bake_component_into_config(qcow2: Path) -> None:
     """Copy live HA config out, inject this component, and tar it back in."""
     repo_root = Path(__file__).resolve().parent.parent.parent
@@ -748,7 +706,6 @@ def bake_component_into_config(qcow2: Path) -> None:
             shutil.rmtree(dest)
         shutil.copytree(component_src, dest)
         LOG.info("Staged custom component %s", ESPHOME_MCP_DOMAIN)
-        _preinstall_component_requirements(config_dir, dest)
 
         _inject_esphome_mcp_entry(config_dir)
         _inject_esphome_registry_fixtures(config_dir)
