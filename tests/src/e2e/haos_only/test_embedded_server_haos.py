@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -24,6 +25,17 @@ from haos_runtime import (
     login_for_token,
 )
 
+from ..utilities.esphome_host import (
+    HAOS_HOST_GATEWAY,
+    compile_esphome,
+    connected_api,
+    host_yaml,
+    reserve_port,
+    run_binary,
+)
+from ..utilities.esphome_host import (
+    wait_for_port as wait_for_host_port,
+)
 from ..utilities.streamable_http import parse_mcp_response
 
 LOG = logging.getLogger(__name__)
@@ -84,6 +96,12 @@ E2E_UPDATED_YAML = E2E_YAML.replace(E2E_MARKER, E2E_UPDATED_MARKER).replace(
     "esp_mcp_e2e_temperature",
     "esp_mcp_e2e_humidity",
 )
+LIVE_DEVICE_NAME = "esp-mcp-e2e-live"
+LIVE_FRIENDLY_NAME = "ESP MCP E2E Live"
+LIVE_CONFIGURATION = f"{LIVE_DEVICE_NAME}.yaml"
+LIVE_SENSOR_NAME = "ESP MCP E2E Live Sensor"
+LIVE_LOG_MARKER = "esp-mcp-e2e-live heartbeat"
+LIVE_DEVICE_TIMEOUT_S = 420
 
 pytestmark = [
     pytest.mark.e2e,
@@ -368,6 +386,207 @@ def _cancel_firmware_job(
         LOG.warning("Could not cancel firmware job %s: %s", job_id, err)
 
 
+def _ha_json(
+    base_url: str,
+    token: str,
+    method: str,
+    path: str,
+    body: dict[str, Any],
+    *,
+    timeout: float = 60.0,
+) -> dict[str, Any]:
+    response = requests.request(
+        method,
+        f"{base_url}{path}",
+        headers={"Authorization": f"Bearer {token}"},
+        json=body,
+        timeout=timeout,
+    )
+    assert response.status_code < 400, response.text[:1000]
+    data = response.json() if response.content else {}
+    assert isinstance(data, dict), data
+    return data
+
+
+def _create_live_esphome_config_entry(
+    base_url: str,
+    token: str,
+    *,
+    api_port: int,
+) -> dict[str, Any]:
+    flow = _ha_json(
+        base_url,
+        token,
+        "POST",
+        "/api/config/config_entries/flow",
+        {"handler": "esphome"},
+    )
+    flow_id = str(flow["flow_id"])
+    result = _ha_json(
+        base_url,
+        token,
+        "POST",
+        f"/api/config/config_entries/flow/{flow_id}",
+        {"host": HAOS_HOST_GATEWAY, "port": api_port},
+        timeout=90.0,
+    )
+    assert result.get("type") == "create_entry", result
+    return result
+
+
+async def _exercise_live_host_device_in_haos(
+    base_url: str,
+    session_id: str | None,
+    *,
+    tmp_path: Path,
+) -> None:
+    token = await asyncio.to_thread(login_for_token, base_url)
+    with (
+        reserve_port() as (api_port, api_socket),
+        reserve_port() as (ota_port, ota_socket),
+    ):
+        live_yaml = host_yaml(
+            api_port=api_port,
+            ota_port=ota_port,
+            name=LIVE_DEVICE_NAME,
+            friendly_name=LIVE_FRIENDLY_NAME,
+            log_marker=LIVE_LOG_MARKER,
+            sensor_name=LIVE_SENSOR_NAME,
+        )
+        create = await asyncio.to_thread(
+            _device_builder_command,
+            base_url,
+            session_id,
+            "devices/create",
+            {
+                "name": LIVE_FRIENDLY_NAME,
+                "file_content": live_yaml,
+                "overwrite": True,
+            },
+            timeout=DEVICE_BUILDER_CONFIG_TIMEOUT_S,
+        )
+        result = create.get("result")
+        assert isinstance(result, dict), create
+        configuration = str(result.get("configuration") or "")
+        assert configuration == LIVE_CONFIGURATION, create
+
+        validate = _tool_payload(
+            await asyncio.to_thread(
+                _tool_call,
+                base_url,
+                session_id,
+                "esp_validate_yaml",
+                {
+                    "configuration": configuration,
+                    "message_limit": 200,
+                    "debug": True,
+                },
+                timeout=300,
+            )
+        )
+        assert validate["success"] is True, validate
+        terminal = validate.get("terminal_event")
+        assert isinstance(terminal, dict), validate
+        terminal_data = terminal.get("data")
+        assert isinstance(terminal_data, dict), validate
+        assert terminal_data.get("success") is True or terminal_data.get("code") == 0, validate
+
+        fetched = _tool_payload(
+            await asyncio.to_thread(
+                _tool_call,
+                base_url,
+                session_id,
+                "esp_get_yaml",
+                {"configuration": configuration},
+            )
+        )
+        assert fetched["success"] is True, fetched
+        config_path = tmp_path / configuration
+        config_path.write_text(str(fetched["content"]), encoding="utf-8")
+        binary_path = await compile_esphome(config_path, tmp_path)
+        api_socket.close()
+        ota_socket.close()
+
+        async with run_binary(binary_path) as (process, _lines):
+            await wait_for_host_port(api_port)
+            assert process.returncode is None
+            async with connected_api(api_port) as client:
+                info = await client.device_info()
+            assert info.name == LIVE_DEVICE_NAME
+
+            await asyncio.to_thread(
+                _create_live_esphome_config_entry,
+                base_url,
+                token,
+                api_port=api_port,
+            )
+
+            deadline = time.monotonic() + LIVE_DEVICE_TIMEOUT_S
+            last_devices: dict[str, Any] | None = None
+            last_entities: dict[str, Any] | None = None
+            while time.monotonic() < deadline:
+                last_devices = _tool_payload(
+                    await asyncio.to_thread(
+                        _tool_call,
+                        base_url,
+                        session_id,
+                        "esp_list_devices",
+                        {
+                            "query": LIVE_FRIENDLY_NAME,
+                            "config_entry_state": "loaded",
+                            "limit": 10,
+                        },
+                    )
+                )
+                last_entities = _tool_payload(
+                    await asyncio.to_thread(
+                        _tool_call,
+                        base_url,
+                        session_id,
+                        "esp_list_entities",
+                        {
+                            "query": LIVE_SENSOR_NAME,
+                            "domain": "sensor",
+                            "state": "42",
+                            "limit": 10,
+                        },
+                    )
+                )
+                if (
+                    last_devices.get("success") is True
+                    and last_entities.get("success") is True
+                    and last_devices.get("count", 0) >= 1
+                    and last_entities.get("count", 0) >= 1
+                ):
+                    break
+                await asyncio.sleep(5)
+            else:
+                raise AssertionError(
+                    "Live ESPHome host device did not appear in HA registries: "
+                    f"devices={last_devices} entities={last_entities}"
+                )
+
+            logs = _tool_payload(
+                await asyncio.to_thread(
+                    _tool_call,
+                    base_url,
+                    session_id,
+                    "esp_device_logs",
+                    {
+                        "configuration": configuration,
+                        "port": HAOS_HOST_GATEWAY,
+                        "message_limit": 80,
+                        "timeout": 60,
+                        "debug": True,
+                    },
+                    timeout=120,
+                )
+            )
+            assert logs["success"] is True, logs
+            assert logs["command"] == "devices/logs", logs
+            assert any(LIVE_LOG_MARKER in str(line) for line in logs.get("output", [])), logs
+
+
 class TestEmbeddedServerOnHaos:
     def test_initialize_and_list_esp_tools(
         self,
@@ -439,6 +658,21 @@ class TestEmbeddedServerOnHaos:
             and entity.get("platform") == "esphome"
             for entity in entities.get("entities", [])
         ), entities
+
+    def test_live_host_esphome_device_tools_work_end_to_end(
+        self,
+        embedded_server: tuple[str, str | None, str],
+        tmp_path: Path,
+    ) -> None:
+        base_url, session_id, _configuration = embedded_server
+
+        asyncio.run(
+            _exercise_live_host_device_in_haos(
+                base_url,
+                session_id,
+                tmp_path=tmp_path,
+            )
+        )
 
     def test_device_builder_list_tool_reaches_supervisor_addon_ingress(
         self,

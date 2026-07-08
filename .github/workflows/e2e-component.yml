@@ -35,10 +35,14 @@ jobs:
       - name: Compute image cache key
         id: key
         run: |
-          esphome_addon_hash=$(
-            curl -fsSL https://raw.githubusercontent.com/esphome/home-assistant-addon/main/esphome/config.yaml \
-              | sha256sum | cut -d' ' -f1 | head -c16
-          )
+          esphome_addon_config="$(curl -fsSL https://raw.githubusercontent.com/esphome/home-assistant-addon/main/esphome/config.yaml)"
+          esphome_addon_hash="$(
+            printf '%s' "$esphome_addon_config" | sha256sum | cut -d' ' -f1 | head -c16
+          )"
+          esphome_version="$(
+            printf '%s\n' "$esphome_addon_config" \
+              | awk '/^version:/{gsub(/"/, "", $2); print $2; exit}'
+          )"
           hash=$(git ls-tree -r HEAD \
             tests/haos_image_build \
             tests/initial_test_state \
@@ -47,6 +51,7 @@ jobs:
             | sha256sum | cut -d' ' -f1 | head -c16)
           echo "cache-key=esphome-mcp-haos-image-$hash" >> "$GITHUB_OUTPUT"
           echo "esphome-addon-hash=$esphome_addon_hash" >> "$GITHUB_OUTPUT"
+          echo "esphome-version=$esphome_version" >> "$GITHUB_OUTPUT"
 
       - name: Restore image from cache
         id: restore-cache
@@ -57,7 +62,7 @@ jobs:
 
       - name: Report image acquisition path
         run: |
-          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }}"
+          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }} esphome-version=${{ steps.key.outputs.esphome-version }}"
 
       - name: Install QEMU, OVMF, and libguestfs
         run: |
@@ -87,6 +92,15 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Cache ESPHome host PlatformIO data
+        uses: actions/cache@v6
+        with:
+          path: ~/.esphome-mcp-host-e2e/platformio
+          key: esphome-host-device-pio-${{ runner.os }}-${{ steps.key.outputs.esphome-version }}-${{ hashFiles('tests/src/e2e/utilities/esphome_host.py') }}
+          restore-keys: |
+            esphome-host-device-pio-${{ runner.os }}-${{ steps.key.outputs.esphome-version }}-
+            esphome-host-device-pio-${{ runner.os }}-
+
       - name: Install build-script deps
         if: steps.restore-cache.outputs.cache-hit != 'true' || github.event.inputs.force_local_build == 'true'
         run: python -m pip install -r tests/haos_image_build/requirements.txt
@@ -105,7 +119,7 @@ jobs:
           key: ${{ steps.key.outputs.cache-key }}
 
       - name: Install test dependencies
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,host-e2e]" "esphome==${{ steps.key.outputs.esphome-version }}"
 
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2
@@ -118,6 +132,7 @@ jobs:
         env:
           HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
           HAOS_TEST_MODE: embedded
+          HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
 
       - name: Extract HA diagnostics from booted qcow2
         if: always()

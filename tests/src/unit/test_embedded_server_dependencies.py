@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import importlib
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _install_homeassistant_stubs(
@@ -58,6 +61,9 @@ def _install_homeassistant_stubs(
 
 def _load_embedded_server(monkeypatch: Any, **stubs: Any) -> ModuleType:
     _install_homeassistant_stubs(monkeypatch, **stubs)
+    custom_components_mod = ModuleType("custom_components")
+    custom_components_mod.__path__ = [str(ROOT / "custom_components")]
+    monkeypatch.setitem(sys.modules, "custom_components", custom_components_mod)
     sys.modules.pop("custom_components.esphome_mcp", None)
     sys.modules.pop("custom_components.esphome_mcp.embedded_server", None)
     return importlib.import_module("custom_components.esphome_mcp.embedded_server")
