@@ -4,21 +4,147 @@ on:
   pull_request:
     branches: [master]
   workflow_dispatch:
+    inputs:
+      pytest_args:
+        description: 'Extra pytest args for targeted HAOS E2E iteration'
+        type: string
+        required: false
+        default: ''
+      force_local_build:
+        description: 'Build the qcow2 locally even on a cache hit'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
 
+env:
+  PYTHON_VERSION: "3.13"
+  LIBGUESTFS_BACKEND: direct
+
 jobs:
-  component-e2e:
-    name: Component E2E
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  haos-e2e-embedded:
+    name: HAOS E2E Tests (embedded)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
     steps:
       - uses: actions/checkout@v7
+
+      - name: Compute image cache key
+        id: key
+        run: |
+          hash=$(git ls-tree -r HEAD \
+            tests/haos_image_build \
+            custom_components/esphome_mcp \
+            | sha256sum | cut -d' ' -f1 | head -c16)
+          echo "cache-key=esphome-mcp-haos-image-$hash" >> "$GITHUB_OUTPUT"
+
+      - name: Restore image from cache
+        id: restore-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: /tmp/haos-test-image.qcow2
+          key: ${{ steps.key.outputs.cache-key }}
+
+      - name: Report image acquisition path
+        run: |
+          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }}"
+
+      - name: Install QEMU, OVMF, and libguestfs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            qemu-system-x86 qemu-utils ovmf xz-utils curl libguestfs-tools
+          sudo chmod +r /boot/vmlinuz-* || true
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Free disk space for local image build
+        if: steps.restore-cache.outputs.cache-hit != 'true' || github.event.inputs.force_local_build == 'true'
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/share/swift /opt/ghc \
+            /usr/local/lib/android /usr/local/.ghcup
+          sudo apt-get clean
+          docker system prune -af --volumes || true
+          df -h /
+
       - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
-      - name: Install dev tools
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build-script deps
+        if: steps.restore-cache.outputs.cache-hit != 'true' || github.event.inputs.force_local_build == 'true'
+        run: python -m pip install -r tests/haos_image_build/requirements.txt
+
+      - name: Build HAOS image locally
+        if: steps.restore-cache.outputs.cache-hit != 'true' || github.event.inputs.force_local_build == 'true'
+        run: |
+          python tests/haos_image_build/build_image.py --verbose \
+            --output /tmp/haos-test-image.qcow2
+
+      - name: Save image to cache
+        if: steps.restore-cache.outputs.cache-hit != 'true' || github.event.inputs.force_local_build == 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: /tmp/haos-test-image.qcow2
+          key: ${{ steps.key.outputs.cache-key }}
+
+      - name: Install test dependencies
         run: python -m pip install -e ".[dev]"
-      - name: Run component e2e lane
-        run: pytest -m e2e tests/src/e2e/workflows/embedded
+
+      - name: Confirm image present
+        run: ls -lh /tmp/haos-test-image.qcow2
+
+      - name: Run HAOS embedded component E2E
+        run: |
+          cd tests
+          pytest src/e2e/haos_only/test_embedded_server_haos.py \
+            -v --tb=short --maxfail=1 ${{ github.event.inputs.pytest_args }}
+        env:
+          HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
+          HAOS_TEST_MODE: embedded
+
+      - name: Extract HA diagnostics from booted qcow2
+        if: always()
+        run: |
+          sudo chmod +r /boot/vmlinuz-* || true
+          mkdir -p /tmp/haos-embedded-diagnostics
+          img=/tmp/haos-test-image.qcow2
+          if [ -f "$img" ]; then
+            outdir=/tmp/haos-embedded-diagnostics/base
+            mkdir -p "$outdir"
+            guestfish --ro -a "$img" run \
+              : mount /dev/sda8 / \
+              : ll /supervisor/homeassistant \
+              > "$outdir/config-dir-listing.txt" 2>&1 \
+              || echo "directory listing failed"
+            guestfish --ro -a "$img" run \
+              : mount /dev/sda8 / \
+              : tar-out /supervisor/homeassistant/.storage "$outdir/storage.tar" \
+              || echo ".storage tar-out failed"
+            guestfish --ro -a "$img" run \
+              : mount /dev/sda8 / \
+              : glob copy-out '/supervisor/homeassistant/*.log*' "$outdir/" \
+              || echo "log glob copy failed"
+          fi
+          ls -laR /tmp/haos-embedded-diagnostics/ || true
+          python scripts/redact_diagnostics_secrets.py /tmp/haos-embedded-diagnostics
+
+      - name: Upload HAOS embedded diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: haos-embedded-diagnostics
+          path: |
+            /tmp/haos-embedded-diagnostics/
+            /tmp/haos-e2e-serial.log
+          if-no-files-found: warn
+          retention-days: 7

@@ -9,7 +9,10 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = [
+    "aiohttp>=3.9",
     "pytest>=8.4",
+    "pytest-timeout>=2.4",
+    "requests>=2.32",
     "ruff>=0.13",
 ]
 
@@ -17,6 +20,8 @@ dev = [
 testpaths = ["tests"]
 markers = [
     "e2e: end-to-end tests",
+    "haos_only: tests that require a HAOS qcow2 and QEMU/KVM",
+    "slow: long-running integration tests",
 ]
 
 [tool.ruff]

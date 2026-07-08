@@ -1,0 +1,2 @@
+# The build script reaches Supervisor through Home Assistant's WebSocket API.
+websockets>=14.0

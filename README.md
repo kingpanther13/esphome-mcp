@@ -30,6 +30,14 @@ The preferred workflow tools target ESPHome Device Builder's current multiplexed
 `esp_list_devices` and `esp_list_entities` support search/filter parameters for
 the HA ESPHome integration registry view.
 
+## Testing
+
+Unit tests cover Supervisor action routing, add-on ingress header construction,
+current Device Builder WebSocket command framing, stream cancellation, and tool
+wrapper command selection. The component E2E workflow builds or restores a HAOS
+qcow2, installs ESPHome Device Builder, bakes this custom component into
+Home Assistant, boots QEMU/KVM, and drives the MCP webhook.
+
 ## Prior Art
 
 This project intentionally builds on ha-mcp's Home Assistant custom component
