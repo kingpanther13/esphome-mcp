@@ -104,9 +104,75 @@ def test_build_image_installs_official_esphome_device_builder_before_bake() -> N
     )
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.name == "ESPHome Device Builder"
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.start is True
+    assert source.index("_wait_core_running(base_url, token)") < source.index(
+        "install_esphome_device_builder(ws)"
+    )
     assert source.index("install_esphome_device_builder(ws)") < source.index(
         "bake_component_into_config(qcow2)"
     )
+
+
+def test_build_image_waits_for_ha_core_running(monkeypatch) -> None:
+    """The builder does not shut down HAOS while HA Core is still starting."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    states = iter(["NOT_RUNNING", "STARTING", "RUNNING"])
+    calls: list[tuple[str, str, str | None]] = []
+
+    def fake_http(
+        method: str,
+        url: str,
+        *,
+        token: str | None = None,
+        **_: object,
+    ) -> dict[str, object]:
+        calls.append((method, url, token))
+        return {"state": next(states), "version": "2026.7.1"}
+
+    monkeypatch.setattr(build_image, "_http", fake_http)
+    monkeypatch.setattr(build_image.time, "sleep", lambda _seconds: None)
+
+    build_image._wait_core_running("http://haos.local", "token", timeout=30)
+
+    assert calls == [
+        ("GET", "http://haos.local/api/config", "token"),
+        ("GET", "http://haos.local/api/config", "token"),
+        ("GET", "http://haos.local/api/config", "token"),
+    ]
+
+
+def test_build_image_waits_for_esphome_addon_started(monkeypatch) -> None:
+    """Supervisor start returns before the add-on necessarily reports started."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    states = iter(["stopped", "started"])
+    calls: list[str] = []
+
+    class FakeWebSocket:
+        def supervisor_api(
+            self,
+            endpoint: str,
+            *,
+            method: str = "get",
+            timeout: float = 60.0,
+        ) -> dict[str, object]:
+            assert method == "get"
+            assert timeout == 30.0
+            calls.append(endpoint)
+            return {"state": next(states)}
+
+    monkeypatch.setattr(build_image.time, "sleep", lambda _seconds: None)
+
+    info = build_image._wait_addon_state(
+        FakeWebSocket(),
+        "5c53de3b_esphome",
+        "started",
+        timeout=30,
+    )
+
+    assert info == {"state": "started"}
+    assert calls == [
+        "/addons/5c53de3b_esphome/info",
+        "/addons/5c53de3b_esphome/info",
+    ]
 
 
 def test_build_image_removes_runtime_artifacts_before_bake(tmp_path: Path) -> None:

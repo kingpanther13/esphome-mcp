@@ -138,6 +138,9 @@ jobs:
               : mount /dev/sda8 / \
               : copy-out /supervisor/homeassistant/.ha_run.lock "$outdir/" \
               || echo ".ha_run.lock copy failed"
+            if [ -f "$outdir/.ha_run.lock" ]; then
+              mv "$outdir/.ha_run.lock" "$outdir/ha-run-lock.txt"
+            fi
           fi
           ls -laR /tmp/haos-embedded-diagnostics/ || true
           ls -laR /tmp/haos-diagnostics/ || true

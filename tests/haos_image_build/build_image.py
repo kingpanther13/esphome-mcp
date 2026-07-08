@@ -516,12 +516,64 @@ def install_esphome_device_builder(ws: HAWebSocket) -> str:
     if addon.start and state != "started":
         LOG.info("Starting %s (state=%s)", slug, state)
         ws.supervisor_api(f"/addons/{slug}/start", method="post", timeout=180.0)
+        _wait_addon_state(ws, slug, "started", timeout=180.0)
     return slug
 
 
 def _check_core_auth(base_url: str, token: str) -> None:
     cfg = _http("GET", f"{base_url}/api/config", token=token, timeout=10.0)
     LOG.info("AUTH OK: /api/config version=%s state=%s", cfg.get("version"), cfg.get("state"))
+
+
+def _wait_core_running(base_url: str, token: str, *, timeout: float = 600.0) -> None:
+    """Wait until HA Core reports RUNNING before baking a reusable image."""
+    deadline = time.monotonic() + timeout
+    last_state: object = None
+    last_err: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            cfg = _http("GET", f"{base_url}/api/config", token=token, timeout=10.0)
+        except (urllib.error.URLError, OSError) as err:
+            last_err = err
+        else:
+            last_state = cfg.get("state")
+            if last_state == "RUNNING":
+                LOG.info("HA Core running: version=%s", cfg.get("version"))
+                return
+        time.sleep(5.0)
+    suffix = f"; last error: {last_err!r}" if last_err else ""
+    raise TimeoutError(
+        f"HA Core did not reach RUNNING within {timeout:.0f}s (last_state={last_state!r}){suffix}"
+    )
+
+
+def _wait_addon_state(
+    ws: HAWebSocket,
+    slug: str,
+    desired_state: str,
+    *,
+    timeout: float = 180.0,
+) -> dict[str, Any]:
+    """Wait until Supervisor reports an add-on state."""
+    deadline = time.monotonic() + timeout
+    last_state: object = None
+    last_err: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            info = ws.supervisor_api(f"/addons/{slug}/info", method="get", timeout=30.0)
+        except _SUPERVISOR_TRANSIENT_ERRORS as err:
+            last_err = err
+        else:
+            last_state = info.get("state")
+            if last_state == desired_state:
+                LOG.info("Add-on %s reached state=%s", slug, desired_state)
+                return info
+        time.sleep(5.0)
+    suffix = f"; last error: {last_err!r}" if last_err else ""
+    raise TimeoutError(
+        f"Add-on {slug} did not reach state={desired_state!r} within "
+        f"{timeout:.0f}s (last_state={last_state!r}){suffix}"
+    )
 
 
 def _load_storage_list(path: Path, *, expected_key: str, list_key: str) -> dict[str, Any]:
@@ -793,8 +845,10 @@ def build(work_dir: Path, output: Path) -> None:
         _wait_http_ok(f"{base_url}/manifest.json", timeout=600)
         token = onboard(base_url)
         _check_core_auth(base_url, token)
+        _wait_core_running(base_url, token)
         with HAWebSocket(base_url, token) as ws:
             install_esphome_device_builder(ws)
+            _wait_core_running(base_url, token)
             stop_qemu(qemu, ws)
     except Exception:
         LOG.exception("Image build failed; leaving qcow2 in %s for inspection", qcow2)
