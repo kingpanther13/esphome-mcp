@@ -248,9 +248,7 @@ class _ProtectedResourceMetadataView(HomeAssistantView):
         provider = _active_resource_server(self._hass)
         if provider is None:
             return _json_not_found()
-        return web.json_response(
-            _protected_resource_document(provider, _build_base_url(request))
-        )
+        return web.json_response(_protected_resource_document(provider, _build_base_url(request)))
 
 
 class _AuthorizationServerMetadataView(HomeAssistantView):
@@ -300,9 +298,7 @@ class _WellKnownProtectedResourceView(HomeAssistantView):
         provider = _active_resource_server(self._hass)
         if provider is None or webhook_id != provider.webhook_id:
             return _json_not_found()
-        return web.json_response(
-            _protected_resource_document(provider, _build_base_url(request))
-        )
+        return web.json_response(_protected_resource_document(provider, _build_base_url(request)))
 
 
 class _WellKnownAuthorizationServerMetadataView(_AuthorizationServerMetadataView):
@@ -344,9 +340,7 @@ def _metadata_views(hass: HomeAssistant) -> list[HomeAssistantView]:
             "esphome_mcp:oauth:wellknown-as-suffixed",
         ),
     ):
-        views.append(
-            _WellKnownAuthorizationServerMetadataView(hass, url=url, name=name)
-        )
+        views.append(_WellKnownAuthorizationServerMetadataView(hass, url=url, name=name))
     return views
 
 
@@ -366,9 +360,7 @@ def _register_metadata_views(hass: HomeAssistant) -> None:
     hass.data[_OAUTH_VIEWS_REGISTERED_KEY] = True
 
 
-def _build_unauthorized_response(
-    request: web.Request, provider: ResourceServer
-) -> web.Response:
+def _build_unauthorized_response(request: web.Request, provider: ResourceServer) -> web.Response:
     """Build the 401 + ``WWW-Authenticate`` challenge MCP clients use to discover.
 
     Per RFC 9728 §5.1 / MCP spec, the ``resource_metadata`` parameter points to
@@ -381,9 +373,7 @@ def _build_unauthorized_response(
         status=401,
         text="Unauthorized",
         headers={
-            "WWW-Authenticate": (
-                f'Bearer realm="ESPHome MCP", resource_metadata="{metadata_url}"'
-            )
+            "WWW-Authenticate": (f'Bearer realm="ESPHome MCP", resource_metadata="{metadata_url}"')
         },
     )
 
@@ -446,9 +436,7 @@ async def _async_handle_webhook(
                 # buffering/breaking the stream (supervisor#6470).
                 resp_headers["Content-Type"] = "text/event-stream"
                 resp_headers["X-Accel-Buffering"] = "no"
-                response = web.StreamResponse(
-                    status=upstream_resp.status, headers=resp_headers
-                )
+                response = web.StreamResponse(status=upstream_resp.status, headers=resp_headers)
                 await response.prepare(request)
                 # Once prepare() has sent the 200 + headers, a mid-stream
                 # upstream failure can no longer become a 502 — returning a
@@ -476,9 +464,7 @@ async def _async_handle_webhook(
                 content_type = "application/json"
             resp_headers["Content-Type"] = content_type
             resp_body = await upstream_resp.read()
-            return web.Response(
-                status=upstream_resp.status, body=resp_body, headers=resp_headers
-            )
+            return web.Response(status=upstream_resp.status, body=resp_body, headers=resp_headers)
     except aiohttp.ClientError as err:
         _LOGGER.error("MCP webhook: upstream request failed: %s", err)
         return web.Response(status=502, text="ESPHome MCP server unavailable")

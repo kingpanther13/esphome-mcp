@@ -38,3 +38,56 @@ def test_server_defaults_are_scaffolded() -> None:
     assert 'name="esp_overview"' in server
     assert 'name="esp_list_devices"' in server
     assert 'name="esp_list_entities"' in server
+    assert "query: str | None = None" in server
+    assert 'name="esp_manage_addon"' in server
+    assert 'name="esp_dashboard_devices"' in server
+    assert 'name="esp_search_yaml"' in server
+    assert 'name="esp_get_yaml"' in server
+    assert 'name="esp_update_yaml"' in server
+    assert 'name="esp_validate_yaml"' in server
+    assert 'name="esp_device_logs"' in server
+    assert 'name="esp_compile_firmware"' in server
+    assert 'name="esp_install_firmware"' in server
+    assert 'name="esp_firmware_jobs"' in server
+    assert 'name="esp_get_firmware_job"' in server
+    assert 'name="esp_follow_firmware_job"' in server
+
+
+def test_esphome_addon_tool_contract_is_scaffolded() -> None:
+    """The ESPHome add-on tool keeps the intended ha-mcp ingress shape."""
+    addon_tools = (COMPONENT / "addon_tools.py").read_text()
+
+    assert "manage_esphome_addon" in addon_tools
+    assert "supervisor.send_command" in addon_tools
+    assert 'headers["X-Ingress-Path"]' in addon_tools
+    assert 'headers["X-Hass-Source"] = "core.ingress"' in addon_tools
+    assert 'path or "/devices"' in addon_tools
+    assert '_route_for_addon(addon, "ws"' in addon_tools
+
+
+def test_device_builder_specific_tools_use_current_ws_commands() -> None:
+    """Named ESPHome tools target the Device Builder multiplexed API."""
+    addon_tools = (COMPONENT / "addon_tools.py").read_text()
+
+    assert "devices/list" in addon_tools
+    assert "yaml/search" in addon_tools
+    assert "devices/get_config" in addon_tools
+    assert "devices/update_config" in addon_tools
+    assert "devices/validate" in (COMPONENT / "server.py").read_text()
+    assert "devices/logs" in (COMPONENT / "server.py").read_text()
+    assert "devices/stop_stream" in addon_tools
+    assert "firmware/compile" in (COMPONENT / "server.py").read_text()
+    assert "firmware/install" in (COMPONENT / "server.py").read_text()
+    assert "firmware/get_jobs" in addon_tools
+    assert "firmware/get_job" in addon_tools
+    assert "firmware/follow_job" in addon_tools
+
+
+def test_readme_credits_prior_art() -> None:
+    """README credits comparison projects used for protocol scaffolding."""
+    readme = (ROOT / "README.md").read_text()
+
+    assert "Prior Art" in readme
+    assert "ha-mcp" in readme
+    assert "loryanstrant" in readme
+    assert "jeeftor" in readme

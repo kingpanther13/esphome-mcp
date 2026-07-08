@@ -15,7 +15,6 @@ from .const import (
     DATA_SECRET_PATH,
     DEFAULT_BIND_HOST,
     DEFAULT_SERVER_PORT,
-    DOMAIN,
     OPT_BIND_HOST,
     OPT_SERVER_PORT,
     SERVER_CONFIG_SUBDIR,
@@ -34,9 +33,7 @@ _STOP_JOIN_TIMEOUT_SECONDS = 10.0
 class EmbeddedServerError(Exception):
     """Raised when the in-process ESPHome MCP server cannot start."""
 
-    def __init__(
-        self, message: str, *, kind: Literal["package", "start"] = "start"
-    ) -> None:
+    def __init__(self, message: str, *, kind: Literal["package", "start"] = "start") -> None:
         """Store the message and failure kind."""
         super().__init__(message)
         self.kind = kind

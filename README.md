@@ -8,9 +8,36 @@ Initial defaults:
 - MCP server port: `9590`
 - Tool prefix: `esp_`
 - Webhook auth modes: secret webhook URL or Home Assistant `ha_auth`
-- Initial tools: `esp_overview`, `esp_list_devices`, `esp_list_entities`
+- Initial tools:
+  `esp_overview`, `esp_list_devices`, `esp_list_entities`,
+  `esp_dashboard_devices`, `esp_search_yaml`, `esp_get_yaml`,
+  `esp_update_yaml`, `esp_validate_yaml`, `esp_device_logs`,
+  `esp_compile_firmware`, `esp_install_firmware`, `esp_firmware_jobs`,
+  `esp_get_firmware_job`, `esp_follow_firmware_job`, `esp_manage_addon`
 
 The webhook URL works through Nabu Casa Remote UI because it is registered as a Home Assistant webhook at `/api/webhook/<secret>`.
+
+`esp_manage_addon` is the ESPHome-focused starting point copied from ha-mcp's
+add-on management tool. It supports Supervisor lifecycle/config actions for the
+ESPHome add-on and proxies ESPHome dashboard HTTP/WebSocket calls through the
+same ingress framing headers used by Home Assistant add-on ingress.
+
+The preferred workflow tools target ESPHome Device Builder's current multiplexed
+`/ws` API (`devices/list`, `yaml/search`, `devices/get_config`,
+`devices/update_config`, `devices/validate`, `devices/logs`,
+`firmware/compile`, `firmware/install`, `firmware/get_jobs`,
+`firmware/get_job`, and `firmware/follow_job`). The Home Assistant context tools
+`esp_list_devices` and `esp_list_entities` support search/filter parameters for
+the HA ESPHome integration registry view.
+
+## Prior Art
+
+This project intentionally builds on ha-mcp's Home Assistant custom component
+ingress/auth approach and compares protocol behavior against the existing
+ESPHome MCP implementations by loryanstrant, jeeftor, bberrevoets, and
+jrigling. The distinguishing piece here is the custom-component-only Home
+Assistant deployment path: Home Assistant webhook auth, Nabu Casa-compatible
+ingress, and Supervisor-backed ESPHome add-on routing.
 
 ## HACS
 

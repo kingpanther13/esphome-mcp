@@ -49,9 +49,7 @@ class EspHomeMcpConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
         """Return the options flow."""
         return EspHomeMcpOptionsFlow()
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Confirm and create the single ESPHome MCP server entry."""
         await self.async_set_unique_id(_UNIQUE_ID)
         self._abort_if_unique_id_configured()
@@ -64,9 +62,7 @@ class EspHomeMcpConfigFlow(ConfigFlow, domain=DOMAIN):  # type: ignore[call-arg]
 class EspHomeMcpOptionsFlow(OptionsFlow):
     """Options flow for the in-process ESPHome MCP server."""
 
-    async def async_step_init(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Show or apply server options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=self._normalize(user_input))
