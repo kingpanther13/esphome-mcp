@@ -19,7 +19,6 @@ dev = [
 host-e2e = [
     "aioesphomeapi",
     "esphome>=2026.6.4",
-    "homeassistant==2026.7.1",
     "pytest-asyncio>=0.23",
 ]
 
