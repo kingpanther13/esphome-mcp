@@ -1,0 +1,38 @@
+name: PR Validation
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dev tools
+        run: python -m pip install -e ".[dev]"
+      - name: Ruff check
+        run: ruff check custom_components tests
+      - name: Ruff format check
+        run: ruff format --check custom_components tests
+
+  unit:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install dev tools
+        run: python -m pip install -e ".[dev]"
+      - name: Run unit tests
+        run: pytest tests/src/unit
