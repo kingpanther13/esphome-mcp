@@ -29,6 +29,8 @@ ESPHOME_MCP_SERVER_ENTRY_ID = "e2e_test_esphome_mcp_server_entry"
 ESPHOME_MCP_SERVER_WEBHOOK_ID = "esp_mcp_e2e_haos"
 ESPHOME_MCP_SERVER_SECRET_PATH = "/private_e2e_esphome_mcp_haos"
 ESPHOME_MCP_SERVER_PORT = 9590
+ESPHOME_FIXTURE_DEVICE_ID = "ee2e0000000000000000000000000001"
+ESPHOME_FIXTURE_ENTITY_ID = "sensor.kitchen_esphome_temperature"
 
 
 def ha_host_port() -> int:

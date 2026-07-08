@@ -49,6 +49,10 @@ ESPHOME_MCP_ENTRY_ID = "e2e_test_esphome_mcp_server_entry"
 ESPHOME_MCP_WEBHOOK_ID = "esp_mcp_e2e_haos"
 ESPHOME_MCP_SECRET_PATH = "/private_e2e_esphome_mcp_haos"
 ESPHOME_MCP_PORT = 9590
+ESPHOME_FIXTURE_DEVICE_ID = "ee2e0000000000000000000000000001"
+ESPHOME_FIXTURE_ENTITY_REGISTRY_ID = "ee2e0000000000000000000000000002"
+ESPHOME_FIXTURE_ENTITY_ID = "sensor.kitchen_esphome_temperature"
+ESPHOME_FIXTURE_NODE_ID = "kitchen-node"
 
 
 @dataclass(frozen=True)
@@ -519,15 +523,23 @@ def _check_core_auth(base_url: str, token: str) -> None:
     LOG.info("AUTH OK: /api/config version=%s state=%s", cfg.get("version"), cfg.get("state"))
 
 
-def _load_storage_entries(path: Path) -> dict[str, Any]:
+def _load_storage_list(path: Path, *, expected_key: str, list_key: str) -> dict[str, Any]:
     data = json.loads(path.read_text())
     if (
         not isinstance(data, dict)
         or not isinstance(data.get("data"), dict)
-        or not isinstance(data["data"].get("entries"), list)
+        or not isinstance(data["data"].get(list_key), list)
     ):
-        raise RuntimeError(f"{path} has unexpected shape; expected dict with data.entries list")
+        raise RuntimeError(f"{path} has unexpected shape; expected dict with data.{list_key} list")
+    if data.get("key") != expected_key:
+        raise RuntimeError(
+            f"{path} has unexpected key {data.get('key')!r}; expected {expected_key!r}"
+        )
     return data
+
+
+def _load_storage_entries(path: Path) -> dict[str, Any]:
+    return _load_storage_list(path, expected_key="core.config_entries", list_key="entries")
 
 
 def _inject_esphome_mcp_entry(config_dir: Path) -> None:
@@ -565,6 +577,95 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
         )
     ce_path.write_text(json.dumps(ce_data, indent=2))
     LOG.info("Injected enabled ESPHome MCP config entry (%s)", ESPHOME_MCP_ENTRY_ID)
+
+
+def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
+    """Seed one ESPHome registry device/entity for HA search-tool E2E coverage."""
+    storage_dir = config_dir / ".storage"
+    device_path = storage_dir / "core.device_registry"
+    device_data = _load_storage_list(
+        device_path,
+        expected_key="core.device_registry",
+        list_key="devices",
+    )
+    devices = device_data["data"]["devices"]
+    if not any(device.get("id") == ESPHOME_FIXTURE_DEVICE_ID for device in devices):
+        devices.append(
+            {
+                "area_id": "kitchen",
+                "config_entries": [],
+                "config_entries_subentries": {},
+                "configuration_url": None,
+                "connections": [],
+                "created_at": "2026-07-08T00:00:00+00:00",
+                "disabled_by": None,
+                "entry_type": None,
+                "hw_version": "esp32",
+                "id": ESPHOME_FIXTURE_DEVICE_ID,
+                "identifiers": [["esphome", ESPHOME_FIXTURE_NODE_ID]],
+                "labels": ["e2e"],
+                "manufacturer": "ESPHome",
+                "model": "ESP32 DevKit",
+                "model_id": None,
+                "modified_at": "2026-07-08T00:00:00+00:00",
+                "name_by_user": "Kitchen ESPHome",
+                "name": "Kitchen ESPHome",
+                "primary_config_entry": None,
+                "serial_number": None,
+                "sw_version": "2026.7.0",
+                "via_device_id": None,
+            }
+        )
+    device_path.write_text(json.dumps(device_data, indent=2))
+
+    entity_path = storage_dir / "core.entity_registry"
+    entity_data = _load_storage_list(
+        entity_path,
+        expected_key="core.entity_registry",
+        list_key="entities",
+    )
+    entities = entity_data["data"]["entities"]
+    if not any(entity.get("entity_id") == ESPHOME_FIXTURE_ENTITY_ID for entity in entities):
+        entities.append(
+            {
+                "aliases": [],
+                "area_id": None,
+                "categories": {},
+                "capabilities": {"state_class": "measurement"},
+                "config_entry_id": None,
+                "config_subentry_id": None,
+                "created_at": "2026-07-08T00:00:00+00:00",
+                "device_class": None,
+                "device_id": ESPHOME_FIXTURE_DEVICE_ID,
+                "disabled_by": None,
+                "entity_category": None,
+                "entity_id": ESPHOME_FIXTURE_ENTITY_ID,
+                "hidden_by": None,
+                "icon": None,
+                "id": ESPHOME_FIXTURE_ENTITY_REGISTRY_ID,
+                "has_entity_name": True,
+                "labels": ["e2e"],
+                "modified_at": "2026-07-08T00:00:00+00:00",
+                "name": "Kitchen ESPHome Temperature",
+                "options": {"conversation": {"should_expose": False}},
+                "original_device_class": "temperature",
+                "original_icon": None,
+                "original_name": "Kitchen ESPHome Temperature",
+                "platform": "esphome",
+                "suggested_object_id": "kitchen_esphome_temperature",
+                "supported_features": 0,
+                "translation_key": None,
+                "unique_id": f"{ESPHOME_FIXTURE_NODE_ID}-temperature",
+                "previous_unique_id": None,
+                "unit_of_measurement": "C",
+            }
+        )
+    entity_path.write_text(json.dumps(entity_data, indent=2))
+    LOG.info(
+        "Injected ESPHome registry fixture (%s, %s)",
+        ESPHOME_FIXTURE_DEVICE_ID,
+        ESPHOME_FIXTURE_ENTITY_ID,
+    )
 
 
 def bake_component_into_config(qcow2: Path) -> None:
@@ -607,6 +708,7 @@ def bake_component_into_config(qcow2: Path) -> None:
         LOG.info("Staged custom component %s", ESPHOME_MCP_DOMAIN)
 
         _inject_esphome_mcp_entry(config_dir)
+        _inject_esphome_registry_fixtures(config_dir)
 
         db_src = config_dir / "home-assistant_v2.db"
         if db_src.exists():

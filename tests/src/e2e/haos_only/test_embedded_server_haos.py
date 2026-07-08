@@ -13,6 +13,8 @@ from typing import Any
 import pytest
 import requests
 from haos_runtime import (
+    ESPHOME_FIXTURE_DEVICE_ID,
+    ESPHOME_FIXTURE_ENTITY_ID,
     ESPHOME_MCP_SERVER_WEBHOOK_ID,
     HAOS_IMAGE_ENV,
     boot_haos_qemu,
@@ -192,6 +194,46 @@ class TestEmbeddedServerOnHaos:
         assert payload["success"] is True
         assert payload["mcp_domain"] == "esphome_mcp"
         assert "device_count" in payload
+
+    def test_home_assistant_esphome_registry_search_tools(
+        self,
+        embedded_server: tuple[str, str | None],
+    ) -> None:
+        base_url, session_id = embedded_server
+        devices = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_list_devices",
+                {"query": "Kitchen ESPHome", "area": "kitchen", "limit": 10},
+            )
+        )
+        assert devices["success"] is True, devices
+        assert any(
+            device.get("id") == ESPHOME_FIXTURE_DEVICE_ID
+            and ["esphome", "kitchen-node"] in device.get("identifiers", [])
+            for device in devices.get("devices", [])
+        ), devices
+
+        entities = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_list_entities",
+                {
+                    "query": "Kitchen ESPHome Temperature",
+                    "domain": "sensor",
+                    "device_id": ESPHOME_FIXTURE_DEVICE_ID,
+                    "limit": 10,
+                },
+            )
+        )
+        assert entities["success"] is True, entities
+        assert any(
+            entity.get("entity_id") == ESPHOME_FIXTURE_ENTITY_ID
+            and entity.get("platform") == "esphome"
+            for entity in entities.get("entities", [])
+        ), entities
 
     def test_device_builder_list_tool_reaches_supervisor_addon_ingress(
         self,

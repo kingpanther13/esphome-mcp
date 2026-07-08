@@ -45,6 +45,8 @@ def test_haos_builder_and_runtime_constants_stay_in_sync() -> None:
     assert build_image.ESPHOME_MCP_WEBHOOK_ID == haos_runtime.ESPHOME_MCP_SERVER_WEBHOOK_ID
     assert build_image.ESPHOME_MCP_SECRET_PATH == haos_runtime.ESPHOME_MCP_SERVER_SECRET_PATH
     assert build_image.ESPHOME_MCP_PORT == haos_runtime.ESPHOME_MCP_SERVER_PORT == 9590
+    assert build_image.ESPHOME_FIXTURE_DEVICE_ID == haos_runtime.ESPHOME_FIXTURE_DEVICE_ID
+    assert build_image.ESPHOME_FIXTURE_ENTITY_ID == haos_runtime.ESPHOME_FIXTURE_ENTITY_ID
 
 
 def test_build_image_injects_enabled_esphome_mcp_entry(tmp_path: Path) -> None:
@@ -89,6 +91,62 @@ def test_build_image_injects_enabled_esphome_mcp_entry(tmp_path: Path) -> None:
         "webhook_auth": "none",
         "enable_webhook": True,
     }
+
+
+def test_build_image_injects_esphome_registry_fixtures(tmp_path: Path) -> None:
+    """The baked HAOS image has searchable ESPHome registry data."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    config_dir = tmp_path / "homeassistant"
+    storage_dir = config_dir / ".storage"
+    storage_dir.mkdir(parents=True)
+    device_path = storage_dir / "core.device_registry"
+    entity_path = storage_dir / "core.entity_registry"
+    device_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "minor_version": 12,
+                "key": "core.device_registry",
+                "data": {"devices": []},
+            }
+        )
+    )
+    entity_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "minor_version": 19,
+                "key": "core.entity_registry",
+                "data": {"entities": []},
+            }
+        )
+    )
+
+    build_image._inject_esphome_registry_fixtures(config_dir)
+    build_image._inject_esphome_registry_fixtures(config_dir)
+
+    devices = json.loads(device_path.read_text())["data"]["devices"]
+    entities = json.loads(entity_path.read_text())["data"]["entities"]
+    matching_devices = [
+        device for device in devices if device.get("id") == build_image.ESPHOME_FIXTURE_DEVICE_ID
+    ]
+    matching_entities = [
+        entity
+        for entity in entities
+        if entity.get("entity_id") == build_image.ESPHOME_FIXTURE_ENTITY_ID
+    ]
+
+    assert len(matching_devices) == 1
+    device = matching_devices[0]
+    assert device["area_id"] == "kitchen"
+    assert device["identifiers"] == [["esphome", build_image.ESPHOME_FIXTURE_NODE_ID]]
+    assert device["name_by_user"] == "Kitchen ESPHome"
+
+    assert len(matching_entities) == 1
+    entity = matching_entities[0]
+    assert entity["device_id"] == build_image.ESPHOME_FIXTURE_DEVICE_ID
+    assert entity["platform"] == "esphome"
+    assert entity["original_device_class"] == "temperature"
 
 
 def test_build_image_detects_store_only_addon_metadata_as_not_installed() -> None:
@@ -151,4 +209,6 @@ def test_embedded_e2e_module_tracks_expected_webhook_and_tool_names() -> None:
     }
 
     assert expected_tools <= string_constants
+    assert "Kitchen ESPHome" in string_constants
+    assert "Kitchen ESPHome Temperature" in string_constants
     assert "ESPHOME_MCP_SERVER_WEBHOOK_ID" in EMBEDDED_E2E_PATH.read_text()
