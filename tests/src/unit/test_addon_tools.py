@@ -67,12 +67,41 @@ def _esphome_addon(**overrides: Any) -> dict[str, Any]:
     return addon
 
 
+def _manage_defaults(**overrides: Any) -> dict[str, Any]:
+    args: dict[str, Any] = {
+        "slug": None,
+        "action": None,
+        "path": None,
+        "method": "GET",
+        "body": None,
+        "websocket": False,
+        "wait_for_close": True,
+        "message_limit": None,
+        "message_offset": 0,
+        "options": None,
+        "network": None,
+        "boot": None,
+        "auto_update": None,
+        "watchdog": None,
+        "port": None,
+        "timeout": 60,
+        "debug": False,
+        "request_headers": None,
+    }
+    args.update(overrides)
+    return args
+
+
 def _text_frame(payload: dict[str, Any] | str) -> SimpleNamespace:
     if isinstance(payload, str):
         data = payload
     else:
         data = json.dumps(payload)
     return SimpleNamespace(type=addon_tools.aiohttp.WSMsgType.TEXT, data=data)
+
+
+def _ws_frame(frame_type: Any) -> SimpleNamespace:
+    return SimpleNamespace(type=frame_type, data="")
 
 
 class _FakeWebSocket:
@@ -243,6 +272,109 @@ def test_manage_addon_defaults_to_devices_http_proxy(
     assert seen["method"] == "GET"
 
 
+def test_manage_addon_rejects_non_esphome_store_install_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Store installs are limited to ESPHome-looking add-on slugs."""
+
+    async def execute_action(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("non-ESPHome install slug must not run an action")
+
+    monkeypatch.setattr(addon_tools, "_execute_action", execute_action)
+
+    result = _run(
+        addon_tools.manage_esphome_addon(
+            object(),
+            **_manage_defaults(slug="core_mosquitto", action="install"),
+        )
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "not_esphome_addon"
+    assert result["slug"] == "core_mosquitto"
+
+
+def test_manage_addon_rejects_action_combined_with_path_or_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lifecycle actions must not be mixed with proxy/config modes."""
+
+    async def resolve(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("invalid install mode should fail before add-on lookup")
+
+    async def execute_action(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("invalid install mode must not execute")
+
+    monkeypatch.setattr(addon_tools, "_resolve_esphome_addon", resolve)
+    monkeypatch.setattr(addon_tools, "_execute_action", execute_action)
+
+    result = _run(
+        addon_tools.manage_esphome_addon(
+            object(),
+            **_manage_defaults(
+                slug="5c53de3b_esphome",
+                action="install",
+                path="/devices",
+                options={"relative_url": "/"},
+            ),
+        )
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_mode"
+
+
+def test_manage_addon_rejects_invalid_http_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HTTP proxy mode only allows the bounded Supervisor method set."""
+
+    async def resolve(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "addon": _esphome_addon()}
+
+    async def call_addon_http(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("invalid method must not reach the add-on HTTP client")
+
+    monkeypatch.setattr(addon_tools, "_resolve_esphome_addon", resolve)
+    monkeypatch.setattr(addon_tools, "_call_addon_http", call_addon_http)
+
+    result = _run(
+        addon_tools.manage_esphome_addon(
+            object(),
+            **_manage_defaults(method="TRACE", path="/devices"),
+        )
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_method"
+    assert result["valid_methods"] == ["DELETE", "GET", "PATCH", "POST", "PUT"]
+
+
+def test_manage_addon_rejects_http_message_paging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """WebSocket-only paging flags are rejected before HTTP proxying."""
+
+    async def resolve(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "addon": _esphome_addon()}
+
+    async def call_addon_http(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("invalid mode must not call the HTTP proxy")
+
+    monkeypatch.setattr(addon_tools, "_resolve_esphome_addon", resolve)
+    monkeypatch.setattr(addon_tools, "_call_addon_http", call_addon_http)
+
+    result = _run(
+        addon_tools.manage_esphome_addon(
+            object(),
+            **_manage_defaults(path="/devices", message_limit=10),
+        )
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == "invalid_mode"
+
+
 def test_config_update_merges_options_and_ignores_unknown_schema_fields(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -287,6 +419,98 @@ def test_config_update_merges_options_and_ignores_unknown_schema_fields(
         "options": {"existing": True, "nested": {"keep": 1, "added": 2}},
         "boot": "manual",
     }
+
+
+def test_http_and_ws_proxy_reject_path_traversal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decoded '..' path components never reach aiohttp clients."""
+
+    def client_session(*_args: Any, **_kwargs: Any) -> object:
+        raise AssertionError("path traversal must fail before opening a session")
+
+    monkeypatch.setattr(addon_tools.aiohttp, "ClientSession", client_session)
+    addon = _esphome_addon()
+
+    http_result = _run(
+        addon_tools._call_addon_http(
+            addon,
+            slug="5c53de3b_esphome",
+            path="/api/%2e%2e/secrets.yaml",
+            method="GET",
+            body=None,
+            port=None,
+            timeout=30,
+            debug=False,
+            request_headers=None,
+        )
+    )
+    ws_result = _run(
+        addon_tools._call_addon_ws(
+            addon,
+            slug="5c53de3b_esphome",
+            path="/ws/../secrets",
+            body=None,
+            port=None,
+            timeout=30,
+            debug=False,
+            wait_for_close=True,
+            message_limit=None,
+            message_offset=0,
+        )
+    )
+
+    assert http_result["success"] is False
+    assert http_result["error_code"] == "invalid_path"
+    assert ws_result["success"] is False
+    assert ws_result["error_code"] == "invalid_path"
+
+
+def test_resolve_esphome_addon_reports_ambiguous_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Auto-discovery refuses multiple ESPHome-looking add-ons."""
+
+    async def list_addons(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "success": True,
+            "addons": [
+                {"slug": "5c53de3b_esphome", "name": "ESPHome Device Builder"},
+                {"slug": "local_esphome_beta", "name": "ESPHome Beta"},
+            ],
+        }
+
+    async def get_addon_info(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise AssertionError("ambiguous discovery must not fetch one arbitrary add-on")
+
+    monkeypatch.setattr(addon_tools, "_list_addons", list_addons)
+    monkeypatch.setattr(addon_tools, "_get_addon_info", get_addon_info)
+
+    result = _run(addon_tools._resolve_esphome_addon(object(), slug=None))
+
+    assert result["success"] is False
+    assert result["error_code"] == "ambiguous_esphome_addon"
+    assert result["matches"] == [
+        {"slug": "5c53de3b_esphome", "name": "ESPHome Device Builder"},
+        {"slug": "local_esphome_beta", "name": "ESPHome Beta"},
+    ]
+
+
+def test_resolve_explicit_slug_rejects_non_esphome_addon(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Explicit add-on slugs still have to match ESPHome metadata."""
+
+    async def get_addon_info(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "addon": {"slug": "core_mosquitto", "name": "Mosquitto"}}
+
+    monkeypatch.setattr(addon_tools, "_get_addon_info", get_addon_info)
+
+    result = _run(addon_tools._resolve_esphome_addon(object(), slug="core_mosquitto"))
+
+    assert result["success"] is False
+    assert result["error_code"] == "not_esphome_addon"
+    assert result["slug"] == "core_mosquitto"
 
 
 def test_device_builder_command_refuses_stopped_addon(
@@ -383,6 +607,163 @@ def test_device_builder_ws_reports_untrusted_ingress_auth_failure(
     assert ws.sent == []
 
 
+@pytest.mark.parametrize(
+    ("frame_type", "expected_code"),
+    [
+        (addon_tools.aiohttp.WSMsgType.CLOSE, "connection_closed"),
+        (addon_tools.aiohttp.WSMsgType.CLOSED, "connection_closed"),
+        (addon_tools.aiohttp.WSMsgType.ERROR, "connection_failed"),
+    ],
+)
+def test_device_builder_ws_reports_failure_before_server_info(
+    monkeypatch: pytest.MonkeyPatch,
+    frame_type: Any,
+    expected_code: str,
+) -> None:
+    """The server-info handshake fails clearly on early close/error frames."""
+    ws = _install_fake_ws(monkeypatch, [_ws_frame(frame_type)])
+
+    result = _run(
+        addon_tools._call_device_builder_ws_command(
+            _esphome_addon(),
+            slug="5c53de3b_esphome",
+            command="devices/list",
+            args={},
+            timeout=30,
+            debug=False,
+        )
+    )
+
+    assert result["success"] is False
+    assert result["error_code"] == expected_code
+    assert ws.sent == []
+
+
+def test_device_builder_ws_command_error_frame_returns_tool_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Device Builder command error frames are surfaced without being wrapped as success."""
+    ws = _install_fake_ws(
+        monkeypatch,
+        [
+            _text_frame({"server_version": "2026.6.0", "requires_auth": False}),
+            _text_frame(
+                {
+                    "message_id": "esp-mcp-1",
+                    "error_code": "validation_failed",
+                    "details": "YAML is invalid",
+                }
+            ),
+        ],
+    )
+
+    result = _run(
+        addon_tools._call_device_builder_ws_command(
+            _esphome_addon(),
+            slug="5c53de3b_esphome",
+            command="devices/validate",
+            args={"configuration": "bad.yaml"},
+            timeout=30,
+            debug=False,
+        )
+    )
+
+    assert result == {
+        "success": False,
+        "error_code": "validation_failed",
+        "error": "YAML is invalid",
+        "command": "devices/validate",
+        "server_info": {"server_version": "2026.6.0", "requires_auth": False},
+    }
+    assert ws.sent == [
+        {
+            "command": "devices/validate",
+            "message_id": "esp-mcp-1",
+            "args": {"configuration": "bad.yaml"},
+        }
+    ]
+
+
+def test_device_builder_ws_ignores_malformed_and_unrelated_frames(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only frames for the command message_id drive the returned result."""
+    ws = _install_fake_ws(
+        monkeypatch,
+        [
+            _text_frame("not-json"),
+            _text_frame({"message_id": "other", "result": {"ignored": True}}),
+            _text_frame("still-not-json"),
+            _text_frame({"message_id": "esp-mcp-1", "result": {"ok": True}}),
+        ],
+    )
+
+    result = _run(
+        addon_tools._call_device_builder_ws_command(
+            _esphome_addon(),
+            slug="5c53de3b_esphome",
+            command="devices/get_config",
+            args={"configuration": "kitchen.yaml"},
+            timeout=30,
+            debug=True,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["result"] == {"ok": True}
+    assert result["closed_by"] == "result"
+    assert result["_debug"]["server_info"] is None
+    assert result["_debug"]["command_message_count"] == 1
+    assert result["_debug"]["messages"] == [
+        "not-json",
+        {"message_id": "other", "result": {"ignored": True}},
+        "still-not-json",
+        {"message_id": "esp-mcp-1", "result": {"ok": True}},
+    ]
+    assert ws.sent == [
+        {
+            "command": "devices/get_config",
+            "message_id": "esp-mcp-1",
+            "args": {"configuration": "kitchen.yaml"},
+        }
+    ]
+
+
+def test_device_builder_ws_stream_message_limit_stops_without_terminal_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finite streams stop at the requested command-message count."""
+    _install_fake_ws(
+        monkeypatch,
+        [
+            _text_frame({"server_version": "2026.6.0", "requires_auth": False}),
+            _text_frame({"message_id": "esp-mcp-1", "event": "output", "data": "one"}),
+            _text_frame({"message_id": "esp-mcp-1", "event": "output", "data": "two"}),
+        ],
+    )
+
+    result = _run(
+        addon_tools._call_device_builder_ws_command(
+            _esphome_addon(),
+            slug="5c53de3b_esphome",
+            command="firmware/follow_job",
+            args={"job_id": "job-1"},
+            timeout=30,
+            debug=True,
+            stream=True,
+            message_limit=2,
+        )
+    )
+
+    assert result["success"] is True
+    assert result["closed_by"] == "message_limit"
+    assert result["events"] == [
+        {"message_id": "esp-mcp-1", "event": "output", "data": "one"},
+        {"message_id": "esp-mcp-1", "event": "output", "data": "two"},
+    ]
+    assert result["_debug"]["stop_stream_sent"] is False
+
+
 def test_device_builder_stoppable_stream_sends_stop_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -464,6 +845,293 @@ def test_device_builder_device_list_filters_configured_and_importable(
         "configured": [{"name": "kitchen", "state": "ONLINE"}],
         "importable_count": 1,
         "importable": [{"name": "kitchen-ble"}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("call_wrapper", "expected_command"),
+    [
+        pytest.param(
+            lambda hass: addon_tools.list_device_builder_devices(
+                hass,
+                slug=None,
+                query=None,
+                state=None,
+                include_importable=True,
+                limit=100,
+                timeout=60,
+                debug=False,
+            ),
+            "devices/list",
+            id="list_devices",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.search_device_builder_yaml(
+                hass,
+                slug=None,
+                query="wifi",
+                max_results=50,
+                case_sensitive=False,
+                context_lines=None,
+                timeout=60,
+                debug=False,
+            ),
+            "yaml/search",
+            id="search_yaml",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.read_device_builder_config(
+                hass,
+                slug=None,
+                configuration="kitchen.yaml",
+                timeout=60,
+                debug=False,
+            ),
+            "devices/get_config",
+            id="read_yaml",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.write_device_builder_config(
+                hass,
+                slug=None,
+                configuration="kitchen.yaml",
+                content="esphome:\n  name: kitchen\n",
+                allow_wipe=False,
+                timeout=60,
+                debug=False,
+            ),
+            "devices/update_config",
+            id="write_yaml",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.run_device_builder_stream(
+                hass,
+                slug=None,
+                command="devices/validate",
+                args={"configuration": "kitchen.yaml"},
+                timeout=300,
+                debug=False,
+                message_limit=200,
+            ),
+            "devices/validate",
+            id="stream",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.queue_device_builder_firmware_job(
+                hass,
+                slug=None,
+                command="firmware/compile",
+                args={"configuration": "kitchen.yaml"},
+                timeout=60,
+                debug=False,
+            ),
+            "firmware/compile",
+            id="queue_job",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.list_device_builder_firmware_jobs(
+                hass,
+                slug=None,
+                status=None,
+                configuration=None,
+                limit=50,
+                timeout=60,
+                debug=False,
+            ),
+            "firmware/get_jobs",
+            id="list_jobs",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.get_device_builder_firmware_job(
+                hass,
+                slug=None,
+                job_id="job-1",
+                timeout=60,
+                debug=False,
+            ),
+            "firmware/get_job",
+            id="get_job",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.follow_device_builder_firmware_job(
+                hass,
+                slug=None,
+                job_id="job-1",
+                message_limit=500,
+                timeout=60,
+                debug=False,
+            ),
+            "firmware/follow_job",
+            id="follow_job",
+        ),
+    ],
+)
+def test_device_builder_wrappers_return_failures_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    call_wrapper: Any,
+    expected_command: str,
+) -> None:
+    """Wrappers preserve lower-level Device Builder failures exactly."""
+    seen_commands: list[str] = []
+    failure = {
+        "success": False,
+        "error_code": "device_builder_failed",
+        "error": "Device Builder rejected the command.",
+    }
+
+    async def device_builder_command(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        seen_commands.append(str(kwargs["command"]))
+        return failure
+
+    monkeypatch.setattr(addon_tools, "_device_builder_command", device_builder_command)
+
+    result = _run(call_wrapper(object()))
+
+    assert result is failure
+    assert seen_commands == [expected_command]
+
+
+@pytest.mark.parametrize(
+    ("call_wrapper", "bad_result", "expected_error"),
+    [
+        pytest.param(
+            lambda hass: addon_tools.list_device_builder_devices(
+                hass,
+                slug=None,
+                query=None,
+                state=None,
+                include_importable=True,
+                limit=100,
+                timeout=60,
+                debug=False,
+            ),
+            [],
+            "Device Builder returned malformed devices/list result.",
+            id="devices_list",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.search_device_builder_yaml(
+                hass,
+                slug=None,
+                query="wifi",
+                max_results=50,
+                case_sensitive=False,
+                context_lines=None,
+                timeout=60,
+                debug=False,
+            ),
+            {"matches": []},
+            "Device Builder returned malformed yaml/search result.",
+            id="yaml_search",
+        ),
+        pytest.param(
+            lambda hass: addon_tools.list_device_builder_firmware_jobs(
+                hass,
+                slug=None,
+                status=None,
+                configuration=None,
+                limit=50,
+                timeout=60,
+                debug=False,
+            ),
+            {"jobs": []},
+            "Device Builder returned malformed firmware/get_jobs result.",
+            id="firmware_jobs",
+        ),
+    ],
+)
+def test_device_builder_wrappers_reject_malformed_results(
+    monkeypatch: pytest.MonkeyPatch,
+    call_wrapper: Any,
+    bad_result: Any,
+    expected_error: str,
+) -> None:
+    """Structured wrappers fail closed when Device Builder returns the wrong shape."""
+
+    async def device_builder_command(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {"success": True, "result": bad_result}
+
+    monkeypatch.setattr(addon_tools, "_device_builder_command", device_builder_command)
+
+    result = _run(call_wrapper(object()))
+
+    assert result["success"] is False
+    assert result["error"] == expected_error
+
+
+def test_read_write_wrappers_preserve_success_payload_shape(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Read returns raw content while write hides Device Builder's internal result."""
+    responses = [
+        {"success": True, "result": "wifi:\n  ssid: test\n"},
+        {"success": True, "result": {"internal": "ignored"}},
+    ]
+
+    async def device_builder_command(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return responses.pop(0)
+
+    monkeypatch.setattr(addon_tools, "_device_builder_command", device_builder_command)
+
+    read_result = _run(
+        addon_tools.read_device_builder_config(
+            object(),
+            slug=None,
+            configuration="kitchen.yaml",
+            timeout=60,
+            debug=False,
+        )
+    )
+    write_result = _run(
+        addon_tools.write_device_builder_config(
+            object(),
+            slug=None,
+            configuration="kitchen.yaml",
+            content="wifi:\n",
+            allow_wipe=True,
+            timeout=60,
+            debug=False,
+        )
+    )
+
+    assert read_result == {
+        "success": True,
+        "configuration": "kitchen.yaml",
+        "content": "wifi:\n  ssid: test\n",
+    }
+    assert write_result == {
+        "success": True,
+        "configuration": "kitchen.yaml",
+        "message": "Config updated.",
+    }
+
+
+def test_http_body_parsing_handles_json_text_and_invalid_json() -> None:
+    """HTTP parsing keeps invalid JSON as text instead of raising."""
+
+    assert addon_tools._parse_http_body(
+        "application/json; charset=utf-8",
+        b'{"devices": []}',
+    ) == {"devices": []}
+    assert addon_tools._parse_http_body("text/plain", b"plain text") == "plain text"
+    assert addon_tools._parse_http_body("application/json", b"{not-json") == "{not-json"
+
+
+def test_truncate_response_bounds_large_text_and_structured_payloads() -> None:
+    """Large add-on responses are bounded before reaching MCP clients."""
+    large_text = "x" * (addon_tools._MAX_RESPONSE_SIZE + 5)
+    truncated_text, text_was_truncated = addon_tools._truncate_response(large_text)
+
+    assert text_was_truncated is True
+    assert truncated_text == "x" * addon_tools._MAX_RESPONSE_SIZE
+
+    large_payload = {"items": ["x" * addon_tools._MAX_RESPONSE_SIZE]}
+    truncated_payload, payload_was_truncated = addon_tools._truncate_response(large_payload)
+
+    assert payload_was_truncated is True
+    assert truncated_payload == {
+        "error": "RESPONSE_TOO_LARGE",
+        "message": "Response exceeds 50KB.",
     }
 
 

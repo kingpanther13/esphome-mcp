@@ -793,7 +793,7 @@ async def list_device_builder_devices(
     )
     if not response.get("success"):
         return response
-    result = response.get("result") or {}
+    result = response.get("result")
     if not isinstance(result, dict):
         return _error("Device Builder returned malformed devices/list result.")
 

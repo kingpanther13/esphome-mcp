@@ -439,6 +439,18 @@ def _addon_info_or_none(ws: HAWebSocket, slug: str) -> dict[str, Any] | None:
         raise
 
 
+def _addon_is_installed(info: dict[str, Any] | None) -> bool:
+    """Return true when Supervisor info represents an installed add-on."""
+    if not info:
+        return False
+    state = str(info.get("state") or "").lower()
+    if state in {"", "unknown"}:
+        return False
+    if info.get("installed") is False:
+        return False
+    return True
+
+
 def _install_addon_with_retry(
     ws: HAWebSocket,
     slug: str,
@@ -486,7 +498,7 @@ def install_esphome_device_builder(ws: HAWebSocket) -> str:
     slug = _discover_slug(ws, addon)
     LOG.info("Installing %s (slug=%s)", addon.name, slug)
     info = _addon_info_or_none(ws, slug)
-    if info is None:
+    if not _addon_is_installed(info):
         _install_addon_with_retry(ws, slug, timeout=900.0)
         info = ws.supervisor_api(f"/addons/{slug}/info", method="get", timeout=60.0)
     ws.supervisor_api(
