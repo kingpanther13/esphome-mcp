@@ -37,6 +37,7 @@ jobs:
         run: |
           hash=$(git ls-tree -r HEAD \
             tests/haos_image_build \
+            tests/initial_test_state \
             custom_components/esphome_mcp \
             | sha256sum | cut -d' ' -f1 | head -c16)
           echo "cache-key=esphome-mcp-haos-image-$hash" >> "$GITHUB_OUTPUT"

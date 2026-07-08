@@ -14,6 +14,8 @@ BUILD_IMAGE_PATH = ROOT / "tests" / "haos_image_build" / "build_image.py"
 HAOS_RUNTIME_PATH = ROOT / "tests" / "src" / "haos_runtime.py"
 STREAMABLE_HTTP_PATH = ROOT / "tests" / "src" / "e2e" / "utilities" / "streamable_http.py"
 EMBEDDED_E2E_PATH = ROOT / "tests" / "src" / "e2e" / "haos_only" / "test_embedded_server_haos.py"
+INITIAL_TEST_STATE = ROOT / "tests" / "initial_test_state"
+E2E_COMPONENT_WORKFLOW = ROOT / ".github" / "workflows" / "e2e-component.yml"
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
@@ -110,6 +112,22 @@ def test_build_image_installs_official_esphome_device_builder_before_bake() -> N
     assert source.index("install_esphome_device_builder(ws)") < source.index(
         "bake_component_into_config(qcow2)"
     )
+
+
+def test_build_image_bakes_from_seed_state_instead_of_live_config() -> None:
+    """The reusable HAOS config comes from the repo seed, like ha-mcp."""
+    source = BUILD_IMAGE_PATH.read_text()
+    workflow = E2E_COMPONENT_WORKFLOW.read_text()
+
+    assert INITIAL_TEST_STATE.is_dir()
+    assert (INITIAL_TEST_STATE / ".storage" / "auth").is_file()
+    assert (INITIAL_TEST_STATE / ".storage" / "auth_provider.homeassistant").is_file()
+    assert (INITIAL_TEST_STATE / ".storage" / "onboarding").is_file()
+    assert "tests/initial_test_state" in workflow
+    assert 'initial_state = repo_root / "tests" / "initial_test_state"' in source
+    assert "shutil.copytree(initial_state, config_dir)" in source
+    assert '"/supervisor/homeassistant",' in source
+    assert '"copy-out"' not in source[source.index("def bake_component_into_config") :]
 
 
 def test_build_image_waits_for_ha_core_running(monkeypatch) -> None:

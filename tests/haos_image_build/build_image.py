@@ -732,35 +732,20 @@ def _remove_runtime_artifacts(config_dir: Path) -> None:
 
 
 def bake_component_into_config(qcow2: Path) -> None:
-    """Copy live HA config out, inject this component, and tar it back in."""
+    """Bake the repo seed config plus this component into the HAOS image."""
     repo_root = Path(__file__).resolve().parent.parent.parent
+    initial_state = repo_root / "tests" / "initial_test_state"
     component_src = repo_root / "custom_components" / ESPHOME_MCP_DOMAIN
+    if not initial_state.exists():
+        raise RuntimeError(f"HAOS initial test state missing: {initial_state}")
     if not component_src.exists():
         raise RuntimeError(f"Custom component source missing: {component_src}")
 
     workdir = Path(tempfile.mkdtemp(prefix="esphome-mcp-haos-bake-"))
     try:
-        LOG.info("Copying /supervisor/homeassistant out of qcow2")
-        _run(
-            [
-                "guestfish",
-                "--ro",
-                "-a",
-                str(qcow2),
-                "run",
-                ":",
-                "mount",
-                "/dev/sda8",
-                "/",
-                ":",
-                "copy-out",
-                "/supervisor/homeassistant",
-                str(workdir),
-            ]
-        )
         config_dir = workdir / "homeassistant"
-        if not config_dir.exists():
-            raise RuntimeError(f"guestfish copy-out did not create {config_dir}")
+        shutil.copytree(initial_state, config_dir)
+        LOG.info("Staged HAOS seed state from %s", initial_state)
 
         cc_dir = config_dir / "custom_components"
         cc_dir.mkdir(exist_ok=True)
@@ -794,10 +779,10 @@ def bake_component_into_config(qcow2: Path) -> None:
                 "--owner=0",
                 "--group=0",
                 "-C",
-                str(workdir),
+                str(config_dir),
                 "-cf",
                 str(seed_tar),
-                "homeassistant",
+                ".",
             ]
         )
 
@@ -825,9 +810,15 @@ def bake_component_into_config(qcow2: Path) -> None:
                 "/dev/sda8",
                 "/",
                 ":",
+                "rm-rf",
+                "/supervisor/homeassistant",
+                ":",
+                "mkdir-p",
+                "/supervisor/homeassistant",
+                ":",
                 "tar-in",
                 str(seed_tar),
-                "/supervisor",
+                "/supervisor/homeassistant",
             ]
         )
         LOG.info("Component bake complete")
