@@ -17,7 +17,7 @@ def test_manifest_is_hacs_ready() -> None:
     assert manifest["config_flow"] is True
     assert "hassio" in manifest["after_dependencies"]
     assert "webhook" in manifest["dependencies"]
-    assert "fastmcp==3.4.2" in manifest["requirements"]
+    assert "fastmcp==3.4.2" not in manifest.get("requirements", [])
     assert manifest["version"] == "0.1.0"
 
 
@@ -36,6 +36,7 @@ def test_server_defaults_are_scaffolded() -> None:
     server = (COMPONENT / "server.py").read_text()
 
     assert "DEFAULT_SERVER_PORT = 9590" in const
+    assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.2"' in const
     assert 'name="esp_overview"' in server
     assert 'name="esp_list_devices"' in server
     assert 'name="esp_list_entities"' in server

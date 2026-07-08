@@ -90,7 +90,23 @@ def test_build_image_injects_disabled_esphome_mcp_entry(tmp_path: Path) -> None:
         "bind_host": "127.0.0.1",
         "webhook_auth": "none",
         "enable_webhook": True,
+        "pip_spec": "fastmcp==3.4.2",
     }
+
+
+def test_build_image_installs_official_esphome_device_builder_before_bake() -> None:
+    """The HAOS image builder installs ESPHome Device Builder before component bake."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    source = BUILD_IMAGE_PATH.read_text()
+
+    assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.repo == (
+        "https://github.com/esphome/home-assistant-addon"
+    )
+    assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.name == "ESPHome Device Builder"
+    assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.start is True
+    assert source.index("install_esphome_device_builder(ws)") < source.index(
+        "bake_component_into_config(qcow2)"
+    )
 
 
 def test_build_image_injects_esphome_registry_fixtures(tmp_path: Path) -> None:
@@ -149,10 +165,14 @@ def test_build_image_injects_esphome_registry_fixtures(tmp_path: Path) -> None:
     assert entity["original_device_class"] == "temperature"
 
 
-def test_build_image_defers_manifest_requirement_install_to_haos() -> None:
+def test_build_image_defers_server_requirement_install_to_entry_enable() -> None:
     """The bake must not copy runner-built wheels into HAOS config deps."""
     source = BUILD_IMAGE_PATH.read_text()
+    manifest = json.loads(
+        (ROOT / "custom_components" / "esphome_mcp" / "manifest.json").read_text()
+    )
 
+    assert "fastmcp==3.4.2" not in manifest.get("requirements", [])
     assert "_preinstall_component_requirements" not in source
     assert "/site-packages" not in source
     assert "--target" not in source
