@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   validate:
     name: Validate release
@@ -82,23 +86,44 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check existing release
-        id: existing-release
+      - name: Inspect existing release and tag
+        id: release-state
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+
+          release_error="$(mktemp)"
+          if gh api "repos/${GH_REPO}/releases/tags/${TAG}" >/dev/null 2>"$release_error"; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=Release exists::${TAG} already exists; skipping publish."
+            exit 0
+          fi
+          if ! grep -q "HTTP 404" "$release_error"; then
+            cat "$release_error" >&2
+            echo "::error title=GitHub API error::Failed to check whether release ${TAG} exists."
+            exit 1
+          fi
+
+          tag_error="$(mktemp)"
+          if gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" >/dev/null 2>"$tag_error"; then
+            echo "::error title=Tag exists without release::${TAG} exists, but no GitHub Release was found for it. Refusing to publish a release for a potentially stale tag."
+            exit 1
+          fi
+          if grep -q "HTTP 404" "$tag_error"; then
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            cat "$tag_error" >&2
+            echo "::error title=GitHub API error::Failed to check whether tag ${TAG} exists."
+            exit 1
           fi
 
       - name: Create GitHub release
-        if: steps.existing-release.outputs.exists != 'true'
+        if: steps.release-state.outputs.should_publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

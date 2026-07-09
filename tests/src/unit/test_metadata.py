@@ -158,6 +158,9 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert "branches: [master]" in workflow
     assert "workflow_dispatch:" in workflow
     assert "required: false" in workflow
+    assert "concurrency:" in workflow
+    assert "group: release-${{ github.ref_name }}" in workflow
+    assert "cancel-in-progress: false" in workflow
     assert "scripts/validate_release_metadata.py" in workflow
     assert "contents: read" in workflow
     assert "Resolve release version" in workflow
@@ -165,6 +168,10 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert "REQUESTED_VERSION: ${{ github.event.inputs.version }}" in workflow
     assert "needs: validate" in workflow
     assert "contents: write" in workflow
+    assert (
+        "if: ${{ github.ref_name == 'master' && github.event.inputs.dry_run != 'true' }}"
+        in workflow
+    )
     assert "GH_REPO: ${{ github.repository }}" in workflow
     assert "VERSION: ${{ steps.release-version.outputs.version }}" in workflow
     assert "VERSION: ${{ needs.validate.outputs.version }}" in workflow
@@ -175,8 +182,10 @@ def test_release_workflow_creates_a_github_release() -> None:
         for line in workflow.splitlines()
         if line.strip().startswith("run:")
     )
-    assert "gh release view" in workflow
-    assert "steps.existing-release.outputs.exists != 'true'" in workflow
+    assert 'gh api "repos/${GH_REPO}/releases/tags/${TAG}"' in workflow
+    assert 'gh api "repos/${GH_REPO}/git/ref/tags/${TAG}"' in workflow
+    assert "Tag exists without release" in workflow
+    assert "steps.release-state.outputs.should_publish == 'true'" in workflow
     assert "gh release create" in workflow
     assert '--target "${GITHUB_SHA}"' in workflow
     assert 'tag="v${version}"' in workflow
