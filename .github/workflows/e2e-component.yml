@@ -34,8 +34,14 @@ jobs:
 
       - name: Compute image cache key
         id: key
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          esphome_addon_config="$(curl -fsSL https://raw.githubusercontent.com/esphome/home-assistant-addon/main/esphome/config.yaml)"
+          esphome_addon_config="$(
+            gh api \
+              -H "Accept: application/vnd.github.raw" \
+              repos/esphome/home-assistant-addon/contents/esphome/config.yaml
+          )"
           esphome_addon_hash="$(
             printf '%s' "$esphome_addon_config" | sha256sum | cut -d' ' -f1 | head -c16
           )"
@@ -43,6 +49,10 @@ jobs:
             printf '%s\n' "$esphome_addon_config" \
               | awk '/^version:/{gsub(/"/, "", $2); print $2; exit}'
           )"
+          if [ -z "$esphome_version" ]; then
+            echo "Failed to parse ESPHome Device Builder add-on version" >&2
+            exit 1
+          fi
           hash=$(git ls-tree -r HEAD \
             tests/haos_image_build \
             tests/initial_test_state \

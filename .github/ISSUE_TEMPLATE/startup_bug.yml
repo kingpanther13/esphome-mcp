@@ -1,0 +1,112 @@
+name: "Startup/Installation Bug"
+description: "Report a bug preventing ESPHome MCP from installing, starting, or connecting"
+title: "[BUG] "
+labels: ["bug", "startup"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Report a Startup/Installation Bug
+
+        Use this template when:
+        - HACS cannot install or update ESPHome MCP
+        - Home Assistant cannot load the custom component
+        - The embedded MCP server does not start
+        - Your MCP client cannot connect through the Home Assistant ingress/webhook URL
+
+  - type: textarea
+    id: what_went_wrong
+    attributes:
+      label: "What went wrong?"
+      description: |
+        In your own words, describe what happened when you tried to install, start, or connect.
+      placeholder: |
+        Example: "HACS reports the repository is invalid after I add the custom repository URL."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs_and_config
+    attributes:
+      label: "Logs, errors, and configuration"
+      description: |
+        Paste any relevant Home Assistant logs, HACS errors, MCP client configuration, or browser errors.
+        Remove webhook secrets, tokens, passwords, API keys, and private URLs before submitting.
+      placeholder: |
+        [Paste logs, HACS errors, MCP client config, or browser console output here]
+      render: markdown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: "Client application"
+      description: "Which MCP client are you using?"
+      options:
+        - "Claude Desktop"
+        - "Claude Code"
+        - "Codex"
+        - "Continue"
+        - "Cline"
+        - "Open WebUI"
+        - "Gemini CLI"
+        - "VS Code"
+        - "Cursor"
+        - "Zed"
+        - "Other"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation_method
+    attributes:
+      label: "Installation method"
+      description: "How did you install ESPHome MCP?"
+      options:
+        - "HACS custom repository"
+        - "Manual custom_components copy"
+        - "Git clone / development checkout"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: "Home Assistant version"
+      placeholder: "2026.7.0"
+    validations:
+      required: true
+
+  - type: input
+    id: hacs_version
+    attributes:
+      label: "HACS version"
+      placeholder: "2.0.0"
+    validations:
+      required: false
+
+  - type: input
+    id: esphome_mcp_version
+    attributes:
+      label: "ESPHome MCP version"
+      placeholder: "0.1.0 or commit SHA"
+    validations:
+      required: false
+
+  - type: textarea
+    id: exact_steps
+    attributes:
+      label: "Exact steps"
+      description: |
+        Describe the exact install or connection steps you followed and where the failure occurred.
+      placeholder: |
+        1. Added the custom repository URL in HACS
+        2. Installed ESPHome MCP
+        3. Restarted Home Assistant
+        4. Opened the ESPHome MCP panel
+        5. Saw error: ...
+    validations:
+      required: true

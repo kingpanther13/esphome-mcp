@@ -1,0 +1,85 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "UTC",
+  "schedule": [
+    "after 3pm on tuesday"
+  ],
+  "enabledManagers": [
+    "custom.regex",
+    "github-actions",
+    "pep621",
+    "pip_requirements"
+  ],
+  "ignorePaths": [],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/tests/.*\\.py$/",
+        "/.github/workflows/.*\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+[A-Z0-9_]+\\s*=\\s*[\"']?(?<currentValue>[\\w.+-]+)[\"']?",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\S+:\\s*[\"']?(?<currentValue>[\\w.+-]+)[\"']?"
+      ],
+      "depNameTemplate": "{{{depName}}}",
+      "datasourceTemplate": "{{{datasource}}}"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Python project and E2E requirements",
+      "matchManagers": [
+        "pep621",
+        "pip_requirements"
+      ],
+      "labels": [
+        "dependencies",
+        "python"
+      ]
+    },
+    {
+      "description": "GitHub Actions workflow dependencies",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "labels": [
+        "dependencies",
+        "ci"
+      ]
+    },
+    {
+      "description": "Home Assistant OS image version used by HAOS E2E",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "home-assistant/operating-system"
+      ],
+      "labels": [
+        "dependencies",
+        "haos",
+        "e2e"
+      ]
+    },
+    {
+      "description": "ESPHome test dependencies",
+      "matchPackageNames": [
+        "aioesphomeapi",
+        "esphome"
+      ],
+      "groupName": "esphome test dependencies",
+      "labels": [
+        "dependencies",
+        "esphome",
+        "e2e"
+      ]
+    }
+  ],
+  "labels": [
+    "dependencies"
+  ]
+}

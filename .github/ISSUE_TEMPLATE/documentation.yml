@@ -1,0 +1,64 @@
+name: "Documentation Issue"
+description: "Report errors, unclear instructions, or documentation improvements"
+title: "[DOCS] "
+labels: ["documentation"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Documentation Issue
+
+        Report errors, unclear instructions, or missing documentation.
+
+  - type: dropdown
+    id: doc_type
+    attributes:
+      label: "Where is the issue?"
+      options:
+        - "README"
+        - "HACS installation"
+        - "Home Assistant setup"
+        - "MCP client setup"
+        - "Tool documentation"
+        - "CI or testing documentation"
+        - "Other"
+    validations:
+      required: true
+
+  - type: input
+    id: page_url
+    attributes:
+      label: "Link to page"
+      description: "Paste the URL of the page with the issue, if applicable."
+      placeholder: "https://github.com/kingpanther13/esphome-mcp/..."
+    validations:
+      required: false
+
+  - type: textarea
+    id: issue_description
+    attributes:
+      label: "What is wrong or unclear?"
+      description: "Describe the documentation problem."
+      placeholder: |
+        Example: "The HACS instructions do not explain which custom repository category to choose."
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggested_fix
+    attributes:
+      label: "How should it be fixed?"
+      description: "Optional: suggest what the docs should say instead."
+      placeholder: |
+        Example: "Add a note that the custom repository category must be Integration."
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: "Additional context"
+      description: "Screenshots, browser information, or other helpful details."
+    validations:
+      required: false
