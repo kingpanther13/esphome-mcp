@@ -368,7 +368,11 @@ def _install_config_flow_stubs(
             return None
 
     class OptionsFlow:
-        pass
+        def async_show_form(self, **kwargs: Any) -> dict[str, Any]:
+            return {"type": "form", **kwargs}
+
+        def async_create_entry(self, **kwargs: Any) -> dict[str, Any]:
+            return {"type": "create_entry", **kwargs}
 
     config_entries_mod.ConfigEntry = object
     config_entries_mod.ConfigFlow = ConfigFlow
@@ -517,3 +521,55 @@ def test_options_hint_propagates_disabled_webhook_option(
         "entry": flow.config_entry,
         "webhook_enabled": False,
     }
+
+
+def test_options_normalize_drops_stale_fastmcp_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stale clients cannot persist the removed FastMCP package override."""
+    _install_config_flow_stubs(monkeypatch, resolved_urls=[])
+    module = importlib.import_module("custom_components.esphome_mcp.config_flow")
+
+    normalized = module.EspHomeMcpOptionsFlow._normalize(
+        {
+            module.OPT_SERVER_PORT: 9590,
+            module.OPT_BIND_HOST: module.BIND_HOST_LOOPBACK,
+            module.OPT_WEBHOOK_AUTH: module.WEBHOOK_AUTH_NONE,
+            module.OPT_ENABLE_WEBHOOK: True,
+            module.OPT_EXTERNAL_URL: "https://example.com/",
+            module.OPT_WEBHOOK_ID_OVERRIDE: "",
+            module.OPT_SECRET_PATH_OVERRIDE: "",
+            "pip_spec": "fastmcp==0.0.1",
+        }
+    )
+
+    assert normalized[module.OPT_EXTERNAL_URL] == "https://example.com"
+    assert "pip_spec" not in normalized
+
+
+def test_options_form_schema_omits_stale_fastmcp_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rendered Configure form never exposes the removed FastMCP override."""
+    _install_config_flow_stubs(monkeypatch, resolved_urls=[])
+    module = importlib.import_module("custom_components.esphome_mcp.config_flow")
+    flow = module.EspHomeMcpOptionsFlow()
+    flow.config_entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={
+            module.OPT_SERVER_PORT: 9590,
+            module.OPT_BIND_HOST: module.BIND_HOST_LOOPBACK,
+            module.OPT_WEBHOOK_AUTH: module.WEBHOOK_AUTH_NONE,
+            module.OPT_ENABLE_WEBHOOK: True,
+            "pip_spec": "fastmcp==0.0.1",
+        },
+    )
+
+    result = asyncio.run(flow.async_step_init())
+
+    schema = result["data_schema"]
+    assert "pip_spec" not in schema
+    assert module.OPT_SERVER_PORT in schema

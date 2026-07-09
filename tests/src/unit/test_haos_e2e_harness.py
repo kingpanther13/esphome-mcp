@@ -92,8 +92,8 @@ def test_build_image_injects_disabled_esphome_mcp_entry(tmp_path: Path) -> None:
         "bind_host": "127.0.0.1",
         "webhook_auth": "none",
         "enable_webhook": True,
-        "pip_spec": "fastmcp==3.4.2",
     }
+    assert "pip_spec" not in entry["options"]
 
 
 def test_build_image_installs_official_esphome_device_builder_before_bake() -> None:

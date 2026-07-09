@@ -49,7 +49,6 @@ ESPHOME_MCP_ENTRY_ID = "e2e_test_esphome_mcp_server_entry"
 ESPHOME_MCP_WEBHOOK_ID = "esp_mcp_e2e_haos"
 ESPHOME_MCP_SECRET_PATH = "/private_e2e_esphome_mcp_haos"
 ESPHOME_MCP_PORT = 9590
-ESPHOME_MCP_PIP_SPEC = "fastmcp==3.4.2"
 ESPHOME_FIXTURE_DEVICE_ID = "ee2e0000000000000000000000000001"
 ESPHOME_FIXTURE_ENTITY_REGISTRY_ID = "ee2e0000000000000000000000000002"
 ESPHOME_FIXTURE_ENTITY_ID = "sensor.kitchen_esphome_temperature"
@@ -566,7 +565,6 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
                     "bind_host": "127.0.0.1",
                     "webhook_auth": "none",
                     "enable_webhook": True,
-                    "pip_spec": ESPHOME_MCP_PIP_SPEC,
                 },
                 "pref_disable_new_entities": False,
                 "pref_disable_polling": False,

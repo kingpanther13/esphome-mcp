@@ -1,16 +1,17 @@
 """Constants for the ESPHome MCP custom component."""
 
 DOMAIN = "esphome_mcp"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 DEFAULT_SERVER_PORT = 9590
 DEFAULT_BIND_HOST = "0.0.0.0"
 BIND_HOST_ALL = "0.0.0.0"
 BIND_HOST_LOOPBACK = "127.0.0.1"
 
-# Installed at runtime through Home Assistant's requirements manager when the
-# in-process server entry is enabled. Keeping this out of manifest.json lets HAOS
-# boot with the baked entry disabled, matching ha-mcp's embedded server pattern.
+# Installed at runtime when the in-process server entry is enabled. Keeping this
+# out of manifest.json lets HAOS boot with the baked entry disabled, matching
+# ha-mcp's embedded server pattern. Pin this to the known-good FastMCP version
+# used by this component so installs do not drift under users.
 DEFAULT_PIP_SPEC = "fastmcp==3.4.2"
 
 SERVER_CONFIG_SUBDIR = ".esphome_mcp"
@@ -23,7 +24,6 @@ OPT_WEBHOOK_ID_OVERRIDE = "webhook_id_override"
 OPT_SECRET_PATH_OVERRIDE = "secret_path_override"
 OPT_REGENERATE_SECRETS = "regenerate_secrets"
 OPT_ENABLE_WEBHOOK = "enable_webhook"
-OPT_PIP_SPEC = "pip_spec"
 
 DATA_WEBHOOK_ID = "webhook_id"
 DATA_SECRET_PATH = "secret_path"
