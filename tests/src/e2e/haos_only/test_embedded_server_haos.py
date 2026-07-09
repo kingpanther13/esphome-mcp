@@ -10,6 +10,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import pytest
 import requests
@@ -642,10 +643,21 @@ class TestEmbeddedServerOnHaos:
         placeholders = flow.get("description_placeholders")
         assert isinstance(placeholders, dict), flow
         connect_url = str(placeholders.get("connect_url") or "")
+        urls = [
+            line[2:].strip()
+            for line in connect_url.splitlines()
+            if line.startswith("- http") and "/api/webhook/" in line
+        ]
 
         assert "Connect URL(s):" in connect_url, flow
         assert f"/api/webhook/{ESPHOME_MCP_SERVER_WEBHOOK_ID}" in connect_url
-        assert "://" in connect_url
+        assert urls, connect_url
+        for url in urls:
+            parsed = urlparse(url)
+            assert parsed.scheme in {"http", "https"}, url
+            assert parsed.netloc, url
+            assert parsed.path == f"/api/webhook/{ESPHOME_MCP_SERVER_WEBHOOK_ID}", url
+            assert "None" not in url
         assert "<your-home-assistant-url>" not in connect_url
         assert "Home Assistant URL unavailable" not in connect_url
 

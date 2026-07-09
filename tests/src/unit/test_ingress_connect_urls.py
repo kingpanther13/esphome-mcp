@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import sys
 from pathlib import Path
@@ -30,6 +31,7 @@ def _install_embedded_setup_stubs(
     *,
     cloud_url: str | None = "https://example.ui.nabu.casa",
     local_url: str | None = "http://homeassistant.local:8123",
+    notification_calls: list[dict[str, Any]] | None = None,
 ) -> None:
     """Install enough Home Assistant modules to import embedded_setup.py."""
     _install_package_stubs(monkeypatch)
@@ -39,7 +41,37 @@ def _install_embedded_setup_stubs(
     components_mod = ModuleType("homeassistant.components")
     components_mod.__path__ = []
     persistent_mod = ModuleType("homeassistant.components.persistent_notification")
-    persistent_mod.async_create = lambda *_args, **_kwargs: None
+
+    def async_create(
+        hass: Any,
+        message: str,
+        *,
+        title: str,
+        notification_id: str,
+    ) -> None:
+        if notification_calls is not None:
+            notification_calls.append(
+                {
+                    "action": "create",
+                    "hass": hass,
+                    "message": message,
+                    "title": title,
+                    "notification_id": notification_id,
+                }
+            )
+
+    def async_dismiss(hass: Any, notification_id: str) -> None:
+        if notification_calls is not None:
+            notification_calls.append(
+                {
+                    "action": "dismiss",
+                    "hass": hass,
+                    "notification_id": notification_id,
+                }
+            )
+
+    persistent_mod.async_create = async_create
+    persistent_mod.async_dismiss = async_dismiss
     components_mod.persistent_notification = persistent_mod
 
     cloud_mod = ModuleType("homeassistant.components.cloud")
@@ -94,10 +126,22 @@ def _install_embedded_setup_stubs(
         (Exception,),
         {},
     )
-    embedded_server_mod.EmbeddedServerManager = object
+
+    class EmbeddedServerManager:
+        async def async_stop(self) -> None:
+            return None
+
+    embedded_server_mod.EmbeddedServerManager = EmbeddedServerManager
     webhook_mod = ModuleType("custom_components.esphome_mcp.mcp_webhook")
-    webhook_mod.async_register_webhook = lambda *_args, **_kwargs: None
-    webhook_mod.async_unregister_webhook = lambda *_args, **_kwargs: None
+
+    async def async_register_webhook(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    async def async_unregister_webhook(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    webhook_mod.async_register_webhook = async_register_webhook
+    webhook_mod.async_unregister_webhook = async_unregister_webhook
 
     for module_name in (
         "custom_components.esphome_mcp.embedded_setup",
@@ -126,11 +170,13 @@ def _load_embedded_setup(
     *,
     cloud_url: str | None = "https://example.ui.nabu.casa",
     local_url: str | None = "http://homeassistant.local:8123",
+    notification_calls: list[dict[str, Any]] | None = None,
 ) -> ModuleType:
     _install_embedded_setup_stubs(
         monkeypatch,
         cloud_url=cloud_url,
         local_url=local_url,
+        notification_calls=notification_calls,
     )
     return importlib.import_module("custom_components.esphome_mcp.embedded_setup")
 
@@ -206,6 +252,28 @@ def test_build_connect_urls_disabled_webhook_only_surfaces_direct_access(
     assert urls == ["http://homeassistant.local:9590/private_abc (direct access)"]
 
 
+def test_build_connect_urls_brackets_ipv6_direct_access_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Direct-access URLs preserve IPv6 brackets from Home Assistant's local URL."""
+    module = _load_embedded_setup(monkeypatch, local_url="http://[fd00::1]:8123")
+    entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={
+            module.OPT_BIND_HOST: module.BIND_HOST_ALL,
+            module.OPT_SERVER_PORT: 9590,
+        },
+    )
+
+    urls = module.build_connect_urls(SimpleNamespace(), entry)
+
+    assert "http://[fd00::1]:9590/private_abc (direct access)" in urls
+    assert "http://fd00::1:9590/private_abc (direct access)" not in urls
+
+
 def test_build_connect_urls_no_resolved_base_never_uses_old_placeholder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -228,6 +296,53 @@ def test_build_connect_urls_no_resolved_base_never_uses_old_placeholder(
     assert all("<your-home-assistant-url>" not in url for url in urls)
 
 
+def test_surface_connect_urls_notification_omits_secret_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-admin-visible persistent notification does not carry credentials."""
+    notification_calls: list[dict[str, Any]] = []
+    module = _load_embedded_setup(monkeypatch, notification_calls=notification_calls)
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={
+            module.OPT_BIND_HOST: module.BIND_HOST_ALL,
+            module.OPT_SERVER_PORT: 9590,
+        },
+    )
+
+    module._surface_connect_urls(hass, entry, module.WEBHOOK_AUTH_NONE)
+
+    create_calls = [call for call in notification_calls if call["action"] == "create"]
+    assert len(create_calls) == 1
+    message = create_calls[0]["message"]
+    assert "/api/webhook/abc123" not in message
+    assert "/private_abc" not in message
+    assert "Configure screen" in message
+    assert create_calls[0]["notification_id"] == module._NOTIFICATION_ID
+
+
+def test_teardown_dismisses_running_notification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unload/removal clears the running notification instead of leaving stale status."""
+    notification_calls: list[dict[str, Any]] = []
+    module = _load_embedded_setup(monkeypatch, notification_calls=notification_calls)
+    hass = SimpleNamespace(data={module.DOMAIN: {}})
+
+    asyncio.run(module.async_teardown_server(hass))
+    asyncio.run(module.async_remove_server(hass, SimpleNamespace()))
+
+    dismiss_calls = [call for call in notification_calls if call["action"] == "dismiss"]
+    assert dismiss_calls == [
+        {"action": "dismiss", "hass": hass, "notification_id": module._NOTIFICATION_ID},
+        {"action": "dismiss", "hass": hass, "notification_id": module._NOTIFICATION_ID},
+    ]
+
+
 def _install_config_flow_stubs(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -239,6 +354,13 @@ def _install_config_flow_stubs(
 
     ha_mod = ModuleType("homeassistant")
     ha_mod.__path__ = []
+    vol_mod = ModuleType("voluptuous")
+    vol_mod.Schema = lambda schema: schema
+    vol_mod.Required = lambda key, **_kwargs: key
+    vol_mod.Optional = lambda key, **_kwargs: key
+    vol_mod.All = lambda *validators: validators
+    vol_mod.Coerce = lambda value_type: value_type
+    vol_mod.Range = lambda **_kwargs: object()
     config_entries_mod = ModuleType("homeassistant.config_entries")
 
     class ConfigFlow:
@@ -301,6 +423,7 @@ def _install_config_flow_stubs(
         monkeypatch.delitem(sys.modules, module_name, raising=False)
 
     for name, module in {
+        "voluptuous": vol_mod,
         "homeassistant": ha_mod,
         "homeassistant.config_entries": config_entries_mod,
         "homeassistant.core": core_mod,
@@ -363,3 +486,34 @@ def test_options_hint_static_fallback_avoids_bad_placeholder(
     assert "Remote connect URL: /api/webhook/abc123" in hint
     assert "Home Assistant URL unavailable" in hint
     assert "<your-home-assistant-url>" not in hint
+
+
+def test_options_hint_propagates_disabled_webhook_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The options hint asks the resolver for local-only URLs when webhook is disabled."""
+    captured = _install_config_flow_stubs(monkeypatch, resolved_urls=[])
+    module = importlib.import_module("custom_components.esphome_mcp.config_flow")
+    flow = module.EspHomeMcpOptionsFlow()
+    flow.hass = object()
+    flow.config_entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={
+            module.OPT_ENABLE_WEBHOOK: False,
+            module.OPT_SERVER_PORT: 9590,
+        },
+    )
+
+    hint = flow._connect_url_hint()
+
+    assert "Remote access via webhook is disabled" in hint
+    assert "http://127.0.0.1:9590/private_abc" in hint
+    assert "/api/webhook/abc123" not in hint
+    assert captured == {
+        "hass": flow.hass,
+        "entry": flow.config_entry,
+        "webhook_enabled": False,
+    }

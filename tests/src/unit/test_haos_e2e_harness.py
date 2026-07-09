@@ -281,4 +281,6 @@ def test_embedded_e2e_module_tracks_expected_webhook_and_tool_names() -> None:
     assert "/api/config/config_entries/options/flow" in string_constants
     assert "description_placeholders" in string_constants
     assert "connect_url" in string_constants
-    assert "<your-home-assistant-url>" in string_constants
+    source = EMBEDDED_E2E_PATH.read_text()
+    assert 'assert "<your-home-assistant-url>" not in connect_url' in source
+    assert 'assert "Home Assistant URL unavailable" not in connect_url' in source

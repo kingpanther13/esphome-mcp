@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
+from ipaddress import ip_address
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -84,11 +85,13 @@ async def async_teardown_server(hass: HomeAssistant) -> None:
     manager = hass.data.get(DOMAIN, {}).pop(DATA_MANAGER, None)
     if isinstance(manager, EmbeddedServerManager):
         await manager.async_stop()
+    persistent_notification.async_dismiss(hass, _NOTIFICATION_ID)
 
 
 async def async_remove_server(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Clear repair issues on entry removal."""
     _clear_issues(hass)
+    persistent_notification.async_dismiss(hass, _NOTIFICATION_ID)
 
 
 def _surface_connect_urls(
@@ -174,10 +177,21 @@ def build_connect_urls(
     bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
     secret_path = entry.data.get(DATA_SECRET_PATH)
     if bind_host == BIND_HOST_ALL and secret_path:
-        urls.append(
-            f"http://{local_host or '<home-assistant-ip>'}:{port}{secret_path} (direct access)"
-        )
+        urls.append(f"http://{_direct_url_host(local_host)}:{port}{secret_path} (direct access)")
     return urls
+
+
+def _direct_url_host(host: str | None) -> str:
+    """Return a host suitable for direct-access URL rendering."""
+    if not host:
+        return "<home-assistant-ip>"
+    try:
+        parsed = ip_address(host)
+    except ValueError:
+        return host
+    if parsed.version == 6:
+        return f"[{host}]"
+    return host
 
 
 _ISSUE_BY_KIND = {
