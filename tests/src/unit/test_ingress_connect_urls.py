@@ -206,6 +206,28 @@ def test_build_connect_urls_disabled_webhook_only_surfaces_direct_access(
     assert urls == ["http://homeassistant.local:9590/private_abc (direct access)"]
 
 
+def test_build_connect_urls_no_resolved_base_never_uses_old_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The no-cloud/no-local fallback avoids the bad literal base placeholder."""
+    module = _load_embedded_setup(monkeypatch, cloud_url=None, local_url=None)
+    entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={
+            module.OPT_BIND_HOST: "127.0.0.1",
+            module.OPT_SERVER_PORT: 9590,
+        },
+    )
+
+    urls = module.build_connect_urls(SimpleNamespace(), entry)
+
+    assert urls == ["/api/webhook/abc123  (prefix with your Home Assistant URL)"]
+    assert all("<your-home-assistant-url>" not in url for url in urls)
+
+
 def _install_config_flow_stubs(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -319,3 +341,25 @@ def test_options_hint_uses_resolved_connect_urls(
         "entry": flow.config_entry,
         "webhook_enabled": True,
     }
+
+
+def test_options_hint_static_fallback_avoids_bad_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even without hass on the flow object, the old placeholder is not rendered."""
+    _install_config_flow_stubs(monkeypatch, resolved_urls=[])
+    module = importlib.import_module("custom_components.esphome_mcp.config_flow")
+    flow = module.EspHomeMcpOptionsFlow()
+    flow.config_entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={},
+    )
+
+    hint = flow._connect_url_hint()
+
+    assert "Remote connect URL: /api/webhook/abc123" in hint
+    assert "Home Assistant URL unavailable" in hint
+    assert "<your-home-assistant-url>" not in hint

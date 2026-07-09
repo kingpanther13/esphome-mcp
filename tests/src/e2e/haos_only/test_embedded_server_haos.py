@@ -434,6 +434,17 @@ def _create_live_esphome_config_entry(
     return result
 
 
+def _start_esphome_mcp_options_flow(base_url: str, token: str) -> dict[str, Any]:
+    """Open the ESPHome MCP Configure form through HA's options-flow endpoint."""
+    return _ha_json(
+        base_url,
+        token,
+        "POST",
+        "/api/config/config_entries/options/flow",
+        {"handler": ESPHOME_MCP_SERVER_ENTRY_ID},
+    )
+
+
 async def _exercise_live_host_device_in_haos(
     base_url: str,
     session_id: str | None,
@@ -618,6 +629,25 @@ class TestEmbeddedServerOnHaos:
         assert payload["success"] is True
         assert payload["mcp_domain"] == "esphome_mcp"
         assert "device_count" in payload
+
+    def test_options_flow_shows_resolved_webhook_connect_url(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, _session_id, _configuration = embedded_server
+        token = login_for_token(base_url)
+
+        flow = _start_esphome_mcp_options_flow(base_url, token)
+        assert flow.get("type") == "form", flow
+        placeholders = flow.get("description_placeholders")
+        assert isinstance(placeholders, dict), flow
+        connect_url = str(placeholders.get("connect_url") or "")
+
+        assert "Connect URL(s):" in connect_url, flow
+        assert f"/api/webhook/{ESPHOME_MCP_SERVER_WEBHOOK_ID}" in connect_url
+        assert "://" in connect_url
+        assert "<your-home-assistant-url>" not in connect_url
+        assert "Home Assistant URL unavailable" not in connect_url
 
     def test_home_assistant_esphome_registry_search_tools(
         self,
