@@ -517,3 +517,27 @@ def test_options_hint_propagates_disabled_webhook_option(
         "entry": flow.config_entry,
         "webhook_enabled": False,
     }
+
+
+def test_options_normalize_drops_stale_fastmcp_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stale clients cannot persist the removed FastMCP package override."""
+    _install_config_flow_stubs(monkeypatch, resolved_urls=[])
+    module = importlib.import_module("custom_components.esphome_mcp.config_flow")
+
+    normalized = module.EspHomeMcpOptionsFlow._normalize(
+        {
+            module.OPT_SERVER_PORT: 9590,
+            module.OPT_BIND_HOST: module.BIND_HOST_LOOPBACK,
+            module.OPT_WEBHOOK_AUTH: module.WEBHOOK_AUTH_NONE,
+            module.OPT_ENABLE_WEBHOOK: True,
+            module.OPT_EXTERNAL_URL: "https://example.com/",
+            module.OPT_WEBHOOK_ID_OVERRIDE: "",
+            module.OPT_SECRET_PATH_OVERRIDE: "",
+            "pip_spec": "fastmcp==0.0.1",
+        }
+    )
+
+    assert normalized[module.OPT_EXTERNAL_URL] == "https://example.com"
+    assert "pip_spec" not in normalized

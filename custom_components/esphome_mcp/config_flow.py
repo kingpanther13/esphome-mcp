@@ -21,13 +21,11 @@ from .const import (
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
     DEFAULT_BIND_HOST,
-    DEFAULT_PIP_SPEC,
     DEFAULT_SERVER_PORT,
     DOMAIN,
     OPT_BIND_HOST,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
-    OPT_PIP_SPEC,
     OPT_REGENERATE_SECRETS,
     OPT_SECRET_PATH_OVERRIDE,
     OPT_SERVER_PORT,
@@ -122,10 +120,6 @@ class EspHomeMcpOptionsFlow(OptionsFlow):
                     OPT_SECRET_PATH_OVERRIDE,
                     default=opts.get(OPT_SECRET_PATH_OVERRIDE, ""),
                 ): str,
-                vol.Optional(
-                    OPT_PIP_SPEC,
-                    default=opts.get(OPT_PIP_SPEC) or DEFAULT_PIP_SPEC,
-                ): str,
                 vol.Optional(OPT_REGENERATE_SECRETS, default=False): bool,
             }
         )
@@ -139,16 +133,14 @@ class EspHomeMcpOptionsFlow(OptionsFlow):
     def _normalize(user_input: dict[str, Any]) -> dict[str, Any]:
         """Normalize option strings before storing them."""
         cleaned = dict(user_input)
+        cleaned.pop("pip_spec", None)
         for key in (
             OPT_EXTERNAL_URL,
             OPT_WEBHOOK_ID_OVERRIDE,
             OPT_SECRET_PATH_OVERRIDE,
-            OPT_PIP_SPEC,
         ):
             cleaned[key] = str(cleaned.get(key, "") or "").strip()
         cleaned[OPT_EXTERNAL_URL] = cleaned[OPT_EXTERNAL_URL].rstrip("/")
-        if cleaned[OPT_PIP_SPEC] == DEFAULT_PIP_SPEC:
-            cleaned[OPT_PIP_SPEC] = ""
         return cleaned
 
     def _connect_url_hint(self) -> str:

@@ -19,7 +19,6 @@ from .const import (
     DEFAULT_PIP_SPEC,
     DEFAULT_SERVER_PORT,
     OPT_BIND_HOST,
-    OPT_PIP_SPEC,
     OPT_SERVER_PORT,
     SERVER_CONFIG_SUBDIR,
 )
@@ -54,7 +53,7 @@ class EmbeddedServerManager:
         self._port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
         self._bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
         self._secret_path = str(entry.data.get(DATA_SECRET_PATH, ""))
-        self._pip_spec = str(entry.options.get(OPT_PIP_SPEC) or DEFAULT_PIP_SPEC).strip()
+        self._pip_spec = DEFAULT_PIP_SPEC
         self._config_dir = hass.config.path(SERVER_CONFIG_SUBDIR)
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None

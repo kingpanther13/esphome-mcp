@@ -57,6 +57,8 @@ def test_server_defaults_are_scaffolded() -> None:
 
     assert "DEFAULT_SERVER_PORT = 9590" in const
     assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.2"' in const
+    assert "OPT_PIP_SPEC" not in const
+    assert 'DATA_LAST_PIP_SPEC = "last_pip_spec"' in const
     assert 'name="esp_overview"' in server
     assert 'name="esp_list_devices"' in server
     assert 'name="esp_list_entities"' in server

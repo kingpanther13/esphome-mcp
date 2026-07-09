@@ -125,7 +125,7 @@ def test_dependency_fast_path_uses_home_assistant_requirements(monkeypatch: Any)
 
     entry = SimpleNamespace(
         data={module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC},
-        options={},
+        options={"pip_spec": "fastmcp==0.0.1"},
     )
     manager = module.EmbeddedServerManager(_FakeHass(), entry)
 
@@ -141,8 +141,8 @@ def test_dependency_fast_path_uses_home_assistant_requirements(monkeypatch: Any)
     assert install_calls == []
 
 
-def test_missing_dependency_forces_install_and_records_spec(monkeypatch: Any) -> None:
-    """Missing or changed dependencies force a real install and persist last_pip_spec."""
+def test_missing_dependency_forces_install_of_pinned_requirement(monkeypatch: Any) -> None:
+    """Missing dependencies force a real install of the pinned server requirement."""
     install_calls: list[tuple[str, bool, dict[str, Any]]] = []
     importable = iter([False, True])
 
@@ -154,7 +154,7 @@ def test_missing_dependency_forces_install_and_records_spec(monkeypatch: Any) ->
     monkeypatch.setattr(module, "_server_dependencies_importable", lambda: next(importable))
 
     hass = _FakeHass()
-    entry = SimpleNamespace(data={}, options={"pip_spec": "fastmcp==3.4.2"})
+    entry = SimpleNamespace(data={}, options={"pip_spec": "fastmcp==0.0.1"})
     manager = module.EmbeddedServerManager(hass, entry)
 
     _run(manager._async_ensure_package())
@@ -166,7 +166,49 @@ def test_missing_dependency_forces_install_and_records_spec(monkeypatch: Any) ->
             {"config_dir": "/config", "timeout": 300},
         )
     ]
-    assert hass.config_entries.updated == {"last_pip_spec": "fastmcp==3.4.2"}
+    assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC}
+
+
+def test_changed_code_pin_forces_install_even_when_importable(monkeypatch: Any) -> None:
+    """A code-side FastMCP pin change bypasses HA's already-importable shortcut."""
+    process_calls: list[tuple[str, list[str], bool]] = []
+    install_calls: list[tuple[str, bool, dict[str, Any]]] = []
+
+    async def async_process_requirements(
+        _hass: Any,
+        label: str,
+        requirements: list[str],
+        *,
+        is_built_in: bool,
+    ) -> None:
+        process_calls.append((label, requirements, is_built_in))
+
+    def install_package(spec: str, *, upgrade: bool, **kwargs: Any) -> bool:
+        install_calls.append((spec, upgrade, kwargs))
+        return True
+
+    module = _load_embedded_server(
+        monkeypatch,
+        async_process_requirements=async_process_requirements,
+        install_package=install_package,
+    )
+    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
+
+    hass = _FakeHass()
+    entry = SimpleNamespace(data={module.DATA_LAST_PIP_SPEC: "fastmcp==0.0.1"}, options={})
+    manager = module.EmbeddedServerManager(hass, entry)
+
+    _run(manager._async_ensure_package())
+
+    assert process_calls == []
+    assert install_calls == [
+        (
+            "fastmcp==3.4.2",
+            True,
+            {"config_dir": "/config", "timeout": 300},
+        )
+    ]
+    assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC}
 
 
 def test_requirement_install_failure_raises_package_error(monkeypatch: Any) -> None:
