@@ -111,10 +111,8 @@ def test_build_image_installs_official_esphome_device_builder_before_bake() -> N
     assert source.index("install_esphome_device_builder(ws)") < source.index(
         "bake_component_into_config(qcow2)"
     )
-    assert (
-        "raw.githubusercontent.com/esphome/home-assistant-addon/main/esphome/config.yaml"
-        in workflow
-    )
+    assert "repos/esphome/home-assistant-addon/contents/esphome/config.yaml" in workflow
+    assert "GH_TOKEN: ${{ github.token }}" in workflow
     assert "esphome-addon-hash" in workflow
 
 
