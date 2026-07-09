@@ -6,6 +6,7 @@ import asyncio
 import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 from homeassistant.components import persistent_notification
 from homeassistant.core import HomeAssistant
@@ -98,41 +99,7 @@ def _surface_connect_urls(
     webhook_enabled: bool = True,
 ) -> None:
     """Log connect URLs and create an admin-safe notification."""
-    from homeassistant.helpers.network import NoURLAvailableError, get_url
-
-    webhook_id = entry.data[DATA_WEBHOOK_ID]
-    urls: list[str] = []
-    external = str(entry.options.get(OPT_EXTERNAL_URL) or "").rstrip("/")
-    if not webhook_enabled:
-        external = ""
-        webhook_id = None
-    if external:
-        urls.append(f"{external}/api/webhook/{webhook_id}")
-
-    try:
-        from homeassistant.components.cloud import CloudNotAvailable, async_remote_ui_url
-
-        try:
-            if webhook_id:
-                cloud_base = async_remote_ui_url(hass)
-                urls.append(f"{cloud_base}/api/webhook/{webhook_id}")
-        except CloudNotAvailable:
-            pass
-    except ImportError:
-        pass
-
-    try:
-        if webhook_id:
-            local_base = get_url(hass, allow_external=False, prefer_external=False)
-            urls.append(f"{local_base}/api/webhook/{webhook_id}")
-    except NoURLAvailableError:
-        pass
-
-    if not urls and webhook_id:
-        urls.append(f"/api/webhook/{webhook_id} (prefix with your Home Assistant URL)")
-
-    port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
-    bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
+    urls = build_connect_urls(hass, entry, webhook_enabled=webhook_enabled)
     auth_note = (
         "Webhook access is disabled (local-only mode)."
         if not webhook_enabled
@@ -140,11 +107,6 @@ def _surface_connect_urls(
         if auth_mode == WEBHOOK_AUTH_NONE
         else "Clients authenticate with a Home Assistant administrator account (ha_auth)."
     )
-
-    if bind_host == BIND_HOST_ALL:
-        urls.append(
-            f"http://<home-assistant-ip>:{port}{entry.data[DATA_SECRET_PATH]} (direct access)"
-        )
 
     url_lines = "\n".join(f"- {url}" for url in urls)
     _LOGGER.info("ESPHome MCP server is running. Connect URL(s):\n%s\n%s", url_lines, auth_note)
@@ -163,6 +125,59 @@ def _surface_connect_urls(
         title="ESPHome MCP",
         notification_id=_NOTIFICATION_ID,
     )
+
+
+def build_connect_urls(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    webhook_enabled: bool = True,
+) -> list[str]:
+    """Resolve the entry's connect URLs for admin-only surfaces."""
+    from homeassistant.helpers.network import NoURLAvailableError, get_url
+
+    webhook_id = entry.data.get(DATA_WEBHOOK_ID)
+    urls: list[str] = []
+    external = str(entry.options.get(OPT_EXTERNAL_URL) or "").rstrip("/")
+    if not webhook_enabled:
+        external = ""
+        webhook_id = None
+    if external:
+        urls.append(f"{external}/api/webhook/{webhook_id}")
+
+    # Nabu Casa remote URL, when Home Assistant Cloud is configured and logged in.
+    try:
+        from homeassistant.components.cloud import CloudNotAvailable, async_remote_ui_url
+
+        try:
+            if webhook_id:
+                cloud_base = async_remote_ui_url(hass)
+                urls.append(f"{cloud_base}/api/webhook/{webhook_id}")
+        except CloudNotAvailable:
+            pass
+    except ImportError:
+        pass
+
+    local_host: str | None = None
+    try:
+        local_base = get_url(hass, allow_external=False, prefer_external=False)
+        local_host = urlparse(local_base).hostname
+        if webhook_id:
+            urls.append(f"{local_base}/api/webhook/{webhook_id}")
+    except NoURLAvailableError:
+        pass
+
+    if not urls and webhook_id:
+        urls.append(f"/api/webhook/{webhook_id}  (prefix with your Home Assistant URL)")
+
+    port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
+    bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
+    secret_path = entry.data.get(DATA_SECRET_PATH)
+    if bind_host == BIND_HOST_ALL and secret_path:
+        urls.append(
+            f"http://{local_host or '<home-assistant-ip>'}:{port}{secret_path} (direct access)"
+        )
+    return urls
 
 
 _ISSUE_BY_KIND = {

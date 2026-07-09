@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
@@ -36,6 +37,7 @@ from .const import (
     WEBHOOK_AUTH_NONE,
 )
 
+_LOGGER = logging.getLogger(__name__)
 _ENTRY_TITLE = "ESPHome MCP Server"
 _UNIQUE_ID = f"{DOMAIN}-server"
 
@@ -155,10 +157,42 @@ class EspHomeMcpOptionsFlow(OptionsFlow):
         secret_path = self.config_entry.data.get(DATA_SECRET_PATH)
         if not webhook_id:
             return "The remote connect URL will appear once the server starts."
+        webhook_enabled = bool(self.config_entry.options.get(OPT_ENABLE_WEBHOOK, True))
         port = self.config_entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT)
+        hass = getattr(self, "hass", None)
+        if hass is not None:
+            try:
+                from .embedded_setup import build_connect_urls
+
+                urls = build_connect_urls(
+                    hass,
+                    self.config_entry,
+                    webhook_enabled=webhook_enabled,
+                )
+                if urls:
+                    return "Connect URL(s):\n" + "\n".join(f"- {url}" for url in urls)
+            except Exception as err:
+                _LOGGER.warning(
+                    "Falling back to the static connect-URL hint: %s",
+                    err,
+                )
+        if not webhook_enabled:
+            hint = "Remote access via webhook is disabled (local-only mode)."
+            if secret_path:
+                hint += (
+                    "\nDirect access from the Home Assistant machine: "
+                    f"http://127.0.0.1:{port}{secret_path}"
+                )
+            return hint
         external = str(self.config_entry.options.get(OPT_EXTERNAL_URL) or "").rstrip("/")
-        base = external or "<your-home-assistant-url>"
-        hint = f"Remote connect URL: {base}/api/webhook/{webhook_id}"
+        if external:
+            hint = f"Remote connect URL: {external}/api/webhook/{webhook_id}"
+        else:
+            hint = (
+                f"Remote connect URL: /api/webhook/{webhook_id} "
+                "(Home Assistant URL unavailable; enable Nabu Casa Remote UI "
+                "or set External URL)"
+            )
         if secret_path:
             hint += (
                 f"\nLocal/LAN (when bind host is 0.0.0.0): "
