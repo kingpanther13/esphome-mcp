@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import os
+import sys
 import threading
 from contextlib import suppress
 from functools import partial
@@ -232,6 +234,7 @@ class EmbeddedServerManager:
 
         stored_spec = self._entry.data.get(DATA_LAST_PIP_SPEC)
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
+        forced_install = False
         try:
             if stored_spec == self._pip_spec and importable:
                 await async_process_requirements(
@@ -255,11 +258,15 @@ class EmbeddedServerManager:
                         "see the Home Assistant log for pip output.",
                         kind="package",
                     )
+                forced_install = True
         except RequirementsNotFound as err:
             raise EmbeddedServerError(
                 f"Could not install the server requirement ({self._pip_spec!r}): {err}",
                 kind="package",
             ) from err
+
+        if forced_install:
+            await self._hass.async_add_executor_job(_clear_server_dependency_modules)
 
         if not await self._hass.async_add_executor_job(_server_dependencies_importable):
             raise EmbeddedServerError(
@@ -276,10 +283,23 @@ class EmbeddedServerManager:
 
 
 def _server_dependencies_importable() -> bool:
-    """Return True when the runtime packages needed by the server can import."""
+    """Return True when runtime packages can resolve without importing them."""
+    importlib.invalidate_caches()
+    return _module_resolves("fastmcp") and _module_resolves("uvicorn")
+
+
+def _module_resolves(module_name: str) -> bool:
+    """Return True when import machinery can resolve a module without importing it."""
     try:
-        import fastmcp  # noqa: F401
-        import uvicorn  # noqa: F401
-    except ImportError:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError):
         return False
-    return True
+
+
+def _clear_server_dependency_modules() -> None:
+    """Drop cached server modules after replacing the installed FastMCP wheel."""
+    importlib.invalidate_caches()
+    for module_name in tuple(sys.modules):
+        if module_name == "fastmcp" or module_name.startswith("fastmcp."):
+            sys.modules.pop(module_name, None)
+    sys.modules.pop("custom_components.esphome_mcp.server", None)

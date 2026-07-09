@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import importlib
 import sys
 from pathlib import Path
@@ -193,6 +194,13 @@ def test_changed_code_pin_forces_install_even_when_importable(monkeypatch: Any) 
         install_package=install_package,
     )
     monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
+    monkeypatch.setitem(sys.modules, "fastmcp", ModuleType("fastmcp"))
+    monkeypatch.setitem(sys.modules, "fastmcp.server", ModuleType("fastmcp.server"))
+    monkeypatch.setitem(
+        sys.modules,
+        "custom_components.esphome_mcp.server",
+        ModuleType("custom_components.esphome_mcp.server"),
+    )
 
     hass = _FakeHass()
     entry = SimpleNamespace(data={module.DATA_LAST_PIP_SPEC: "fastmcp==0.0.1"}, options={})
@@ -209,6 +217,31 @@ def test_changed_code_pin_forces_install_even_when_importable(monkeypatch: Any) 
         )
     ]
     assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC}
+    assert "fastmcp" not in sys.modules
+    assert "fastmcp.server" not in sys.modules
+    assert "custom_components.esphome_mcp.server" not in sys.modules
+
+
+def test_dependency_probe_does_not_import_runtime_packages(monkeypatch: Any) -> None:
+    """Import checks do not cache stale FastMCP modules before forced installs."""
+    module = _load_embedded_server(monkeypatch)
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "fastmcp" or name.startswith("fastmcp.") or name == "uvicorn":
+            raise AssertionError(f"{name} was imported during dependency probing")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    monkeypatch.setattr(
+        module.importlib.util,
+        "find_spec",
+        lambda name: object() if name in {"fastmcp", "uvicorn"} else None,
+    )
+
+    assert module._server_dependencies_importable() is True
+    assert "fastmcp" not in sys.modules
+    assert "uvicorn" not in sys.modules
 
 
 def test_requirement_install_failure_raises_package_error(monkeypatch: Any) -> None:

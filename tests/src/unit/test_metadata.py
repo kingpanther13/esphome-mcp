@@ -32,9 +32,9 @@ def test_manifest_is_hacs_ready() -> None:
     assert "hassio" in manifest["after_dependencies"]
     assert "webhook" in manifest["dependencies"]
     assert "fastmcp==3.4.2" not in manifest.get("requirements", [])
-    assert manifest["version"] == "0.1.0"
-    assert 'version = "0.1.0"' in pyproject
-    assert 'VERSION = "0.1.0"' in const
+    assert manifest["version"] == "0.1.1"
+    assert 'version = "0.1.1"' in pyproject
+    assert 'VERSION = "0.1.1"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -141,10 +141,10 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v0.1.0") == []
+    assert validate_release_metadata("v0.1.1") == []
 
 
-@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.1"])
+@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.2"])
 def test_release_metadata_validation_rejects_bad_versions(version: str) -> None:
     """The release guard rejects the short-commit path that broke HACS installs."""
     errors = validate_release_metadata(version)
@@ -191,6 +191,18 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert "gh release create" in workflow
     assert '--target "${GITHUB_SHA}"' in workflow
     assert 'tag="v${version}"' in workflow
+
+
+def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
+    """Release-facing component diffs must bump the HACS-visible version."""
+    workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
+    script = (ROOT / "scripts" / "check_version_bump.py").read_text()
+
+    assert "fetch-depth: 0" in workflow
+    assert "python scripts/check_version_bump.py" in workflow
+    assert "github.base_ref || 'master'" in workflow
+    assert "custom_components/esphome_mcp/" in script
+    assert "manifest version did not increase" in script
 
 
 def test_repository_maintenance_scaffolding_exists() -> None:
