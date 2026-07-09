@@ -154,20 +154,29 @@ def test_release_workflow_creates_a_github_release() -> None:
     """The release workflow publishes a tag-backed release for HACS to install."""
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text()
 
+    assert "push:" in workflow
+    assert "branches: [master]" in workflow
     assert "workflow_dispatch:" in workflow
+    assert "required: false" in workflow
     assert "scripts/validate_release_metadata.py" in workflow
     assert "contents: read" in workflow
+    assert "Resolve release version" in workflow
+    assert "custom_components/esphome_mcp/manifest.json" in workflow
+    assert "REQUESTED_VERSION: ${{ github.event.inputs.version }}" in workflow
     assert "needs: validate" in workflow
     assert "contents: write" in workflow
     assert "GH_REPO: ${{ github.repository }}" in workflow
-    assert "VERSION: ${{ inputs.version }}" in workflow
+    assert "VERSION: ${{ steps.release-version.outputs.version }}" in workflow
+    assert "VERSION: ${{ needs.validate.outputs.version }}" in workflow
     assert 'python scripts/validate_release_metadata.py "$VERSION"' in workflow
     assert workflow.count("uses: actions/checkout@v7") == 1
     assert not any(
-        "${{ inputs.version }}" in line
+        "${{ github.event.inputs.version }}" in line
         for line in workflow.splitlines()
         if line.strip().startswith("run:")
     )
+    assert "gh release view" in workflow
+    assert "steps.existing-release.outputs.exists != 'true'" in workflow
     assert "gh release create" in workflow
     assert '--target "${GITHUB_SHA}"' in workflow
     assert 'tag="v${version}"' in workflow
