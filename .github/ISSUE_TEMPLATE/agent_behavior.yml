@@ -1,0 +1,48 @@
+name: "AI Agent Behavior Feedback"
+description: "Report agent inefficiency, wrong ESPHome MCP tool usage, or workflow improvements"
+title: "[AGENT] "
+labels: ["agent-behavior"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Report AI Agent Behavior
+
+        Use this template when an AI agent:
+        - Used the wrong `esp_` tool or made inefficient choices
+        - Misinterpreted ESPHome MCP tool output
+        - Provided bad parameters to Home Assistant or ESPHome Device Builder tools
+
+        This is not for bugs in ESPHome MCP itself. Use the Runtime Bug template for server or tool failures.
+
+  - type: textarea
+    id: user_commentary
+    attributes:
+      label: "Why are you reporting this?"
+      description: |
+        In your own words, tell us:
+        - What bothered you about the agent's approach?
+        - What were you trying to accomplish?
+        - Why do you think it could be better?
+      placeholder: |
+        Example: "The agent searched for devices repeatedly instead of using the first result..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: conversation_paste
+    attributes:
+      label: "Conversation excerpt"
+      description: |
+        Paste the relevant part of the conversation, including tool calls, arguments, and responses.
+        Remove tokens, secrets, hostnames, and private data before submitting.
+      placeholder: |
+        User: Find my ESPHome kitchen sensor.
+
+        Agent: ...
+        [Tool: esp_get_devices, ...]
+        Result: ...
+      render: markdown
+    validations:
+      required: true

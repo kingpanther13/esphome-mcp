@@ -1,0 +1,74 @@
+name: "Runtime Bug"
+description: "Report a bug while ESPHome MCP is running"
+title: "[BUG] "
+labels: ["bug"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Report a Runtime Bug
+
+        Use this template when:
+        - An `esp_` tool returns an error or wrong result
+        - ESPHome Device Builder proxying, add-on operations, or Home Assistant registry tools fail
+        - The MCP server crashes or stops responding after startup
+
+        Use the Startup/Installation Bug template instead for install, HACS, or startup failures.
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: "What happened?"
+      description: |
+        In your own words, describe what you were trying to do and what went wrong.
+      placeholder: |
+        Example: "I asked the agent to list ESPHome devices, but it returned an empty list even though Home Assistant shows two ESPHome devices."
+    validations:
+      required: true
+
+  - type: input
+    id: tool_name
+    attributes:
+      label: "Tool name"
+      description: "The ESPHome MCP tool involved, if known."
+      placeholder: "esp_get_devices"
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs_and_transcript
+    attributes:
+      label: "Logs and transcript"
+      description: |
+        Paste the relevant Home Assistant logs, MCP client transcript, tool arguments, and tool output.
+        Remove tokens, webhook URLs, hostnames, secrets, and private data before submitting.
+      placeholder: |
+        [Paste Home Assistant log lines, tool output, or MCP client transcript here]
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: home_assistant_version
+    attributes:
+      label: "Home Assistant version"
+      placeholder: "2026.7.0"
+    validations:
+      required: false
+
+  - type: input
+    id: esphome_addon_version
+    attributes:
+      label: "ESPHome Device Builder add-on version"
+      placeholder: "2026.6.4"
+    validations:
+      required: false
+
+  - type: input
+    id: esphome_mcp_version
+    attributes:
+      label: "ESPHome MCP version"
+      placeholder: "0.1.0 or commit SHA"
+    validations:
+      required: false

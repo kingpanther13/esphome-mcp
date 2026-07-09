@@ -173,6 +173,62 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert 'tag="v${version}"' in workflow
 
 
+def test_repository_maintenance_scaffolding_exists() -> None:
+    """Shared ha-mcp repository-maintenance scaffolding is present."""
+    github_dir = ROOT / ".github"
+    workflows_dir = github_dir / "workflows"
+    issue_templates_dir = github_dir / "ISSUE_TEMPLATE"
+
+    assert (github_dir / "dependabot.yml").is_file()
+    assert (ROOT / "renovate.json").is_file()
+    assert (workflows_dir / "renovate.yml").is_file()
+    assert (workflows_dir / "close-inactive-issues.yml").is_file()
+    assert (github_dir / "pull_request_template.md").is_file()
+
+    assert {
+        "agent_behavior.yml",
+        "documentation.yml",
+        "feature_request.yml",
+        "runtime_bug.yml",
+        "startup_bug.yml",
+    } <= {path.name for path in issue_templates_dir.glob("*.yml")}
+
+
+def test_dependency_update_scaffolding_targets_this_repo() -> None:
+    """Dependabot and Renovate are adapted for a custom-component-only Python repo."""
+    dependabot = (ROOT / ".github" / "dependabot.yml").read_text()
+    renovate = json.loads((ROOT / "renovate.json").read_text())
+    renovate_workflow = (ROOT / ".github" / "workflows" / "renovate.yml").read_text()
+
+    assert 'package-ecosystem: "github-actions"' in dependabot
+    assert 'package-ecosystem: "pip"' in dependabot
+    assert 'directory: "/tests/haos_image_build"' in dependabot
+    assert "uv" not in dependabot
+
+    assert renovate["enabledManagers"] == [
+        "custom.regex",
+        "github-actions",
+        "pep621",
+        "pip_requirements",
+    ]
+    assert "home-assistant/operating-system" in json.dumps(renovate)
+    assert "aioesphomeapi" in json.dumps(renovate)
+    assert "esphome" in json.dumps(renovate)
+    assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
+    assert "RENOVATE_ALLOWED_POST_UPGRADE_COMMANDS" not in renovate_workflow
+
+
+def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:
+    """Auto-merge parity is documented without enabling unattended merges."""
+    workflows_dir = ROOT / ".github" / "workflows"
+    disabled = workflows_dir / "dependabot-auto-merge.yml.disabled"
+
+    assert disabled.is_file()
+    assert not (workflows_dir / "dependabot-auto-merge.yml").exists()
+    assert "Disabled intentionally." in disabled.read_text()
+    assert "gh pr merge --auto --squash" in disabled.read_text()
+
+
 def test_hacs_release_archive_contains_component_payload() -> None:
     """A tag source archive contains every runtime file HACS needs to extract."""
     required_files = {

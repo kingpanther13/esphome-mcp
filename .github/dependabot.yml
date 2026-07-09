@@ -1,0 +1,69 @@
+version: 2
+updates:
+  # Docker updates are handled by Renovate if Dockerfiles are added later.
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
+
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      test-dependencies:
+        patterns:
+          - "pytest*"
+          - "ruff"
+        update-types:
+          - "minor"
+          - "patch"
+      esphome-dependencies:
+        patterns:
+          - "aioesphomeapi"
+          - "esphome"
+        update-types:
+          - "minor"
+          - "patch"
+      integration-dependencies:
+        patterns:
+          - "aiohttp"
+          - "requests"
+          - "websockets"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "pip"
+    directory: "/tests/haos_image_build"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+      - "e2e"
+    commit-message:
+      prefix: "deps"
+      include: "scope"

@@ -1,0 +1,41 @@
+name: "Feature Request"
+description: "Suggest a new ESPHome MCP feature or improvement"
+title: "[FEATURE] "
+labels: ["enhancement"]
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Suggest a Feature
+
+        Tell us what you would like ESPHome MCP to support.
+
+  - type: textarea
+    id: feature_description
+    attributes:
+      label: "What would you like to see?"
+      description: "Describe the feature, tool, or workflow improvement you want."
+      placeholder: |
+        Example: "Add an `esp_` tool that validates an ESPHome YAML file through Device Builder."
+    validations:
+      required: true
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: "Why do you need this?"
+      description: "What problem does this solve? What would you use it for?"
+      placeholder: |
+        Example: "I want agents to check a config before attempting an install."
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_context
+    attributes:
+      label: "Additional context"
+      description: "Any related ESPHome, Home Assistant, or MCP links and examples."
+      placeholder: "Optional: examples, screenshots, links, or related issues..."
+    validations:
+      required: false
