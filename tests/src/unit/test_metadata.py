@@ -159,6 +159,14 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert "contents: read" in workflow
     assert "needs: validate" in workflow
     assert "contents: write" in workflow
+    assert "VERSION: ${{ inputs.version }}" in workflow
+    assert 'python scripts/validate_release_metadata.py "$VERSION"' in workflow
+    assert workflow.count("uses: actions/checkout@v7") == 1
+    assert not any(
+        "${{ inputs.version }}" in line
+        for line in workflow.splitlines()
+        if line.strip().startswith("run:")
+    )
     assert "gh release create" in workflow
     assert '--target "${GITHUB_SHA}"' in workflow
     assert 'tag="v${version}"' in workflow
