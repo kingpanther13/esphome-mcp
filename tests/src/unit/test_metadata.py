@@ -28,6 +28,7 @@ def test_hacs_metadata_exists() -> None:
 
     assert root_hacs["name"] == "ESPHome MCP"
     assert root_hacs["homeassistant"] == "2025.9.1"
+    assert root_hacs["render_readme"] is True
     assert component_hacs["name"] == "ESPHome MCP"
 
 
@@ -95,3 +96,22 @@ def test_readme_credits_prior_art() -> None:
     assert "ha-mcp" in readme
     assert "loryanstrant" in readme
     assert "jeeftor" in readme
+
+
+def test_readme_has_hacs_facing_usage_information() -> None:
+    """README includes the information HACS renders for custom repositories."""
+    variants = ("README.md", "readme.md", "readme.MD", "README.MD", "README", "readme")
+    info_files = [filename for filename in variants if (ROOT / filename).is_file()]
+    assert info_files == ["README.md"]
+
+    readme = (ROOT / info_files[0]).read_text()
+
+    assert "## What You Get" in readme
+    assert "## Requirements" in readme
+    assert "## HACS Installation" in readme
+    assert "https://github.com/kingpanther13/esphome-mcp" in readme
+    assert "## Connecting An MCP Client" in readme
+    assert "## Tools" in readme
+    assert "esp_dashboard_devices" in readme
+    assert "esp_manage_addon" in readme
+    assert "## Safety Notes" in readme

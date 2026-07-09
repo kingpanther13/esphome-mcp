@@ -1,53 +1,160 @@
 # ESPHome MCP
 
-ESPHome MCP is a Home Assistant custom component that runs a small FastMCP server inside Home Assistant and exposes it through the same webhook ingress pattern used by ha-mcp's custom component server path.
+ESPHome MCP is a Home Assistant custom component that exposes ESPHome and the
+official ESPHome Device Builder add-on as MCP tools.
 
-Initial defaults:
+It runs an in-process FastMCP server inside Home Assistant, listens on port
+`9590` by default, and exposes the MCP endpoint through a Home Assistant webhook
+so remote MCP clients can connect through the same Home Assistant URL you already
+use, including Nabu Casa Remote UI.
 
-- Custom component only: `custom_components/esphome_mcp`
-- MCP server port: `9590`
-- Tool prefix: `esp_`
-- Webhook auth modes: secret webhook URL or Home Assistant `ha_auth`
-- Initial tools:
-  `esp_overview`, `esp_list_devices`, `esp_list_entities`,
-  `esp_dashboard_devices`, `esp_search_yaml`, `esp_get_yaml`,
-  `esp_update_yaml`, `esp_validate_yaml`, `esp_device_logs`,
-  `esp_compile_firmware`, `esp_install_firmware`, `esp_firmware_jobs`,
-  `esp_get_firmware_job`, `esp_follow_firmware_job`, `esp_manage_addon`
+## What You Get
 
-The webhook URL works through Nabu Casa Remote UI because it is registered as a Home Assistant webhook at `/api/webhook/<secret>`.
+- A custom-component-only install path for Home Assistant.
+- MCP tool names with the `esp_` prefix.
+- Searchable Home Assistant ESPHome registry context.
+- Device Builder device, YAML, log, validation, and firmware tools.
+- Supervisor-backed ESPHome add-on lifecycle and config management.
+- Webhook access with either a secret URL or Home Assistant administrator sign-in.
 
-`esp_manage_addon` is the ESPHome-focused starting point copied from ha-mcp's
-add-on management tool. It supports Supervisor lifecycle/config actions for the
-ESPHome add-on and proxies ESPHome dashboard HTTP/WebSocket calls through the
-same Supervisor ingress-session path HA Core uses for Home Assistant add-on
-ingress.
+## Requirements
 
-The preferred workflow tools target ESPHome Device Builder's current multiplexed
-`/ws` API (`devices/list`, `yaml/search`, `devices/get_config`,
+- Home Assistant `2025.9.1` or newer.
+- HACS, if installing through the Home Assistant Community Store.
+- Home Assistant OS or Supervised Home Assistant for ESPHome add-on and Device
+  Builder tools. These tools require Supervisor.
+- The official ESPHome Device Builder add-on installed and running for the
+  Device Builder tool set.
+- Network/package-install access on first start so Home Assistant can install
+  the embedded MCP server runtime dependency.
+
+The Home Assistant registry tools can still report ESPHome integration devices
+and entities anywhere this custom component can run, but the add-on and Device
+Builder tools need Supervisor.
+
+## HACS Installation
+
+1. In HACS, open **Custom repositories**.
+2. Add this repository URL:
+
+   ```text
+   https://github.com/kingpanther13/esphome-mcp
+   ```
+
+3. Choose category **Integration**.
+4. Install **ESPHome MCP**.
+5. Restart Home Assistant.
+6. Go to **Settings** > **Devices & services** > **Add integration**.
+7. Search for **ESPHome MCP** and create the integration entry.
+
+After setup, Home Assistant starts the embedded MCP server and registers the
+webhook route. The integration Configure screen, Home Assistant notification,
+and Home Assistant log show the connection details. The sidebar panel provides
+an admin-only status/settings view while the server is running.
+
+## Connecting An MCP Client
+
+Use the Home Assistant webhook URL as the MCP server URL:
+
+```text
+https://<your-home-assistant-url>/api/webhook/<webhook-secret>
+```
+
+The default webhook mode treats that URL as the credential. Keep it private.
+
+The options flow can switch webhook access to Home Assistant `ha_auth`. Clients
+that support MCP OAuth/protected-resource discovery can then sign in with a Home
+Assistant administrator account.
+
+Direct LAN access is also available when the server is bound to `0.0.0.0`:
+
+```text
+http://<home-assistant-ip>:9590/<private-path>
+```
+
+Direct port access uses the private path as its credential. Set network access
+to loopback if you only want webhook and panel access.
+
+Webhook access is the recommended path for remote clients because it works
+through Home Assistant's normal external URL and Nabu Casa Remote UI.
+
+## Tools
+
+### Home Assistant ESPHome Context
+
+| Tool | Purpose |
+| --- | --- |
+| `esp_overview` | Return ESPHome integration, device, and entity counts. |
+| `esp_list_devices` | Search ESPHome devices known to Home Assistant by query, area, config entry state, and limit. |
+| `esp_list_entities` | Search ESPHome entities by query, domain, device, state, disabled status, and limit. |
+
+### ESPHome Add-on Management
+
+| Tool | Purpose |
+| --- | --- |
+| `esp_manage_addon` | Manage the ESPHome add-on through Supervisor, update add-on options, or call add-on HTTP/WebSocket endpoints. |
+
+`esp_manage_addon` supports Supervisor lifecycle actions such as `install`,
+`update`, `rebuild`, `start`, `stop`, `restart`, and `uninstall`. It also
+supports add-on config updates for `options`, `network`, `boot`, `auto_update`,
+and `watchdog`.
+
+For add-on API calls, the component routes through Home Assistant Core's
+`/api/hassio_ingress/...` proxy with a fresh Supervisor `ingress_session` cookie.
+That matches ESPHome Device Builder's current trusted-ingress behavior. Direct
+container-port routing is available only when explicitly requested with `port`.
+
+### Device Builder
+
+| Tool | Purpose |
+| --- | --- |
+| `esp_dashboard_devices` | List and search configured and importable ESPHome Device Builder devices. |
+| `esp_search_yaml` | Search raw ESPHome YAML across Device Builder configurations. |
+| `esp_get_yaml` | Read one ESPHome YAML configuration. |
+| `esp_update_yaml` | Write one ESPHome YAML configuration through Device Builder. |
+| `esp_validate_yaml` | Run Device Builder validation for one configuration. |
+| `esp_device_logs` | Collect a bounded batch of Device Builder device logs. |
+| `esp_compile_firmware` | Queue a firmware compile job. |
+| `esp_install_firmware` | Queue a firmware install job. |
+| `esp_firmware_jobs` | List firmware jobs with optional status and configuration filters. |
+| `esp_get_firmware_job` | Return one firmware job by ID. |
+| `esp_follow_firmware_job` | Follow one firmware job stream and return collected output. |
+
+These tools target ESPHome Device Builder's current multiplexed `/ws` API,
+including `devices/list`, `yaml/search`, `devices/get_config`,
 `devices/update_config`, `devices/validate`, `devices/logs`,
-`firmware/compile`, `firmware/install`, `firmware/get_jobs`,
-`firmware/get_job`, and `firmware/follow_job`). The Home Assistant context tools
-`esp_list_devices` and `esp_list_entities` support search/filter parameters for
-the HA ESPHome integration registry view.
+`devices/stop_stream`, `firmware/compile`, `firmware/install`,
+`firmware/get_jobs`, `firmware/get_job`, and `firmware/follow_job`.
+
+## Safety Notes
+
+- `esp_update_yaml`, firmware actions, and add-on lifecycle/config actions can
+  change running ESPHome systems.
+- The default webhook URL is a shared secret. Treat it like a password.
+- `ha_auth` mode requires a Home Assistant administrator account because the MCP
+  server can perform privileged Home Assistant and Supervisor operations.
+- Add-on and Device Builder tools require Home Assistant Supervisor; they return
+  structured errors when Supervisor or the ESPHome add-on is not available.
 
 ## Testing
 
-Unit tests cover Supervisor action routing, add-on ingress-session routing,
-current Device Builder WebSocket command framing, stream cancellation, and tool
-wrapper command selection. The component E2E workflow builds or restores a HAOS
-qcow2, installs ESPHome Device Builder, bakes this custom component into
-Home Assistant, boots QEMU/KVM, and drives the MCP webhook.
+The repository includes unit and end-to-end coverage for the custom component
+and tool surface:
+
+- Ruff lint and format checks.
+- Unit tests for metadata, tool registration, Supervisor routing, ingress-session
+  routing, Device Builder WebSocket framing, stream cancellation, and wrapper
+  behavior.
+- ESPHome host-device E2E tests using ESPHome's host platform.
+- HAOS embedded E2E tests that boot a HAOS image, install ESPHome Device Builder,
+  bake this custom component into Home Assistant, and drive the MCP webhook.
 
 ## Prior Art
 
-This project intentionally builds on ha-mcp's Home Assistant custom component
-ingress/auth approach and compares protocol behavior against the existing
-ESPHome MCP implementations by loryanstrant, jeeftor, bberrevoets, and
-jrigling. The distinguishing piece here is the custom-component-only Home
-Assistant deployment path: Home Assistant webhook auth, Nabu Casa-compatible
-ingress, and Supervisor-backed ESPHome add-on routing.
+This project intentionally builds on ha-mcp's Home Assistant custom-component
+ingress/auth approach and compares protocol behavior against existing ESPHome MCP
+implementations by loryanstrant, jeeftor, bberrevoets, and jrigling.
 
-## HACS
-
-Add this repository as a custom HACS integration repository, then install **ESPHome MCP** and restart Home Assistant.
+The distinguishing piece here is the custom-component-only Home Assistant
+deployment path: Home Assistant webhook auth, Nabu Casa-compatible ingress, and
+Supervisor-backed ESPHome add-on routing.
