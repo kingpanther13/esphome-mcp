@@ -43,8 +43,8 @@ def test_hacs_metadata_exists() -> None:
 
     assert root_hacs["name"] == "ESPHome MCP"
     assert root_hacs["homeassistant"] == "2025.9.1"
-    assert root_hacs["hide_default_branch"] is True
     assert root_hacs["render_readme"] is True
+    assert "hide_default_branch" not in root_hacs
     assert "zip_release" not in root_hacs
     assert "filename" not in root_hacs
     assert not (COMPONENT / "hacs.json").exists()

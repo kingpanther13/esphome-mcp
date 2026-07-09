@@ -74,8 +74,6 @@ def validate_release_metadata(expected_version: str | None = None) -> list[str]:
         errors.append("root hacs.json must preserve the minimum Home Assistant version")
     if hacs.get("render_readme") is not True:
         errors.append("root hacs.json must keep render_readme enabled")
-    if hacs.get("hide_default_branch") is not True:
-        errors.append("root hacs.json must hide default branch downloads so HACS installs releases")
     if hacs.get("zip_release"):
         errors.append(
             "zip_release is intentionally not used; HACS should install the release tag archive"
