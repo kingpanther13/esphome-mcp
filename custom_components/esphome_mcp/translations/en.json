@@ -29,7 +29,7 @@
         "data_description": {
           "server_port": "The port this server listens on. The default is 9590 so it can run alongside ha-mcp.",
           "bind_host": "Who can connect to the MCP server port directly. The webhook URL and sidebar panel work even when loopback is selected.",
-          "webhook_auth": "How MCP clients authenticate at the webhook URL. With the secret URL, the link itself is the credential. With Home Assistant sign-in, clients authenticate through Home Assistant OAuth.",
+          "webhook_auth": "How MCP clients authenticate at the webhook URL. With the secret URL, the link itself is the credential. With Home Assistant administrator sign-in, clients authenticate through Home Assistant OAuth and must use an active administrator account.",
           "enable_webhook": "Turn off for local-only mode. The direct server port and sidebar panel keep working.",
           "external_url": "Shown as the primary connect URL. Use this when Home Assistant sits behind your own domain or reverse proxy.",
           "webhook_id_override": "Replaces the random webhook secret in the connect URL (/api/webhook/...). Use a long, hard-to-guess value.",
@@ -54,7 +54,7 @@
     "server_webhook_auth": {
       "options": {
         "none": "Secret webhook URL (default)",
-        "ha_auth": "Sign in with Home Assistant (OAuth)"
+        "ha_auth": "Sign in with Home Assistant administrator account (OAuth)"
       }
     }
   }
