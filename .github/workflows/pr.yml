@@ -37,6 +37,17 @@ jobs:
       - name: Run unit tests
         run: pytest tests/src/unit
 
+  release-metadata:
+    name: Release Metadata
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Validate release metadata
+        run: python scripts/validate_release_metadata.py
+
   host-device-e2e:
     name: ESPHome Host Device E2E
     runs-on: ubuntu-latest

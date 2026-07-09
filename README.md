@@ -42,10 +42,15 @@ Builder tools need Supervisor.
    ```
 
 3. Choose category **Integration**.
-4. Install **ESPHome MCP**.
+4. Install the latest published **ESPHome MCP** release.
 5. Restart Home Assistant.
 6. Go to **Settings** > **Devices & services** > **Add integration**.
 7. Search for **ESPHome MCP** and create the integration entry.
+
+This repository is release-backed for HACS installs. HACS should show a release
+tag such as `v0.1.0`; do not install a seven-character commit version such as
+`99cdab0`. If HACS has cached an old commit-only entry, refresh the custom
+repository before installing.
 
 After setup, Home Assistant starts the embedded MCP server and registers the
 webhook route. The integration Configure screen, Home Assistant notification,
