@@ -643,9 +643,7 @@ class TestEmbeddedServerOnHaos:
         assert flow.get("type") == "form", flow
         data_schema = flow.get("data_schema")
         assert isinstance(data_schema, list), flow
-        field_names = {
-            str(field.get("name")) for field in data_schema if isinstance(field, dict)
-        }
+        field_names = {str(field.get("name")) for field in data_schema if isinstance(field, dict)}
         assert {
             "server_port",
             "bind_host",
@@ -690,8 +688,7 @@ class TestEmbeddedServerOnHaos:
         assert isinstance(panels, dict), panels
         assert "esphome-mcp" not in panels
         assert all(
-            not isinstance(panel, dict)
-            or panel.get("config_panel_domain") != "esphome_mcp"
+            not isinstance(panel, dict) or panel.get("config_panel_domain") != "esphome_mcp"
             for panel in panels.values()
         ), panels
 
