@@ -32,10 +32,10 @@ def test_manifest_is_hacs_ready() -> None:
     assert "hassio" in manifest["after_dependencies"]
     assert "frontend" not in manifest["after_dependencies"]
     assert "webhook" in manifest["dependencies"]
-    assert "fastmcp==3.4.2" not in manifest.get("requirements", [])
-    assert manifest["version"] == "0.1.2"
-    assert 'version = "0.1.2"' in pyproject
-    assert 'VERSION = "0.1.2"' in const
+    assert "fastmcp==3.4.3" not in manifest.get("requirements", [])
+    assert manifest["version"] == "0.1.3"
+    assert 'version = "0.1.3"' in pyproject
+    assert 'VERSION = "0.1.3"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -57,7 +57,8 @@ def test_server_defaults_are_scaffolded() -> None:
     server = (COMPONENT / "server.py").read_text()
 
     assert "DEFAULT_SERVER_PORT = 9590" in const
-    assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.2"' in const
+    assert 'HA_MCP_COMPAT_RELEASE = "v7.12.2"' in const
+    assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.3"' in const
     assert "OPT_PIP_SPEC" not in const
     assert 'DATA_LAST_PIP_SPEC = "last_pip_spec"' in const
     assert 'name="esp_overview"' in server
@@ -76,6 +77,19 @@ def test_server_defaults_are_scaffolded() -> None:
     assert 'name="esp_firmware_jobs"' in server
     assert 'name="esp_get_firmware_job"' in server
     assert 'name="esp_follow_firmware_job"' in server
+
+
+def test_restart_repair_is_declared_for_shared_dependency_conflicts() -> None:
+    """Unsafe live dependency replacement surfaces a restart-specific repair."""
+    strings = json.loads((COMPONENT / "strings.json").read_text())
+    translations = json.loads((COMPONENT / "translations" / "en.json").read_text())
+    embedded_setup = (COMPONENT / "embedded_setup.py").read_text()
+
+    for payload in (strings, translations):
+        issue = payload["issues"]["server_restart_required"]
+        assert "Restart Home Assistant" in issue["title"]
+        assert "shared Python dependency" in issue["description"]
+    assert '"restart": ISSUE_RESTART_REQUIRED' in embedded_setup
 
 
 def test_sidebar_web_ui_is_not_shipped_or_registered() -> None:
@@ -158,10 +172,10 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v0.1.2") == []
+    assert validate_release_metadata("v0.1.3") == []
 
 
-@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.3"])
+@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.4"])
 def test_release_metadata_validation_rejects_bad_versions(version: str) -> None:
     """The release guard rejects the short-commit path that broke HACS installs."""
     errors = validate_release_metadata(version)
@@ -222,6 +236,21 @@ def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
     assert "manifest version did not increase" in script
 
 
+def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> None:
+    """Both CI gates protect shared FastMCP state and upstream pin parity."""
+    pr_workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
+    release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text()
+    sandbox = (ROOT / "scripts" / "check_runtime_dependency_sandbox.py").read_text()
+
+    for workflow in (pr_workflow, release_workflow):
+        assert "Runtime dependency sandbox" in workflow
+        assert "python scripts/check_runtime_dependency_sandbox.py" in workflow
+        assert "homeassistant-ai/ha-mcp/contents/pyproject.toml" in workflow
+        assert "--ha-mcp-pyproject" in workflow
+    assert "forbidden runtime dependency mutation" in sandbox
+    assert "shared FastMCP pin mismatch" in sandbox
+
+
 def test_repository_maintenance_scaffolding_exists() -> None:
     """Shared ha-mcp repository-maintenance scaffolding is present."""
     github_dir = ROOT / ".github"
@@ -263,6 +292,8 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "aioesphomeapi" in json.dumps(renovate)
     assert "esphome" in json.dumps(renovate)
+    assert "homeassistant-ai/ha-mcp" in json.dumps(renovate)
+    assert "custom_components/esphome_mcp/const" in json.dumps(renovate)
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
     assert "RENOVATE_ALLOWED_POST_UPGRADE_COMMANDS" not in renovate_workflow
 

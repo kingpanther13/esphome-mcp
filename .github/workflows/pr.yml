@@ -24,6 +24,28 @@ jobs:
       - name: Ruff format check
         run: ruff format --check custom_components tests scripts
 
+  dependency-sandbox:
+    name: Runtime Dependency Sandbox
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Runtime dependency sandbox
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python scripts/check_runtime_dependency_sandbox.py
+          compat_ref="$(python scripts/check_runtime_dependency_sandbox.py --print-ha-mcp-ref)"
+          gh api \
+            -H "Accept: application/vnd.github.raw" \
+            "repos/homeassistant-ai/ha-mcp/contents/pyproject.toml?ref=${compat_ref}" \
+            > /tmp/ha-mcp-pyproject.toml
+          python scripts/check_runtime_dependency_sandbox.py \
+            --ha-mcp-pyproject /tmp/ha-mcp-pyproject.toml
+
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest

@@ -198,7 +198,7 @@ def test_build_image_defers_server_requirement_install_to_entry_enable() -> None
         (ROOT / "custom_components" / "esphome_mcp" / "manifest.json").read_text()
     )
 
-    assert "fastmcp==3.4.2" not in manifest.get("requirements", [])
+    assert "fastmcp==3.4.3" not in manifest.get("requirements", [])
     assert "_preinstall_component_requirements" not in source
     assert "/site-packages" not in source
     assert "--target" not in source

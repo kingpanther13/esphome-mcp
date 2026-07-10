@@ -6,10 +6,13 @@ import asyncio
 import importlib
 import logging
 import os
+import re
 import sys
 import threading
+import time
 from contextlib import suppress
 from functools import partial
+from importlib import metadata
 from typing import TYPE_CHECKING, Literal
 
 from homeassistant.core import HomeAssistant
@@ -34,12 +37,20 @@ _READY_TIMEOUT_SECONDS = 30.0
 _READY_POLL_INTERVAL_SECONDS = 0.5
 _STOP_JOIN_TIMEOUT_SECONDS = 10.0
 _PIP_INSTALL_TIMEOUT_SECONDS = 300
+_IMPORT_DEADLOCK_RETRY_DELAYS_SECONDS = (0.25, 0.5, 1.0, 2.0)
+_MODULE_LOCK_DEADLOCK_TEXT = "deadlock detected by _ModuleLock"
+_EXACT_FASTMCP_SPEC = re.compile(r"fastmcp==(?P<version>\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)")
 
 
 class EmbeddedServerError(Exception):
     """Raised when the in-process ESPHome MCP server cannot start."""
 
-    def __init__(self, message: str, *, kind: Literal["package", "start"] = "start") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        kind: Literal["package", "restart", "start"] = "start",
+    ) -> None:
         """Store the message and failure kind."""
         super().__init__(message)
         self.kind = kind
@@ -121,7 +132,11 @@ class EmbeddedServerManager:
         self._loop = loop
         self._stop_event = asyncio.Event()
         try:
+            _import_server_runtime_with_retry()
             loop.run_until_complete(self._serve())
+        except EmbeddedServerError as err:
+            self._thread_exc = err
+            _LOGGER.error("ESPHome MCP server dependency startup failed: %s", err)
         except ImportError as err:
             self._thread_exc = EmbeddedServerError(
                 f"Could not import server dependency: {err}", kind="package"
@@ -233,9 +248,28 @@ class EmbeddedServerManager:
 
         stored_spec = self._entry.data.get(DATA_LAST_PIP_SPEC)
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
-        forced_install = False
+        installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
+        required_version = _pinned_fastmcp_version(self._pip_spec)
+        peer_specs = await self._hass.async_add_executor_job(_installed_peer_fastmcp_specs)
+        shared_runtime_loaded = await self._hass.async_add_executor_job(_fastmcp_runtime_loaded)
+        incompatible_peers = {
+            distribution: spec
+            for distribution, spec in peer_specs.items()
+            if spec != self._pip_spec
+        }
+        if incompatible_peers:
+            peer_summary = ", ".join(
+                f"{distribution} requires {spec}"
+                for distribution, spec in incompatible_peers.items()
+            )
+            raise EmbeddedServerError(
+                f"{peer_summary}, but ESPHome MCP requires {self._pip_spec}. Refusing "
+                "to replace a peer integration's shared FastMCP dependency. Update both "
+                "MCP integrations to compatible versions, then restart Home Assistant.",
+                kind="restart",
+            )
         try:
-            if stored_spec == self._pip_spec and importable:
+            if installed_version == required_version and importable:
                 await async_process_requirements(
                     self._hass,
                     f"ESPHome MCP server ({self._pip_spec})",
@@ -243,6 +277,15 @@ class EmbeddedServerManager:
                     is_built_in=False,
                 )
             else:
+                if shared_runtime_loaded:
+                    loaded_version = installed_version or "an unknown version"
+                    raise EmbeddedServerError(
+                        f"FastMCP {loaded_version} is already loaded by Home Assistant, "
+                        f"but ESPHome MCP requires {required_version}. Refusing to replace "
+                        "the shared runtime inside a running process. Update both MCP "
+                        "integrations to compatible versions, then restart Home Assistant.",
+                        kind="restart",
+                    )
                 kwargs = pip_kwargs(self._hass.config.config_dir)
                 kwargs["timeout"] = max(
                     int(kwargs.get("timeout") or 0),
@@ -257,20 +300,23 @@ class EmbeddedServerManager:
                         "see the Home Assistant log for pip output.",
                         kind="package",
                     )
-                forced_install = True
         except RequirementsNotFound as err:
             raise EmbeddedServerError(
                 f"Could not install the server requirement ({self._pip_spec!r}): {err}",
                 kind="package",
             ) from err
 
-        if forced_install:
-            await self._hass.async_add_executor_job(_clear_server_dependency_modules)
-
         if not await self._hass.async_add_executor_job(_server_dependencies_importable):
             raise EmbeddedServerError(
                 f"Installed the server requirement ({self._pip_spec!r}) but FastMCP "
                 "server dependencies are still not importable.",
+                kind="package",
+            )
+        installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
+        if installed_version != required_version:
+            raise EmbeddedServerError(
+                f"Installed FastMCP version {installed_version or 'unknown'} does not match "
+                f"the required version {required_version}.",
                 kind="package",
             )
 
@@ -295,10 +341,84 @@ def _module_resolves(module_name: str) -> bool:
         return False
 
 
-def _clear_server_dependency_modules() -> None:
-    """Drop cached server modules after replacing the installed FastMCP wheel."""
+def _installed_fastmcp_version() -> str | None:
+    """Return the installed FastMCP distribution version without importing it."""
     importlib.invalidate_caches()
-    for module_name in tuple(sys.modules):
-        if module_name == "fastmcp" or module_name.startswith("fastmcp."):
-            sys.modules.pop(module_name, None)
-    sys.modules.pop("custom_components.esphome_mcp.server", None)
+    try:
+        return metadata.version("fastmcp")
+    except metadata.PackageNotFoundError:
+        return None
+
+
+def _installed_peer_fastmcp_specs() -> dict[str, str]:
+    """Return FastMCP requirements declared by installed ha-mcp distributions."""
+    peer_specs: dict[str, str] = {}
+    for distribution in ("ha-mcp", "ha-mcp-dev"):
+        try:
+            requirements = metadata.requires(distribution) or []
+        except metadata.PackageNotFoundError:
+            continue
+        fastmcp_requirements = [
+            requirement.partition(";")[0].strip()
+            for requirement in requirements
+            if requirement.lower().startswith("fastmcp")
+        ]
+        if len(fastmcp_requirements) == 1:
+            peer_specs[distribution] = fastmcp_requirements[0]
+        elif fastmcp_requirements:
+            peer_specs[distribution] = ", ".join(sorted(fastmcp_requirements))
+    return peer_specs
+
+
+def _pinned_fastmcp_version(pip_spec: str) -> str:
+    """Extract the version from the code-owned exact FastMCP pin."""
+    if (match := _EXACT_FASTMCP_SPEC.fullmatch(pip_spec)) is None:
+        raise EmbeddedServerError(
+            f"ESPHome MCP runtime requirement must be an exact FastMCP pin: {pip_spec!r}",
+            kind="package",
+        )
+    return match.group("version")
+
+
+def _fastmcp_runtime_loaded() -> bool:
+    """Return whether any shared FastMCP module is loaded or mid-import."""
+    return any(name == "fastmcp" or name.startswith("fastmcp.") for name in sys.modules)
+
+
+def _import_server_runtime_with_retry() -> None:
+    """Preload worker imports, retrying only importlib module-lock deadlocks."""
+    total_attempts = len(_IMPORT_DEADLOCK_RETRY_DELAYS_SECONDS) + 1
+    for attempt in range(1, total_attempts + 1):
+        try:
+            importlib.import_module("uvicorn")
+            importlib.import_module(f"{__package__}.server")
+            return
+        except RuntimeError as err:
+            if not _is_module_lock_deadlock(err):
+                raise
+            if attempt == total_attempts:
+                raise EmbeddedServerError(
+                    "FastMCP imports repeatedly collided with another Home Assistant "
+                    "integration. Restart Home Assistant to clear the shared import state.",
+                    kind="restart",
+                ) from err
+            delay = _IMPORT_DEADLOCK_RETRY_DELAYS_SECONDS[attempt - 1]
+            _LOGGER.warning(
+                "FastMCP import deadlock on attempt %d/%d; retrying in %.2fs",
+                attempt,
+                total_attempts,
+                delay,
+            )
+            time.sleep(delay)
+
+
+def _is_module_lock_deadlock(err: BaseException) -> bool:
+    """Return whether an exception chain contains importlib's module-lock deadlock."""
+    current: BaseException | None = err
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, RuntimeError) and _MODULE_LOCK_DEADLOCK_TEXT in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False

@@ -49,7 +49,7 @@ Builder tools need Supervisor.
 
 This repository is release-backed for HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v0.1.2`, which is the version HACS displays. Do not install a
+`v0.1.3`, which is the version HACS displays. Do not install a
 seven-character commit version such as `99cdab0`. If HACS has cached an old
 commit-only entry, refresh the custom repository before installing.
 
@@ -142,16 +142,19 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
   server can perform privileged Home Assistant and Supervisor operations.
 - Add-on and Device Builder tools require Home Assistant Supervisor; they return
   structured errors when Supervisor or the ESPHome add-on is not available.
+- ESPHome MCP and ha-mcp share FastMCP inside the Home Assistant Core process.
+  Keep both integrations current and restart Home Assistant after either one
+  changes that shared runtime.
 
 ## Testing
 
 The repository includes unit and end-to-end coverage for the custom component
 and tool surface:
 
-- Ruff lint and format checks.
+- Ruff lint and format checks plus an AST-based shared-dependency sandbox.
 - Unit tests for metadata, tool registration, Supervisor routing, ingress-session
-  routing, Device Builder WebSocket framing, stream cancellation, and wrapper
-  behavior.
+  routing, Device Builder WebSocket framing, stream cancellation, import-deadlock
+  recovery, and wrapper behavior.
 - ESPHome host-device E2E tests using ESPHome's host platform.
 - HAOS embedded E2E tests that boot a HAOS image, install ESPHome Device Builder,
   bake this custom component into Home Assistant, and drive the MCP webhook.
