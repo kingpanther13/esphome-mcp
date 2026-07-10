@@ -18,6 +18,7 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
+        "/custom_components/esphome_mcp/const\\.py$/",
         "/tests/.*\\.py$/",
         "/.github/workflows/.*\\.ya?ml$/"
       ],
@@ -49,6 +50,19 @@
       "labels": [
         "dependencies",
         "ci"
+      ]
+    },
+    {
+      "description": "Stable ha-mcp compatibility release",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "homeassistant-ai/ha-mcp"
+      ],
+      "labels": [
+        "dependencies",
+        "compatibility"
       ]
     },
     {

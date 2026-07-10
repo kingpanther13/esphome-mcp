@@ -22,6 +22,7 @@ from .const import (
     DEFAULT_SERVER_PORT,
     DOMAIN,
     ISSUE_PACKAGE_FAILED,
+    ISSUE_RESTART_REQUIRED,
     ISSUE_START_FAILED,
     OPT_BIND_HOST,
     OPT_ENABLE_WEBHOOK,
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 _NOTIFICATION_ID = "esphome_mcp_server_connect"
-_ISSUE_IDS = (ISSUE_PACKAGE_FAILED, ISSUE_START_FAILED)
+_ISSUE_IDS = (ISSUE_PACKAGE_FAILED, ISSUE_RESTART_REQUIRED, ISSUE_START_FAILED)
 
 
 async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -198,6 +199,7 @@ def _direct_url_host(host: str | None) -> str:
 
 _ISSUE_BY_KIND = {
     "package": ISSUE_PACKAGE_FAILED,
+    "restart": ISSUE_RESTART_REQUIRED,
     "start": ISSUE_START_FAILED,
 }
 

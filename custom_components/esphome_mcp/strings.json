@@ -46,6 +46,10 @@
     "server_package_import_failed": {
       "title": "The ESPHome MCP server package could not be imported",
       "description": "Importing a dependency for the ESPHome MCP server failed:\n\n{detail}\n\nCheck the Home Assistant logs and reload the integration to retry."
+    },
+    "server_restart_required": {
+      "title": "Restart Home Assistant to start ESPHome MCP",
+      "description": "ESPHome MCP protected a shared Python dependency from being replaced while Home Assistant was running:\n\n{detail}\n\nUpdate ESPHome MCP and ha-mcp to compatible versions, then restart Home Assistant."
     }
   },
   "selector": {
