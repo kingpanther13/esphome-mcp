@@ -1,7 +1,7 @@
 """Constants for the ESPHome MCP custom component."""
 
 DOMAIN = "esphome_mcp"
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 DEFAULT_SERVER_PORT = 9590
 DEFAULT_BIND_HOST = "0.0.0.0"

@@ -69,6 +69,6 @@ body:
     id: esphome_mcp_version
     attributes:
       label: "ESPHome MCP version"
-      placeholder: "0.1.1 or commit SHA"
+      placeholder: "0.1.2 or commit SHA"
     validations:
       required: false

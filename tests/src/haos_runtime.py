@@ -150,6 +150,26 @@ def enable_config_entry(
     timeout: float = 60.0,
 ) -> None:
     """Enable a baked-disabled config entry via HA's WebSocket API."""
+    websocket_command(
+        base_url,
+        token,
+        {
+            "type": "config_entries/disable",
+            "entry_id": entry_id,
+            "disabled_by": None,
+        },
+        timeout=timeout,
+    )
+
+
+def websocket_command(
+    base_url: str,
+    token: str,
+    command: dict[str, object],
+    *,
+    timeout: float = 60.0,
+) -> object:
+    """Run one authenticated Home Assistant WebSocket command."""
     import websockets.sync.client
 
     ws_url = base_url.replace("http://", "ws://").replace("https://", "wss://") + "/api/websocket"
@@ -164,16 +184,7 @@ def enable_config_entry(
             raise RuntimeError(f"WS auth rejected: {auth_resp!r}")
 
         msg_id = 1
-        ws.send(
-            json.dumps(
-                {
-                    "id": msg_id,
-                    "type": "config_entries/disable",
-                    "entry_id": entry_id,
-                    "disabled_by": None,
-                }
-            )
-        )
+        ws.send(json.dumps({"id": msg_id, **command}))
         while time.monotonic() < deadline:
             remaining = max(deadline - time.monotonic(), 1.0)
             raw = ws.recv(timeout=remaining)
@@ -183,9 +194,9 @@ def enable_config_entry(
             if resp.get("id") != msg_id:
                 continue
             if not resp.get("success", False):
-                raise RuntimeError(f"config_entries/disable for {entry_id!r} failed: {resp!r}")
-            return
-    raise TimeoutError(f"config_entries/disable for {entry_id!r} got no response")
+                raise RuntimeError(f"WebSocket command {command!r} failed: {resp!r}")
+            return resp.get("result")
+    raise TimeoutError(f"WebSocket command {command!r} got no response")
 
 
 def collect_runtime_logs(base_url: str, token: str, dest: Path | None = None) -> None:

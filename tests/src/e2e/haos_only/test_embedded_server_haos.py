@@ -24,6 +24,7 @@ from haos_runtime import (
     collect_runtime_logs,
     enable_config_entry,
     login_for_token,
+    websocket_command,
 )
 
 from ..utilities.esphome_host import (
@@ -640,6 +641,20 @@ class TestEmbeddedServerOnHaos:
 
         flow = _start_esphome_mcp_options_flow(base_url, token)
         assert flow.get("type") == "form", flow
+        data_schema = flow.get("data_schema")
+        assert isinstance(data_schema, list), flow
+        field_names = {str(field.get("name")) for field in data_schema if isinstance(field, dict)}
+        assert {
+            "server_port",
+            "bind_host",
+            "webhook_auth",
+            "enable_webhook",
+            "external_url",
+            "webhook_id_override",
+            "secret_path_override",
+            "regenerate_secrets",
+        } <= field_names, flow
+        assert "pip_spec" not in field_names
         placeholders = flow.get("description_placeholders")
         assert isinstance(placeholders, dict), flow
         connect_url = str(placeholders.get("connect_url") or "")
@@ -660,6 +675,22 @@ class TestEmbeddedServerOnHaos:
             assert "None" not in url
         assert "<your-home-assistant-url>" not in connect_url
         assert "Home Assistant URL unavailable" not in connect_url
+
+    def test_sidebar_panel_is_not_registered(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, _session_id, _configuration = embedded_server
+        token = login_for_token(base_url)
+
+        panels = websocket_command(base_url, token, {"type": "get_panels"})
+
+        assert isinstance(panels, dict), panels
+        assert "esphome-mcp" not in panels
+        assert all(
+            not isinstance(panel, dict) or panel.get("config_panel_domain") != "esphome_mcp"
+            for panel in panels.values()
+        ), panels
 
     def test_home_assistant_esphome_registry_search_tools(
         self,

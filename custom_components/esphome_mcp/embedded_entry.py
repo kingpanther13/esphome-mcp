@@ -27,10 +27,8 @@ if TYPE_CHECKING:
 async def async_setup_server_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the server entry and schedule background bring-up."""
     from .embedded_setup import async_bring_up_server
-    from .ui_panel import async_register_ui_panel
 
     _ensure_secrets(hass, entry)
-    await async_register_ui_panel(hass)
 
     domain_data = hass.data.setdefault(DOMAIN, {})
     domain_data[DATA_LAST_OPTIONS] = dict(entry.options)
@@ -46,7 +44,6 @@ async def async_setup_server_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
 async def async_unload_server_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Stop the server and ingress webhook."""
     from .embedded_setup import async_teardown_server
-    from .ui_panel import async_unregister_ui_panel
 
     domain_data = hass.data.get(DOMAIN, {})
     task = domain_data.pop(DATA_BRINGUP_TASK, None)
@@ -56,7 +53,6 @@ async def async_unload_server_entry(hass: HomeAssistant, entry: ConfigEntry) -> 
             await task
 
     await async_teardown_server(hass)
-    async_unregister_ui_panel(hass)
     domain_data.pop(DATA_LAST_OPTIONS, None)
     return True
 
