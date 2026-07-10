@@ -30,11 +30,12 @@ def test_manifest_is_hacs_ready() -> None:
     assert manifest["domain"] == "esphome_mcp"
     assert manifest["config_flow"] is True
     assert "hassio" in manifest["after_dependencies"]
+    assert "frontend" not in manifest["after_dependencies"]
     assert "webhook" in manifest["dependencies"]
     assert "fastmcp==3.4.2" not in manifest.get("requirements", [])
-    assert manifest["version"] == "0.1.1"
-    assert 'version = "0.1.1"' in pyproject
-    assert 'VERSION = "0.1.1"' in const
+    assert manifest["version"] == "0.1.2"
+    assert 'version = "0.1.2"' in pyproject
+    assert 'VERSION = "0.1.2"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -75,6 +76,22 @@ def test_server_defaults_are_scaffolded() -> None:
     assert 'name="esp_firmware_jobs"' in server
     assert 'name="esp_get_firmware_job"' in server
     assert 'name="esp_follow_firmware_job"' in server
+
+
+def test_sidebar_web_ui_is_not_shipped_or_registered() -> None:
+    """Configuration belongs to the integration options flow, not a custom panel."""
+    embedded_entry = (COMPONENT / "embedded_entry.py").read_text()
+    embedded_server = (COMPONENT / "embedded_server.py").read_text()
+    server = (COMPONENT / "server.py").read_text()
+    strings = (COMPONENT / "strings.json").read_text()
+
+    assert not (COMPONENT / "ui_panel.py").exists()
+    assert "ui_panel" not in embedded_entry
+    assert "register_status_routes" not in embedded_server
+    assert "/settings" not in server
+    assert "/api/settings" not in server
+    assert "/esphome-mcp" not in strings
+    assert "sidebar panel" not in strings
 
 
 def test_esphome_addon_tool_contract_is_scaffolded() -> None:
@@ -141,10 +158,10 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v0.1.1") == []
+    assert validate_release_metadata("v0.1.2") == []
 
 
-@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.2"])
+@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.3"])
 def test_release_metadata_validation_rejects_bad_versions(version: str) -> None:
     """The release guard rejects the short-commit path that broke HACS installs."""
     errors = validate_release_metadata(version)
@@ -277,7 +294,6 @@ def test_hacs_release_archive_contains_component_payload() -> None:
         "server.py",
         "strings.json",
         "translations/en.json",
-        "ui_panel.py",
     }
 
     component_files = {

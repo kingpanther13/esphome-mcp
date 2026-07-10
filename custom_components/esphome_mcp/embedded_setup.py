@@ -62,7 +62,7 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
                 auth_mode=auth_mode,
             )
         else:
-            _LOGGER.info("ESPHome MCP webhook access disabled; direct/panel access only")
+            _LOGGER.info("ESPHome MCP webhook access disabled; direct access only")
         _surface_connect_urls(hass, entry, auth_mode, webhook_enabled=webhook_enabled)
     except asyncio.CancelledError:
         await async_teardown_server(hass)
@@ -116,10 +116,12 @@ def _surface_connect_urls(
 
     message = (
         "The ESPHome MCP server is running inside Home Assistant.\n\n"
-        "Manage it from the [ESPHome MCP panel](/esphome-mcp) in the sidebar.\n\n"
-        "The connect URL is shown on the integration Configure screen and in the "
-        "Home Assistant log. These surfaces are administrator-only because the "
-        "secret URL is a credential in the default mode.\n\n"
+        "Manage server and connection settings from "
+        "[Settings > Devices & services](/config/integrations/integration/esphome_mcp), "
+        "then select Configure.\n\n"
+        "The connect URL is shown there and in the Home Assistant log. The Configure "
+        "screen is administrator-only because the secret URL is a credential in the "
+        "default mode.\n\n"
         f"{auth_note}\n"
     )
     persistent_notification.async_create(

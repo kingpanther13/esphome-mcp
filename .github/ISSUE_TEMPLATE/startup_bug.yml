@@ -92,7 +92,7 @@ body:
     id: esphome_mcp_version
     attributes:
       label: "ESPHome MCP version"
-      placeholder: "0.1.1 or commit SHA"
+      placeholder: "0.1.2 or commit SHA"
     validations:
       required: false
 
@@ -106,7 +106,7 @@ body:
         1. Added the custom repository URL in HACS
         2. Installed ESPHome MCP
         3. Restarted Home Assistant
-        4. Opened the ESPHome MCP panel
+        4. Opened ESPHome MCP Configure under Settings > Devices & services
         5. Saw error: ...
     validations:
       required: true

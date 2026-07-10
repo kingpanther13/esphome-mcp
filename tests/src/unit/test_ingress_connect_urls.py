@@ -321,7 +321,9 @@ def test_surface_connect_urls_notification_omits_secret_urls(
     message = create_calls[0]["message"]
     assert "/api/webhook/abc123" not in message
     assert "/private_abc" not in message
-    assert "Configure screen" in message
+    assert "/esphome-mcp" not in message
+    assert "/config/integrations/integration/esphome_mcp" in message
+    assert "select Configure" in message
     assert create_calls[0]["notification_id"] == module._NOTIFICATION_ID
 
 
@@ -547,10 +549,10 @@ def test_options_normalize_drops_stale_fastmcp_override(
     assert "pip_spec" not in normalized
 
 
-def test_options_form_schema_omits_stale_fastmcp_override(
+def test_options_form_schema_contains_all_server_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The rendered Configure form never exposes the removed FastMCP override."""
+    """The Configure form is the complete server-settings surface."""
     _install_config_flow_stubs(monkeypatch, resolved_urls=[])
     module = importlib.import_module("custom_components.esphome_mcp.config_flow")
     flow = module.EspHomeMcpOptionsFlow()
@@ -571,5 +573,13 @@ def test_options_form_schema_omits_stale_fastmcp_override(
     result = asyncio.run(flow.async_step_init())
 
     schema = result["data_schema"]
-    assert "pip_spec" not in schema
-    assert module.OPT_SERVER_PORT in schema
+    assert set(schema) == {
+        module.OPT_SERVER_PORT,
+        module.OPT_BIND_HOST,
+        module.OPT_WEBHOOK_AUTH,
+        module.OPT_ENABLE_WEBHOOK,
+        module.OPT_EXTERNAL_URL,
+        module.OPT_WEBHOOK_ID_OVERRIDE,
+        module.OPT_SECRET_PATH_OVERRIDE,
+        module.OPT_REGENERATE_SECRETS,
+    }

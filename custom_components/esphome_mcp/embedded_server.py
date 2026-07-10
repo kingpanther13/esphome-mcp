@@ -149,10 +149,9 @@ class EmbeddedServerManager:
         """Build and run the FastMCP HTTP server until stopped."""
         import uvicorn
 
-        from .server import EspHomeMCPServer, register_status_routes
+        from .server import EspHomeMCPServer
 
         server = EspHomeMCPServer(self._hass)
-        register_status_routes(server.mcp, server, self._secret_path)
 
         app = server.mcp.http_app(path=self._secret_path, stateless_http=True)
         config = uvicorn.Config(

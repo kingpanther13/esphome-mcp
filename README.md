@@ -49,14 +49,15 @@ Builder tools need Supervisor.
 
 This repository is release-backed for HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v0.1.1`, which is the version HACS displays. Do not install a
+`v0.1.2`, which is the version HACS displays. Do not install a
 seven-character commit version such as `99cdab0`. If HACS has cached an old
 commit-only entry, refresh the custom repository before installing.
 
 After setup, Home Assistant starts the embedded MCP server and registers the
 webhook route. The integration Configure screen, Home Assistant notification,
-and Home Assistant log show the connection details. The sidebar panel provides
-an admin-only status/settings view while the server is running.
+and Home Assistant log show the connection details. Manage all server and
+connection settings through **Settings** > **Devices & services** > **ESPHome MCP**
+> **Configure**.
 
 ## Connecting An MCP Client
 
@@ -79,7 +80,7 @@ http://<home-assistant-ip>:9590/<private-path>
 ```
 
 Direct port access uses the private path as its credential. Set network access
-to loopback if you only want webhook and panel access.
+to loopback if you only want webhook access.
 
 Webhook access is the recommended path for remote clients because it works
 through Home Assistant's normal external URL and Nabu Casa Remote UI.

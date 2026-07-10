@@ -180,7 +180,7 @@ class ResourceServer:
         # ADMIN-ONLY: the server performs every Home Assistant operation with
         # its own provisioned ADMIN token, so accepting any valid login would
         # grant every household member admin-equivalent control. Require an
-        # active, human, administrator account (mirrors the settings panel).
+        # active, human, administrator account (mirrors integration configuration).
         user = getattr(result, "user", None)
         if user is None:
             return False

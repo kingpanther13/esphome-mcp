@@ -4,7 +4,6 @@
   "after_dependencies": [
     "cloud",
     "esphome",
-    "frontend",
     "hassio",
     "http"
   ],
@@ -18,5 +17,5 @@
   "documentation": "https://github.com/kingpanther13/esphome-mcp",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/kingpanther13/esphome-mcp/issues",
-  "version": "0.1.1"
+  "version": "0.1.2"
 }
