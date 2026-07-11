@@ -299,7 +299,7 @@ def test_build_connect_urls_no_resolved_base_never_uses_old_placeholder(
 def test_surface_connect_urls_notification_omits_secret_urls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The non-admin-visible persistent notification does not carry credentials."""
+    """Legacy entries default to a notification that does not carry credentials."""
     notification_calls: list[dict[str, Any]] = []
     module = _load_embedded_setup(monkeypatch, notification_calls=notification_calls)
     hass = SimpleNamespace()
@@ -325,6 +325,36 @@ def test_surface_connect_urls_notification_omits_secret_urls(
     assert "/config/integrations/integration/esphome_mcp" in message
     assert "select Configure" in message
     assert create_calls[0]["notification_id"] == module._NOTIFICATION_ID
+
+
+def test_surface_connect_urls_dismisses_notification_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit opt-out clears the notification and does not recreate it."""
+    notification_calls: list[dict[str, Any]] = []
+    module = _load_embedded_setup(monkeypatch, notification_calls=notification_calls)
+    hass = SimpleNamespace()
+    entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={
+            module.OPT_BIND_HOST: module.BIND_HOST_ALL,
+            module.OPT_SERVER_PORT: 9590,
+            module.OPT_ENABLE_PERSISTENT_NOTIFICATION: False,
+        },
+    )
+
+    module._surface_connect_urls(hass, entry, module.WEBHOOK_AUTH_NONE)
+
+    assert notification_calls == [
+        {
+            "action": "dismiss",
+            "hass": hass,
+            "notification_id": module._NOTIFICATION_ID,
+        }
+    ]
 
 
 def test_teardown_dismisses_running_notification(
@@ -358,7 +388,12 @@ def _install_config_flow_stubs(
     ha_mod.__path__ = []
     vol_mod = ModuleType("voluptuous")
     vol_mod.Schema = lambda schema: schema
-    vol_mod.Required = lambda key, **_kwargs: key
+
+    def required(key: str, **kwargs: Any) -> str:
+        captured.setdefault("required_defaults", {})[key] = kwargs.get("default")
+        return key
+
+    vol_mod.Required = required
     vol_mod.Optional = lambda key, **_kwargs: key
     vol_mod.All = lambda *validators: validators
     vol_mod.Coerce = lambda value_type: value_type
@@ -553,7 +588,7 @@ def test_options_form_schema_contains_all_server_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The Configure form is the complete server-settings surface."""
-    _install_config_flow_stubs(monkeypatch, resolved_urls=[])
+    captured = _install_config_flow_stubs(monkeypatch, resolved_urls=[])
     module = importlib.import_module("custom_components.esphome_mcp.config_flow")
     flow = module.EspHomeMcpOptionsFlow()
     flow.config_entry = SimpleNamespace(
@@ -578,8 +613,48 @@ def test_options_form_schema_contains_all_server_settings(
         module.OPT_BIND_HOST,
         module.OPT_WEBHOOK_AUTH,
         module.OPT_ENABLE_WEBHOOK,
+        module.OPT_ENABLE_PERSISTENT_NOTIFICATION,
         module.OPT_EXTERNAL_URL,
         module.OPT_WEBHOOK_ID_OVERRIDE,
         module.OPT_SECRET_PATH_OVERRIDE,
         module.OPT_REGENERATE_SECRETS,
     }
+    assert captured["required_defaults"][module.OPT_ENABLE_PERSISTENT_NOTIFICATION] is True
+
+
+def test_options_flow_preserves_disabled_persistent_notification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The form displays and stores an explicit notification opt-out."""
+    captured = _install_config_flow_stubs(monkeypatch, resolved_urls=[])
+    module = importlib.import_module("custom_components.esphome_mcp.config_flow")
+    flow = module.EspHomeMcpOptionsFlow()
+    flow.config_entry = SimpleNamespace(
+        data={
+            module.DATA_WEBHOOK_ID: "abc123",
+            module.DATA_SECRET_PATH: "/private_abc",
+        },
+        options={module.OPT_ENABLE_PERSISTENT_NOTIFICATION: False},
+    )
+
+    asyncio.run(flow.async_step_init())
+
+    assert captured["required_defaults"][module.OPT_ENABLE_PERSISTENT_NOTIFICATION] is False
+
+    submitted = asyncio.run(
+        flow.async_step_init(
+            {
+                module.OPT_SERVER_PORT: 9590,
+                module.OPT_BIND_HOST: module.BIND_HOST_LOOPBACK,
+                module.OPT_WEBHOOK_AUTH: module.WEBHOOK_AUTH_NONE,
+                module.OPT_ENABLE_WEBHOOK: True,
+                module.OPT_ENABLE_PERSISTENT_NOTIFICATION: False,
+                module.OPT_EXTERNAL_URL: "",
+                module.OPT_WEBHOOK_ID_OVERRIDE: "",
+                module.OPT_SECRET_PATH_OVERRIDE: "",
+                module.OPT_REGENERATE_SECRETS: False,
+            }
+        )
+    )
+    assert submitted["type"] == "create_entry"
+    assert submitted["data"][module.OPT_ENABLE_PERSISTENT_NOTIFICATION] is False

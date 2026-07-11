@@ -25,6 +25,7 @@ from .const import (
     ISSUE_RESTART_REQUIRED,
     ISSUE_START_FAILED,
     OPT_BIND_HOST,
+    OPT_ENABLE_PERSISTENT_NOTIFICATION,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
     OPT_SERVER_PORT,
@@ -114,6 +115,10 @@ def _surface_connect_urls(
 
     url_lines = "\n".join(f"- {url}" for url in urls)
     _LOGGER.info("ESPHome MCP server is running. Connect URL(s):\n%s\n%s", url_lines, auth_note)
+
+    if not bool(entry.options.get(OPT_ENABLE_PERSISTENT_NOTIFICATION, True)):
+        persistent_notification.async_dismiss(hass, _NOTIFICATION_ID)
+        return
 
     message = (
         "The ESPHome MCP server is running inside Home Assistant.\n\n"

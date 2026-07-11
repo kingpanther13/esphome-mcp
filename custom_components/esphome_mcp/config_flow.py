@@ -24,6 +24,7 @@ from .const import (
     DEFAULT_SERVER_PORT,
     DOMAIN,
     OPT_BIND_HOST,
+    OPT_ENABLE_PERSISTENT_NOTIFICATION,
     OPT_ENABLE_WEBHOOK,
     OPT_EXTERNAL_URL,
     OPT_REGENERATE_SECRETS,
@@ -107,6 +108,10 @@ class EspHomeMcpOptionsFlow(OptionsFlow):
                 vol.Required(
                     OPT_ENABLE_WEBHOOK,
                     default=bool(opts.get(OPT_ENABLE_WEBHOOK, True)),
+                ): bool,
+                vol.Required(
+                    OPT_ENABLE_PERSISTENT_NOTIFICATION,
+                    default=bool(opts.get(OPT_ENABLE_PERSISTENT_NOTIFICATION, True)),
                 ): bool,
                 vol.Optional(
                     OPT_EXTERNAL_URL,
