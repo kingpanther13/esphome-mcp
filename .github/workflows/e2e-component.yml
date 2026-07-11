@@ -53,15 +53,35 @@ jobs:
             echo "Failed to parse ESPHome Device Builder add-on version" >&2
             exit 1
           fi
+          hacs_addon_config="$(
+            gh api \
+              -H "Accept: application/vnd.github.raw" \
+              repos/hacs/addons/contents/get/config.yaml
+          )"
+          hacs_addon_hash="$(
+            printf '%s' "$hacs_addon_config" | sha256sum | cut -d' ' -f1 | head -c16
+          )"
+          hacs_version="$(gh api repos/hacs/integration/releases/latest --jq '.tag_name')"
+          if [ -z "$hacs_version" ]; then
+            echo "Failed to resolve the latest HACS release" >&2
+            exit 1
+          fi
           hash=$(git ls-tree -r HEAD \
             tests/haos_image_build \
             tests/initial_test_state \
             custom_components/esphome_mcp \
-            | { cat; echo "esphome-addon:$esphome_addon_hash"; } \
+            | {
+                cat
+                echo "esphome-addon:$esphome_addon_hash"
+                echo "hacs-addon:$hacs_addon_hash"
+                echo "hacs-release:$hacs_version"
+              } \
             | sha256sum | cut -d' ' -f1 | head -c16)
           echo "cache-key=esphome-mcp-haos-image-$hash" >> "$GITHUB_OUTPUT"
           echo "esphome-addon-hash=$esphome_addon_hash" >> "$GITHUB_OUTPUT"
           echo "esphome-version=$esphome_version" >> "$GITHUB_OUTPUT"
+          echo "hacs-addon-hash=$hacs_addon_hash" >> "$GITHUB_OUTPUT"
+          echo "hacs-version=$hacs_version" >> "$GITHUB_OUTPUT"
 
       - name: Restore image from cache
         id: restore-cache
@@ -72,7 +92,7 @@ jobs:
 
       - name: Report image acquisition path
         run: |
-          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }} esphome-version=${{ steps.key.outputs.esphome-version }}"
+          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }} esphome-version=${{ steps.key.outputs.esphome-version }} hacs-addon-hash=${{ steps.key.outputs.hacs-addon-hash }} hacs-version=${{ steps.key.outputs.hacs-version }}"
 
       - name: Install QEMU, OVMF, and libguestfs
         run: |
