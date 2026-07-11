@@ -99,6 +99,7 @@ jobs:
     if: ${{ github.ref_name == 'master' && github.event.inputs.dry_run != 'true' }}
     permissions:
       contents: write
+      pull-requests: read
     steps:
       - name: Inspect existing release and tag
         id: release-state
@@ -136,6 +137,33 @@ jobs:
             exit 1
           fi
 
+      - name: Check out release source
+        if: steps.release-state.outputs.should_publish == 'true'
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        if: steps.release-state.outputs.should_publish == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build release notes from merged pull request
+        if: steps.release-state.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "repos/${GH_REPO}/commits/${GITHUB_SHA}/pulls" \
+            > /tmp/release-pulls.json
+          python scripts/release_notes.py render \
+            --pulls-json /tmp/release-pulls.json \
+            --sha "${GITHUB_SHA}" \
+            --output /tmp/release-notes.md
+
       - name: Create GitHub release
         if: steps.release-state.outputs.should_publish == 'true'
         env:
@@ -149,4 +177,4 @@ jobs:
           gh release create "${tag}" \
             --target "${GITHUB_SHA}" \
             --title "${tag}" \
-            --notes "Release ${tag} for HACS installation."
+            --notes-file /tmp/release-notes.md

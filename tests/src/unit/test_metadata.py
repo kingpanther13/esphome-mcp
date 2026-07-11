@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import struct
 from importlib import util
 from pathlib import Path
 
@@ -49,6 +50,14 @@ def test_hacs_metadata_exists() -> None:
     assert "zip_release" not in root_hacs
     assert "filename" not in root_hacs
     assert not (COMPONENT / "hacs.json").exists()
+
+
+def test_local_brand_icon_meets_home_assistant_requirements() -> None:
+    """The HACS-installed component ships the supported local 256px PNG icon."""
+    icon = (COMPONENT / "brand" / "icon.png").read_bytes()
+
+    assert icon.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", icon[16:24]) == (256, 256)
 
 
 def test_server_defaults_are_scaffolded() -> None:
@@ -201,6 +210,7 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert "REQUESTED_VERSION: ${{ github.event.inputs.version }}" in workflow
     assert "needs: validate" in workflow
     assert "contents: write" in workflow
+    assert "pull-requests: read" in workflow
     assert (
         "if: ${{ github.ref_name == 'master' && github.event.inputs.dry_run != 'true' }}"
         in workflow
@@ -209,7 +219,7 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert "VERSION: ${{ steps.release-version.outputs.version }}" in workflow
     assert "VERSION: ${{ needs.validate.outputs.version }}" in workflow
     assert 'python scripts/validate_release_metadata.py "$VERSION"' in workflow
-    assert workflow.count("uses: actions/checkout@v7") == 1
+    assert workflow.count("uses: actions/checkout@v7") == 2
     assert not any(
         "${{ github.event.inputs.version }}" in line
         for line in workflow.splitlines()
@@ -222,6 +232,10 @@ def test_release_workflow_creates_a_github_release() -> None:
     assert "gh release create" in workflow
     assert '--target "${GITHUB_SHA}"' in workflow
     assert 'tag="v${version}"' in workflow
+    assert "commits/${GITHUB_SHA}/pulls" in workflow
+    assert "scripts/release_notes.py render" in workflow
+    assert "--notes-file /tmp/release-notes.md" in workflow
+    assert "Release ${tag} for HACS installation." not in workflow
 
 
 def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
@@ -234,6 +248,18 @@ def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
     assert "github.base_ref || 'master'" in workflow
     assert "custom_components/esphome_mcp/" in script
     assert "manifest version did not increase" in script
+
+
+def test_pr_template_and_validation_supply_release_notes() -> None:
+    """Versioned PRs provide the user-facing text consumed by the release job."""
+    template = (ROOT / ".github" / "pull_request_template.md").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "release-notes.yml").read_text()
+
+    assert template.count("## Release notes") == 1
+    assert "published verbatim" in template
+    assert "scripts/release_notes.py validate-pr" in workflow
+    assert '--event-path "$GITHUB_EVENT_PATH"' in workflow
+    assert "types: [opened, edited, reopened, synchronize]" in workflow
 
 
 def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> None:
