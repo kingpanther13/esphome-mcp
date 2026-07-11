@@ -632,6 +632,39 @@ class TestEmbeddedServerOnHaos:
         assert payload["mcp_domain"] == "esphome_mcp"
         assert "device_count" in payload
 
+    def test_local_brand_icon_uses_home_assistant_authenticated_proxy(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, _session_id, _configuration = embedded_server
+        token = login_for_token(base_url)
+        brands_auth = websocket_command(
+            base_url,
+            token,
+            {"type": "brands/access_token"},
+        )
+
+        assert isinstance(brands_auth, dict), brands_auth
+        brands_token = brands_auth.get("token")
+        assert isinstance(brands_token, str) and brands_token, brands_auth
+
+        response = requests.get(
+            f"{base_url}/api/brands/integration/esphome_mcp/icon.png",
+            params={"token": brands_token},
+            timeout=60,
+        )
+        assert response.status_code == 200, response.text[:1000]
+        assert response.headers.get("Content-Type", "").split(";", 1)[0] == "image/png"
+
+        expected_icon = (
+            Path(__file__).resolve().parents[4]
+            / "custom_components"
+            / "esphome_mcp"
+            / "brand"
+            / "icon.png"
+        ).read_bytes()
+        assert response.content == expected_icon
+
     def test_options_flow_shows_resolved_webhook_connect_url(
         self,
         embedded_server: tuple[str, str | None, str],
