@@ -69,6 +69,11 @@ ESPHOME_DEVICE_BUILDER_ADDON = Addon(
     name="ESPHome Device Builder",
 )
 
+GET_HACS_ADDON = Addon(
+    repo="https://github.com/hacs/addons",
+    name="Get HACS",
+)
+
 
 def _run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
     LOG.debug("$ %s", " ".join(cmd))
@@ -518,6 +523,33 @@ def install_esphome_device_builder(ws: HAWebSocket) -> str:
     return slug
 
 
+def install_hacs(ws: HAWebSocket, base_url: str) -> None:
+    """Bootstrap HACS through its supported Get HACS add-on path."""
+    _wait_supervisor_ready(ws)
+    addon = GET_HACS_ADDON
+    assert addon.repo is not None
+    _add_repository(ws, addon.repo)
+    _reload_store(ws)
+    slug = _discover_slug(ws, addon)
+    LOG.info("Installing %s (slug=%s)", addon.name, slug)
+    info = _addon_info_or_none(ws, slug)
+    if not _addon_is_installed(info):
+        _install_addon_with_retry(ws, slug, timeout=900.0)
+    ws.supervisor_api(f"/addons/{slug}/start", method="post", timeout=180.0)
+
+    # A Core restart closes this WebSocket before Supervisor can reply. That
+    # disconnect is expected and matches ha-mcp's proven HAOS bake path.
+    from websockets.exceptions import ConnectionClosed
+
+    LOG.info("Restarting HA Core so the installed HACS component loads")
+    try:
+        ws.supervisor_api("/core/restart", method="post", timeout=300.0)
+    except ConnectionClosed:
+        LOG.info("WebSocket closed during Core restart (expected)")
+    _wait_http_ok(f"{base_url}/manifest.json", timeout=300.0)
+    ws.reconnect()
+
+
 def _check_core_auth(base_url: str, token: str) -> None:
     cfg = _http("GET", f"{base_url}/api/config", token=token, timeout=10.0)
     LOG.info("AUTH OK: /api/config version=%s state=%s", cfg.get("version"), cfg.get("state"))
@@ -686,6 +718,11 @@ def bake_component_into_config(qcow2: Path) -> None:
 
         cc_dir = config_dir / "custom_components"
         cc_dir.mkdir(exist_ok=True)
+        # Get HACS installed the complete release into the qcow2. The copied
+        # seed is source-only and lacks HACS's generated frontend package.
+        seed_hacs = cc_dir / "hacs"
+        if seed_hacs.exists():
+            shutil.rmtree(seed_hacs)
         dest = cc_dir / ESPHOME_MCP_DOMAIN
         if dest.exists():
             shutil.rmtree(dest)
@@ -768,6 +805,7 @@ def build(work_dir: Path, output: Path) -> None:
         _check_core_auth(base_url, token)
         with HAWebSocket(base_url, token) as ws:
             install_esphome_device_builder(ws)
+            install_hacs(ws, base_url)
             stop_qemu(qemu, ws)
     except Exception:
         LOG.exception("Image build failed; leaving qcow2 in %s for inspection", qcow2)

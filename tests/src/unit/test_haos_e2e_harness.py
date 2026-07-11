@@ -96,8 +96,8 @@ def test_build_image_injects_disabled_esphome_mcp_entry(tmp_path: Path) -> None:
     assert "pip_spec" not in entry["options"]
 
 
-def test_build_image_installs_official_esphome_device_builder_before_bake() -> None:
-    """The HAOS image builder installs ESPHome Device Builder before component bake."""
+def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
+    """The HAOS image has official Device Builder and complete HACS installs."""
     build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
     source = BUILD_IMAGE_PATH.read_text()
     workflow = E2E_COMPONENT_WORKFLOW.read_text()
@@ -108,12 +108,83 @@ def test_build_image_installs_official_esphome_device_builder_before_bake() -> N
     )
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.name == "ESPHome Device Builder"
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.start is True
+    assert build_image.GET_HACS_ADDON.repo == "https://github.com/hacs/addons"
+    assert build_image.GET_HACS_ADDON.name == "Get HACS"
     assert source.index("install_esphome_device_builder(ws)") < source.index(
         "bake_component_into_config(qcow2)"
     )
+    assert source.index("install_hacs(ws, base_url)") < source.index(
+        "bake_component_into_config(qcow2)"
+    )
+    assert 'seed_hacs = cc_dir / "hacs"' in source
     assert "repos/esphome/home-assistant-addon/contents/esphome/config.yaml" in workflow
+    assert "repos/hacs/addons/contents/get/config.yaml" in workflow
+    assert "repos/hacs/integration/releases/latest" in workflow
     assert "GH_TOKEN: ${{ github.token }}" in workflow
     assert "esphome-addon-hash" in workflow
+    assert "hacs-addon-hash" in workflow
+    assert "hacs-version" in workflow
+
+
+def test_install_hacs_uses_supported_addon_and_restarts_core(monkeypatch) -> None:
+    """The image bake installs HACS, restarts Core, and reconnects Supervisor."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    events: list[tuple[object, ...]] = []
+
+    class FakeWebSocket:
+        def supervisor_api(
+            self,
+            path: str,
+            *,
+            method: str,
+            timeout: float,
+        ) -> dict[str, object]:
+            events.append(("api", path, method, timeout))
+            return {}
+
+        def reconnect(self) -> None:
+            events.append(("reconnect",))
+
+    monkeypatch.setattr(
+        build_image,
+        "_wait_supervisor_ready",
+        lambda _ws: events.append(("supervisor-ready",)),
+    )
+    monkeypatch.setattr(
+        build_image,
+        "_add_repository",
+        lambda _ws, repo: events.append(("add-repository", repo)),
+    )
+    monkeypatch.setattr(
+        build_image,
+        "_reload_store",
+        lambda _ws: events.append(("reload-store",)),
+    )
+    monkeypatch.setattr(build_image, "_discover_slug", lambda _ws, _addon: "get_hacs")
+    monkeypatch.setattr(build_image, "_addon_info_or_none", lambda _ws, _slug: None)
+    monkeypatch.setattr(
+        build_image,
+        "_install_addon_with_retry",
+        lambda _ws, slug, *, timeout: events.append(("install", slug, timeout)),
+    )
+    monkeypatch.setattr(
+        build_image,
+        "_wait_http_ok",
+        lambda url, *, timeout: events.append(("wait-http", url, timeout)),
+    )
+
+    build_image.install_hacs(FakeWebSocket(), "http://127.0.0.1:18123")
+
+    assert events == [
+        ("supervisor-ready",),
+        ("add-repository", "https://github.com/hacs/addons"),
+        ("reload-store",),
+        ("install", "get_hacs", 900.0),
+        ("api", "/addons/get_hacs/start", "post", 180.0),
+        ("api", "/core/restart", "post", 300.0),
+        ("wait-http", "http://127.0.0.1:18123/manifest.json", 300.0),
+        ("reconnect",),
+    ]
 
 
 def test_build_image_bakes_from_seed_state_instead_of_live_config() -> None:
@@ -278,9 +349,13 @@ def test_embedded_e2e_module_tracks_expected_webhook_and_tool_names() -> None:
     assert "devices/create" in string_constants
     assert "firmware/cancel" in string_constants
     assert "ESPHOME_MCP_SERVER_WEBHOOK_ID" in EMBEDDED_E2E_PATH.read_text()
+    assert "brands/access_token" in string_constants
+    assert "/api/brands/integration/esphome_mcp/icon.png" in string_constants
+    assert "config_entries/get" in string_constants
     assert "/api/config/config_entries/options/flow" in string_constants
     assert "description_placeholders" in string_constants
     assert "connect_url" in string_constants
     source = EMBEDDED_E2E_PATH.read_text()
+    assert "MCPServerUnavailableError" in source
     assert 'assert "<your-home-assistant-url>" not in connect_url' in source
     assert 'assert "Home Assistant URL unavailable" not in connect_url' in source

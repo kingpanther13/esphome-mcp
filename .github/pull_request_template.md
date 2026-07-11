@@ -2,6 +2,15 @@
 
 <!-- Brief description of your changes -->
 
+## Release notes
+
+<!--
+Required when this PR bumps custom_components/esphome_mcp/manifest.json.
+Replace this comment with concise, user-facing Markdown that describes what
+changed. This section is published verbatim under "What's changed" in the
+GitHub release. Do not use "N/A", "None", or another placeholder for a release.
+-->
+
 ## Type of change
 
 - [ ] Bug fix

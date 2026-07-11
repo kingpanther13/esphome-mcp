@@ -105,6 +105,11 @@ LIVE_SENSOR_NAME = "ESP MCP E2E Live Sensor"
 LIVE_LOG_MARKER = "esp-mcp-e2e-live heartbeat"
 LIVE_DEVICE_TIMEOUT_S = 420
 
+
+class MCPServerUnavailableError(RuntimeError):
+    """The HA webhook could not reach the embedded MCP server."""
+
+
 pytestmark = [
     pytest.mark.e2e,
     pytest.mark.slow,
@@ -229,6 +234,8 @@ def _tool_call(
         timeout=timeout,
     )
     parsed = _parse_mcp(resp)
+    if resp.status_code in {502, 503} and resp.text.startswith("ESPHome MCP server"):
+        raise MCPServerUnavailableError(f"HTTP {resp.status_code}: {resp.text}")
     assert parsed is not None, f"unparseable tools/call response: {resp.text[:500]}"
     assert "result" in parsed, parsed
     return parsed
@@ -537,34 +544,44 @@ async def _exercise_live_host_device_in_haos(
             deadline = time.monotonic() + LIVE_DEVICE_TIMEOUT_S
             last_devices: dict[str, Any] | None = None
             last_entities: dict[str, Any] | None = None
+            last_transport_error: str | None = None
             while time.monotonic() < deadline:
-                last_devices = _tool_payload(
-                    await asyncio.to_thread(
-                        _tool_call,
-                        base_url,
-                        session_id,
-                        "esp_list_devices",
-                        {
-                            "query": LIVE_FRIENDLY_NAME,
-                            "config_entry_state": "loaded",
-                            "limit": 10,
-                        },
+                try:
+                    last_devices = _tool_payload(
+                        await asyncio.to_thread(
+                            _tool_call,
+                            base_url,
+                            session_id,
+                            "esp_list_devices",
+                            {
+                                "query": LIVE_FRIENDLY_NAME,
+                                "config_entry_state": "loaded",
+                                "limit": 10,
+                            },
+                        )
                     )
-                )
-                last_entities = _tool_payload(
-                    await asyncio.to_thread(
-                        _tool_call,
-                        base_url,
-                        session_id,
-                        "esp_list_entities",
-                        {
-                            "query": LIVE_SENSOR_NAME,
-                            "domain": "sensor",
-                            "state": "42",
-                            "limit": 10,
-                        },
+                    last_entities = _tool_payload(
+                        await asyncio.to_thread(
+                            _tool_call,
+                            base_url,
+                            session_id,
+                            "esp_list_entities",
+                            {
+                                "query": LIVE_SENSOR_NAME,
+                                "domain": "sensor",
+                                "state": "42",
+                                "limit": 10,
+                            },
+                        )
                     )
-                )
+                except MCPServerUnavailableError as err:
+                    last_transport_error = str(err)
+                    LOG.warning(
+                        "MCP server unavailable while polling the live ESPHome registry: %s",
+                        err,
+                    )
+                    await asyncio.sleep(5)
+                    continue
                 if (
                     last_devices.get("success") is True
                     and last_entities.get("success") is True
@@ -576,7 +593,8 @@ async def _exercise_live_host_device_in_haos(
             else:
                 raise AssertionError(
                     "Live ESPHome host device did not appear in HA registries: "
-                    f"devices={last_devices} entities={last_entities}"
+                    f"devices={last_devices} entities={last_entities} "
+                    f"last_transport_error={last_transport_error}"
                 )
 
             logs = _tool_payload(
@@ -631,6 +649,59 @@ class TestEmbeddedServerOnHaos:
         assert payload["success"] is True
         assert payload["mcp_domain"] == "esphome_mcp"
         assert "device_count" in payload
+
+    def test_local_brand_icon_uses_home_assistant_authenticated_proxy(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, _session_id, _configuration = embedded_server
+        token = login_for_token(base_url)
+        brands_auth = websocket_command(
+            base_url,
+            token,
+            {"type": "brands/access_token"},
+        )
+
+        assert isinstance(brands_auth, dict), brands_auth
+        brands_token = brands_auth.get("token")
+        assert isinstance(brands_token, str) and brands_token, brands_auth
+
+        response = requests.get(
+            f"{base_url}/api/brands/integration/esphome_mcp/icon.png",
+            params={"token": brands_token},
+            timeout=60,
+        )
+        assert response.status_code == 200, response.text[:1000]
+        assert response.headers.get("Content-Type", "").split(";", 1)[0] == "image/png"
+
+        expected_icon = (
+            Path(__file__).resolve().parents[4]
+            / "custom_components"
+            / "esphome_mcp"
+            / "brand"
+            / "icon.png"
+        ).read_bytes()
+        assert response.content == expected_icon
+
+    def test_hacs_integration_is_loaded(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, _session_id, _configuration = embedded_server
+        token = login_for_token(base_url)
+        entries = websocket_command(base_url, token, {"type": "config_entries/get"})
+
+        assert isinstance(entries, list), entries
+        hacs_entry = next(
+            (
+                entry
+                for entry in entries
+                if isinstance(entry, dict) and entry.get("domain") == "hacs"
+            ),
+            None,
+        )
+        assert isinstance(hacs_entry, dict), entries
+        assert hacs_entry.get("state") == "loaded", hacs_entry
 
     def test_options_flow_shows_resolved_webhook_connect_url(
         self,

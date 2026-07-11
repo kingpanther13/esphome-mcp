@@ -1,0 +1,26 @@
+name: Release Notes
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  release-notes:
+    name: Release Notes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Validate release notes for version bumps
+        run: >-
+          python scripts/release_notes.py validate-pr
+          --base-ref "origin/${{ github.base_ref }}"
+          --event-path "$GITHUB_EVENT_PATH"
