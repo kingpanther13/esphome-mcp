@@ -49,7 +49,7 @@ Builder tools need Supervisor.
 
 This repository is release-backed for HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v0.1.4`, which is the version HACS displays. Do not install a
+`v0.1.5`, which is the version HACS displays. Do not install a
 seven-character commit version such as `99cdab0`. If HACS has cached an old
 commit-only entry, refresh the custom repository before installing.
 

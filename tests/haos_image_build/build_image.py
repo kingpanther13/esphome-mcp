@@ -597,6 +597,7 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
                     "bind_host": "127.0.0.1",
                     "webhook_auth": "none",
                     "enable_webhook": True,
+                    "enable_persistent_notification": True,
                 },
                 "pref_disable_new_entities": False,
                 "pref_disable_polling": False,

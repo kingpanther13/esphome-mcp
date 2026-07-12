@@ -51,6 +51,7 @@ PYTEST_TIMEOUT_S = (
 READY_POLL_S = 5
 DEVICE_BUILDER_CONFIG_TIMEOUT_S = 180
 FIRMWARE_JOB_TIMEOUT_S = 120
+PERSISTENT_NOTIFICATION_ID = "esphome_mcp_server_connect"
 
 EXPECTED_ESP_TOOLS = {
     "esp_overview",
@@ -454,6 +455,70 @@ def _start_esphome_mcp_options_flow(base_url: str, token: str) -> dict[str, Any]
     )
 
 
+def _set_persistent_notification_option(
+    base_url: str,
+    token: str,
+    *,
+    enabled: bool,
+) -> dict[str, Any]:
+    """Submit the real HA options flow with the notification setting changed."""
+    flow = _start_esphome_mcp_options_flow(base_url, token)
+    assert flow.get("type") == "form", flow
+    flow_id = str(flow["flow_id"])
+    return _ha_json(
+        base_url,
+        token,
+        "POST",
+        f"/api/config/config_entries/options/flow/{flow_id}",
+        {
+            "server_port": 9590,
+            "bind_host": "127.0.0.1",
+            "webhook_auth": "none",
+            "enable_webhook": True,
+            "enable_persistent_notification": enabled,
+            "external_url": "",
+            "webhook_id_override": "",
+            "secret_path_override": "",
+            "regenerate_secrets": False,
+        },
+    )
+
+
+def _persistent_notification_ids(base_url: str, token: str) -> set[str]:
+    """Return notification IDs from Home Assistant's authenticated WS API."""
+    notifications = websocket_command(
+        base_url,
+        token,
+        {"type": "persistent_notification/get"},
+    )
+    assert isinstance(notifications, list), notifications
+    return {
+        str(notification["notification_id"])
+        for notification in notifications
+        if isinstance(notification, dict) and notification.get("notification_id")
+    }
+
+
+def _wait_for_persistent_notification(
+    base_url: str,
+    token: str,
+    *,
+    present: bool,
+    timeout: float = 180.0,
+) -> None:
+    """Wait for the options-triggered reload to update notification state."""
+    deadline = time.monotonic() + timeout
+    last_ids: set[str] = set()
+    while time.monotonic() < deadline:
+        last_ids = _persistent_notification_ids(base_url, token)
+        if (PERSISTENT_NOTIFICATION_ID in last_ids) is present:
+            return
+        time.sleep(READY_POLL_S)
+    raise AssertionError(
+        f"Persistent notification present={present} was not observed; last IDs: {last_ids}"
+    )
+
+
 async def _exercise_live_host_device_in_haos(
     base_url: str,
     session_id: str | None,
@@ -720,6 +785,7 @@ class TestEmbeddedServerOnHaos:
             "bind_host",
             "webhook_auth",
             "enable_webhook",
+            "enable_persistent_notification",
             "external_url",
             "webhook_id_override",
             "secret_path_override",
@@ -1064,3 +1130,34 @@ class TestEmbeddedServerOnHaos:
             "precondition_failed",
             "unavailable",
         }, payload
+
+    def test_persistent_notification_setting_round_trips_through_haos(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        """The default-on option suppresses and restores the real HA notification."""
+        base_url, _session_id, _configuration = embedded_server
+        token = login_for_token(base_url)
+
+        _wait_for_persistent_notification(base_url, token, present=True)
+
+        disabled = _set_persistent_notification_option(base_url, token, enabled=False)
+        assert disabled.get("type") == "create_entry", disabled
+        _wait_for_persistent_notification(base_url, token, present=False)
+
+        deadline = time.monotonic() + WEBHOOK_READY_TIMEOUT_S
+        ready = False
+        while time.monotonic() < deadline:
+            try:
+                ready, _new_session_id = _initialize(base_url)
+            except requests.exceptions.RequestException:
+                ready = False
+            if ready:
+                break
+            time.sleep(READY_POLL_S)
+        assert ready, "ESPHome MCP did not return after disabling its notification"
+        assert PERSISTENT_NOTIFICATION_ID not in _persistent_notification_ids(base_url, token)
+
+        enabled = _set_persistent_notification_option(base_url, token, enabled=True)
+        assert enabled.get("type") == "create_entry", enabled
+        _wait_for_persistent_notification(base_url, token, present=True)

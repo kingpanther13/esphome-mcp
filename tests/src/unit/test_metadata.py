@@ -34,9 +34,9 @@ def test_manifest_is_hacs_ready() -> None:
     assert "frontend" not in manifest["after_dependencies"]
     assert "webhook" in manifest["dependencies"]
     assert "fastmcp==3.4.3" not in manifest.get("requirements", [])
-    assert manifest["version"] == "0.1.4"
-    assert 'version = "0.1.4"' in pyproject
-    assert 'VERSION = "0.1.4"' in const
+    assert manifest["version"] == "0.1.5"
+    assert 'version = "0.1.5"' in pyproject
+    assert 'VERSION = "0.1.5"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -181,10 +181,10 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v0.1.4") == []
+    assert validate_release_metadata("v0.1.5") == []
 
 
-@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.5"])
+@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.6"])
 def test_release_metadata_validation_rejects_bad_versions(version: str) -> None:
     """The release guard rejects the short-commit path that broke HACS installs."""
     errors = validate_release_metadata(version)

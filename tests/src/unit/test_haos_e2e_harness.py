@@ -92,6 +92,7 @@ def test_build_image_injects_disabled_esphome_mcp_entry(tmp_path: Path) -> None:
         "bind_host": "127.0.0.1",
         "webhook_auth": "none",
         "enable_webhook": True,
+        "enable_persistent_notification": True,
     }
     assert "pip_spec" not in entry["options"]
 
