@@ -71,7 +71,7 @@ def test_ha_mcp_fastmcp_pin_parity(tmp_path: Path) -> None:
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
     upstream.write_text(
-        '[project]\nname = "ha-mcp"\ndependencies = ["fastmcp==3.4.3", "httpx==0.28.1"]\n'
+        '[project]\nname = "ha-mcp"\ndependencies = ["fastmcp==3.4.4", "httpx==0.28.1"]\n'
     )
 
     assert sandbox.validate_ha_mcp_pin(upstream) == []
@@ -86,9 +86,18 @@ def test_ha_mcp_fastmcp_pin_mismatch_fails(tmp_path: Path) -> None:
     errors = sandbox.validate_ha_mcp_pin(upstream)
 
     assert errors == [
-        "shared FastMCP pin mismatch: ESPHome MCP uses 'fastmcp==3.4.3', "
+        "shared FastMCP pin mismatch: ESPHome MCP uses 'fastmcp==3.4.4', "
         "ha-mcp uses 'fastmcp==9.9.9'"
     ]
+
+
+def test_runtime_constants_reject_stable_ha_mcp_release_ref(tmp_path: Path) -> None:
+    """Compatibility cannot silently drift back from ha-mcp master to a release tag."""
+    sandbox = _load_sandbox()
+    const = tmp_path / "const.py"
+    const.write_text('DEFAULT_PIP_SPEC = "fastmcp==3.4.4"\nHA_MCP_COMPAT_REF = "v7.12.3"\n')
+
+    assert sandbox.validate_runtime_constants(const) == ["HA_MCP_COMPAT_REF must be 'master'"]
 
 
 def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:

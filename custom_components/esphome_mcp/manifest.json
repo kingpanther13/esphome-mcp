@@ -17,5 +17,5 @@
   "documentation": "https://github.com/kingpanther13/esphome-mcp",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/kingpanther13/esphome-mcp/issues",
-  "version": "0.1.5"
+  "version": "0.1.6"
 }

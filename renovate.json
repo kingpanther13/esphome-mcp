@@ -4,14 +4,8 @@
     "config:recommended"
   ],
   "timezone": "UTC",
-  "schedule": [
-    "after 3pm on tuesday"
-  ],
   "enabledManagers": [
-    "custom.regex",
-    "github-actions",
-    "pep621",
-    "pip_requirements"
+    "custom.regex"
   ],
   "ignorePaths": [],
   "customManagers": [
@@ -24,7 +18,8 @@
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+[A-Z0-9_]+\\s*=\\s*[\"']?(?<currentValue>[\\w.+-]+)[\"']?",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\S+:\\s*[\"']?(?<currentValue>[\\w.+-]+)[\"']?"
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\S+:\\s*[\"']?(?<currentValue>[\\w.+-]+)[\"']?",
+        "DEFAULT_PIP_SPEC\\s*=\\s*[\"']fastmcp==(?<currentValue>\\d+\\.\\d+\\.\\d+(?:(?:a|b|rc)\\d+)?)[\"']\\s*# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
       ],
       "depNameTemplate": "{{{depName}}}",
       "datasourceTemplate": "{{{datasource}}}"
@@ -32,36 +27,16 @@
   ],
   "packageRules": [
     {
-      "description": "Python project and E2E requirements",
-      "matchManagers": [
-        "pep621",
-        "pip_requirements"
-      ],
-      "labels": [
-        "dependencies",
-        "python"
-      ]
-    },
-    {
-      "description": "GitHub Actions workflow dependencies",
-      "matchManagers": [
-        "github-actions"
-      ],
-      "labels": [
-        "dependencies",
-        "ci"
-      ]
-    },
-    {
-      "description": "Stable ha-mcp compatibility release",
+      "description": "FastMCP runtime pin validated against ha-mcp master",
       "matchDatasources": [
-        "github-releases"
+        "pypi"
       ],
       "matchPackageNames": [
-        "homeassistant-ai/ha-mcp"
+        "fastmcp"
       ],
       "labels": [
         "dependencies",
+        "python",
         "compatibility"
       ]
     },
@@ -76,19 +51,6 @@
       "labels": [
         "dependencies",
         "haos",
-        "e2e"
-      ]
-    },
-    {
-      "description": "ESPHome test dependencies",
-      "matchPackageNames": [
-        "aioesphomeapi",
-        "esphome"
-      ],
-      "groupName": "esphome test dependencies",
-      "labels": [
-        "dependencies",
-        "esphome",
         "e2e"
       ]
     }

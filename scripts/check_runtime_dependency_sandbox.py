@@ -15,7 +15,6 @@ CONST_PATH = COMPONENT / "const.py"
 EMBEDDED_SERVER_PATH = COMPONENT / "embedded_server.py"
 
 _EXACT_FASTMCP_PIN = re.compile(r"fastmcp==(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)")
-_HA_MCP_RELEASE = re.compile(r"v\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?")
 _MODULE_CACHE_MUTATORS = {
     "__delitem__",
     "__ior__",
@@ -169,14 +168,14 @@ def validate_runtime_tree(component: Path = COMPONENT) -> list[str]:
 
 
 def validate_runtime_constants(const_path: Path = CONST_PATH) -> list[str]:
-    """Require an exact FastMCP pin and a stable ha-mcp compatibility release."""
+    """Require an exact FastMCP pin validated against ha-mcp master."""
     errors: list[str] = []
     pip_spec = _constant_string(const_path, "DEFAULT_PIP_SPEC")
     if pip_spec is None or _EXACT_FASTMCP_PIN.fullmatch(pip_spec) is None:
         errors.append("DEFAULT_PIP_SPEC must be an exact fastmcp==X.Y.Z pin")
-    compat_release = _constant_string(const_path, "HA_MCP_COMPAT_RELEASE")
-    if compat_release is None or _HA_MCP_RELEASE.fullmatch(compat_release) is None:
-        errors.append("HA_MCP_COMPAT_RELEASE must be an exact stable vX.Y.Z release")
+    compat_ref = _constant_string(const_path, "HA_MCP_COMPAT_REF")
+    if compat_ref != "master":
+        errors.append("HA_MCP_COMPAT_REF must be 'master'")
     return errors
 
 
@@ -214,7 +213,7 @@ def validate_ha_mcp_pin(
     ha_mcp_pyproject: Path,
     const_path: Path = CONST_PATH,
 ) -> list[str]:
-    """Require FastMCP parity with the selected stable ha-mcp release."""
+    """Require FastMCP parity with the current ha-mcp master branch."""
     project = tomllib.loads(ha_mcp_pyproject.read_text())
     dependencies = project.get("project", {}).get("dependencies", [])
     upstream_specs = [
@@ -242,21 +241,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--ha-mcp-pyproject",
         type=Path,
-        help="Downloaded pyproject.toml for HA_MCP_COMPAT_RELEASE.",
+        help="Downloaded pyproject.toml for HA_MCP_COMPAT_REF.",
     )
     parser.add_argument(
         "--print-ha-mcp-ref",
         action="store_true",
-        help="Print HA_MCP_COMPAT_RELEASE for CI download steps.",
+        help="Print HA_MCP_COMPAT_REF for CI download steps.",
     )
     args = parser.parse_args(argv)
 
     if args.print_ha_mcp_ref:
-        compat_release = _constant_string(CONST_PATH, "HA_MCP_COMPAT_RELEASE")
-        if compat_release is None:
-            print("ERROR: HA_MCP_COMPAT_RELEASE is missing", file=sys.stderr)
+        compat_ref = _constant_string(CONST_PATH, "HA_MCP_COMPAT_REF")
+        if compat_ref is None:
+            print("ERROR: HA_MCP_COMPAT_REF is missing", file=sys.stderr)
             return 1
-        print(compat_release)
+        print(compat_ref)
         return 0
 
     errors = [
