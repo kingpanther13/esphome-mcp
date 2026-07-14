@@ -1,7 +1,7 @@
 """Constants for the ESPHome MCP custom component."""
 
 DOMAIN = "esphome_mcp"
-VERSION = "0.1.5"
+VERSION = "0.1.6"
 
 DEFAULT_SERVER_PORT = 9590
 DEFAULT_BIND_HOST = "0.0.0.0"
@@ -11,10 +11,9 @@ BIND_HOST_LOOPBACK = "127.0.0.1"
 # Installed at runtime when the in-process server entry is enabled. Keeping this
 # out of manifest.json lets HAOS boot with the baked entry disabled, matching
 # ha-mcp's embedded server pattern. FastMCP is process-global inside HA Core, so
-# this pin must match the stable ha-mcp release used by ha_mcp_tools.
-# renovate: datasource=github-releases depName=homeassistant-ai/ha-mcp
-HA_MCP_COMPAT_RELEASE = "v7.12.2"
-DEFAULT_PIP_SPEC = "fastmcp==3.4.3"
+# this pin must match the current ha-mcp master branch used by ha_mcp_tools.
+HA_MCP_COMPAT_REF = "master"
+DEFAULT_PIP_SPEC = "fastmcp==3.4.4"  # renovate: datasource=pypi depName=fastmcp
 
 SERVER_CONFIG_SUBDIR = ".esphome_mcp"
 

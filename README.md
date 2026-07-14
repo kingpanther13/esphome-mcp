@@ -49,7 +49,7 @@ Builder tools need Supervisor.
 
 This repository is release-backed for HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v0.1.5`, which is the version HACS displays. Do not install a
+`v0.1.6`, which is the version HACS displays. Do not install a
 seven-character commit version such as `99cdab0`. If HACS has cached an old
 commit-only entry, refresh the custom repository before installing.
 
@@ -143,8 +143,9 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
 - Add-on and Device Builder tools require Home Assistant Supervisor; they return
   structured errors when Supervisor or the ESPHome add-on is not available.
 - ESPHome MCP and ha-mcp share FastMCP inside the Home Assistant Core process.
-  Keep both integrations current and restart Home Assistant after either one
-  changes that shared runtime.
+  CI validates this component's exact pin against the current ha-mcp `master`
+  branch. Keep both integrations current and restart Home Assistant after either
+  one changes that shared runtime.
 
 ## Testing
 

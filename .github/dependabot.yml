@@ -1,13 +1,14 @@
 version: 2
 updates:
-  # Docker updates are handled by Renovate if Dockerfiles are added later.
+  # Code-embedded FastMCP and HAOS pins are handled by Renovate.
+  # Standard dependency runs start Thursday at 08:00 UTC (03:00 EST).
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-      day: "monday"
-      time: "09:00"
+      day: "thursday"
+      time: "08:00"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"
@@ -20,8 +21,8 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-      day: "monday"
-      time: "09:00"
+      day: "thursday"
+      time: "08:00"
     open-pull-requests-limit: 10
     labels:
       - "dependencies"
@@ -57,8 +58,8 @@ updates:
     directory: "/tests/haos_image_build"
     schedule:
       interval: "weekly"
-      day: "monday"
-      time: "09:00"
+      day: "thursday"
+      time: "08:00"
     open-pull-requests-limit: 5
     labels:
       - "dependencies"

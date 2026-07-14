@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 from importlib import util
 from pathlib import Path
@@ -33,10 +34,13 @@ def test_manifest_is_hacs_ready() -> None:
     assert "hassio" in manifest["after_dependencies"]
     assert "frontend" not in manifest["after_dependencies"]
     assert "webhook" in manifest["dependencies"]
-    assert "fastmcp==3.4.3" not in manifest.get("requirements", [])
-    assert manifest["version"] == "0.1.5"
-    assert 'version = "0.1.5"' in pyproject
-    assert 'VERSION = "0.1.5"' in const
+    assert not any(
+        str(requirement).lower().startswith("fastmcp")
+        for requirement in manifest.get("requirements", [])
+    )
+    assert manifest["version"] == "0.1.6"
+    assert 'version = "0.1.6"' in pyproject
+    assert 'VERSION = "0.1.6"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -66,8 +70,8 @@ def test_server_defaults_are_scaffolded() -> None:
     server = (COMPONENT / "server.py").read_text()
 
     assert "DEFAULT_SERVER_PORT = 9590" in const
-    assert 'HA_MCP_COMPAT_RELEASE = "v7.12.2"' in const
-    assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.3"' in const
+    assert 'HA_MCP_COMPAT_REF = "master"' in const
+    assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.4"' in const
     assert "OPT_PIP_SPEC" not in const
     assert 'DATA_LAST_PIP_SPEC = "last_pip_spec"' in const
     assert 'name="esp_overview"' in server
@@ -181,10 +185,10 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v0.1.5") == []
+    assert validate_release_metadata("v0.1.6") == []
 
 
-@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.6"])
+@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.7"])
 def test_release_metadata_validation_rejects_bad_versions(version: str) -> None:
     """The release guard rejects the short-commit path that broke HACS installs."""
     errors = validate_release_metadata(version)
@@ -275,6 +279,7 @@ def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> No
         assert "--ha-mcp-pyproject" in workflow
     assert "forbidden runtime dependency mutation" in sandbox
     assert "shared FastMCP pin mismatch" in sandbox
+    assert "HA_MCP_COMPAT_REF must be 'master'" in sandbox
 
 
 def test_repository_maintenance_scaffolding_exists() -> None:
@@ -303,25 +308,39 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     dependabot = (ROOT / ".github" / "dependabot.yml").read_text()
     renovate = json.loads((ROOT / "renovate.json").read_text())
     renovate_workflow = (ROOT / ".github" / "workflows" / "renovate.yml").read_text()
+    const = (COMPONENT / "const.py").read_text()
 
     assert 'package-ecosystem: "github-actions"' in dependabot
     assert 'package-ecosystem: "pip"' in dependabot
     assert 'directory: "/tests/haos_image_build"' in dependabot
     assert "uv" not in dependabot
 
-    assert renovate["enabledManagers"] == [
-        "custom.regex",
-        "github-actions",
-        "pep621",
-        "pip_requirements",
-    ]
+    assert dependabot.count('day: "thursday"') == 3
+    assert dependabot.count('time: "08:00"') == 3
+    assert renovate["enabledManagers"] == ["custom.regex"]
+    assert "schedule" not in renovate
     assert "home-assistant/operating-system" in json.dumps(renovate)
-    assert "aioesphomeapi" in json.dumps(renovate)
-    assert "esphome" in json.dumps(renovate)
-    assert "homeassistant-ai/ha-mcp" in json.dumps(renovate)
+    assert "fastmcp" in json.dumps(renovate)
+    assert "homeassistant-ai/ha-mcp" not in json.dumps(renovate)
+    assert "aioesphomeapi" in dependabot
+    assert "esphome" in dependabot
     assert "custom_components/esphome_mcp/const" in json.dumps(renovate)
+    assert 'cron: "0 9 * * 4"' in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
     assert "RENOVATE_ALLOWED_POST_UPGRADE_COMMANDS" not in renovate_workflow
+
+    fastmcp_pattern = next(
+        pattern
+        for pattern in renovate["customManagers"][0]["matchStrings"]
+        if "DEFAULT_PIP_SPEC" in pattern
+    )
+    match = re.search(fastmcp_pattern.replace("(?<", "(?P<"), const)
+    assert match is not None
+    assert match.groupdict() == {
+        "currentValue": "3.4.4",
+        "datasource": "pypi",
+        "depName": "fastmcp",
+    }
 
 
 def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:
