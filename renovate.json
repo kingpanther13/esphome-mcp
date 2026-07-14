@@ -12,17 +12,25 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/custom_components/esphome_mcp/const\\.py$/",
-        "/tests/.*\\.py$/",
-        "/.github/workflows/.*\\.ya?ml$/"
+        "/^custom_components/esphome_mcp/const\\.py$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+[A-Z0-9_]+\\s*=\\s*[\"']?(?<currentValue>[\\w.+-]+)[\"']?",
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+\\S+:\\s*[\"']?(?<currentValue>[\\w.+-]+)[\"']?",
-        "DEFAULT_PIP_SPEC\\s*=\\s*[\"']fastmcp==(?<currentValue>\\d+\\.\\d+\\.\\d+(?:(?:a|b|rc)\\d+)?)[\"']\\s*# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)"
+        "DEFAULT_PIP_SPEC\\s*=\\s*[\"']fastmcp==(?<currentValue>\\d+\\.\\d+\\.\\d+(?:(?:a|b|rc)\\d+)?)[\"']"
       ],
-      "depNameTemplate": "{{{depName}}}",
-      "datasourceTemplate": "{{{datasource}}}"
+      "depNameTemplate": "fastmcp",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^tests/haos_image_build/build_image\\.py$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=github-releases depName=home-assistant/operating-system\\s+HAOS_VERSION\\s*=\\s*[\"'](?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)[\"']"
+      ],
+      "depNameTemplate": "home-assistant/operating-system",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
