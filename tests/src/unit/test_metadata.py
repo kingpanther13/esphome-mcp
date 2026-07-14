@@ -38,9 +38,9 @@ def test_manifest_is_hacs_ready() -> None:
         str(requirement).lower().startswith("fastmcp")
         for requirement in manifest.get("requirements", [])
     )
-    assert manifest["version"] == "0.1.6"
-    assert 'version = "0.1.6"' in pyproject
-    assert 'VERSION = "0.1.6"' in const
+    assert manifest["version"] == "0.1.7"
+    assert 'version = "0.1.7"' in pyproject
+    assert 'VERSION = "0.1.7"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -185,10 +185,10 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v0.1.6") == []
+    assert validate_release_metadata("v0.1.7") == []
 
 
-@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.7"])
+@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.8"])
 def test_release_metadata_validation_rejects_bad_versions(version: str) -> None:
     """The release guard rejects the short-commit path that broke HACS installs."""
     errors = validate_release_metadata(version)
@@ -309,6 +309,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     renovate = json.loads((ROOT / "renovate.json").read_text())
     renovate_workflow = (ROOT / ".github" / "workflows" / "renovate.yml").read_text()
     const = (COMPONENT / "const.py").read_text()
+    build_image = (ROOT / "tests" / "haos_image_build" / "build_image.py").read_text()
 
     assert 'package-ecosystem: "github-actions"' in dependabot
     assert 'package-ecosystem: "pip"' in dependabot
@@ -319,6 +320,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
     assert "schedule" not in renovate
+    assert len(renovate["customManagers"]) == 2
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "fastmcp" in json.dumps(renovate)
     assert "homeassistant-ai/ha-mcp" not in json.dumps(renovate)
@@ -326,21 +328,34 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "esphome" in dependabot
     assert "custom_components/esphome_mcp/const" in json.dumps(renovate)
     assert 'cron: "0 9 * * 4"' in renovate_workflow
+    assert "configurationFile:" not in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
     assert "RENOVATE_ALLOWED_POST_UPGRADE_COMMANDS" not in renovate_workflow
 
-    fastmcp_pattern = next(
-        pattern
-        for pattern in renovate["customManagers"][0]["matchStrings"]
-        if "DEFAULT_PIP_SPEC" in pattern
-    )
-    match = re.search(fastmcp_pattern.replace("(?<", "(?P<"), const)
-    assert match is not None
-    assert match.groupdict() == {
-        "currentValue": "3.4.4",
-        "datasource": "pypi",
-        "depName": "fastmcp",
+    managers = {manager["depNameTemplate"]: manager for manager in renovate["customManagers"]}
+    expected = {
+        "fastmcp": (
+            "pypi",
+            "/^custom_components/esphome_mcp/const\\.py$/",
+            const,
+            "3.4.4",
+        ),
+        "home-assistant/operating-system": (
+            "github-releases",
+            "/^tests/haos_image_build/build_image\\.py$/",
+            build_image,
+            "18.1",
+        ),
     }
+    assert managers.keys() == expected.keys()
+    for dep_name, (datasource, file_pattern, source, current_value) in expected.items():
+        manager = managers[dep_name]
+        assert manager["datasourceTemplate"] == datasource
+        assert manager["managerFilePatterns"] == [file_pattern]
+        assert len(manager["matchStrings"]) == 1
+        pattern = manager["matchStrings"][0].replace("(?<", "(?P<")
+        matches = list(re.finditer(pattern, source))
+        assert [match.groupdict() for match in matches] == [{"currentValue": current_value}]
 
 
 def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:
