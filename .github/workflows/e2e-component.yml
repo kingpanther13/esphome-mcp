@@ -118,7 +118,7 @@ jobs:
           docker system prune -af --volumes || true
           df -h /
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
