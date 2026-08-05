@@ -29,7 +29,7 @@ from typing import Any
 LOG = logging.getLogger("haos_image_build")
 
 # renovate: datasource=github-releases depName=home-assistant/operating-system
-HAOS_VERSION = "18.1"
+HAOS_VERSION = "18.2"
 HAOS_QCOW2_URL = (
     f"https://github.com/home-assistant/operating-system/releases/download/"
     f"{HAOS_VERSION}/haos_ova-{HAOS_VERSION}.qcow2.xz"

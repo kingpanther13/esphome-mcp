@@ -103,7 +103,7 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     source = BUILD_IMAGE_PATH.read_text()
     workflow = E2E_COMPONENT_WORKFLOW.read_text()
 
-    assert build_image.HAOS_VERSION == "18.1"
+    assert build_image.HAOS_VERSION == "18.2"
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.repo == (
         "https://github.com/esphome/home-assistant-addon"
     )

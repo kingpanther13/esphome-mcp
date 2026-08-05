@@ -347,7 +347,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             "github-releases",
             "/^tests/haos_image_build/build_image\\.py$/",
             build_image,
-            "18.1",
+            "18.2",
         ),
     }
     assert managers.keys() == expected.keys()
