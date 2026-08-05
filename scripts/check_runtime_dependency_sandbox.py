@@ -15,6 +15,12 @@ CONST_PATH = COMPONENT / "const.py"
 EMBEDDED_SERVER_PATH = COMPONENT / "embedded_server.py"
 
 _EXACT_FASTMCP_PIN = re.compile(r"fastmcp==(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)")
+_REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?")
+_SAFE_WEBSOCKETS_SPEC = "websockets>=15.0.1,<18"
+# ha-mcp 8.1.0 still has this exact pin while #2146 is being fixed. It is
+# compatible with the safe range and may coexist during the coordinated
+# rollout; all other shared specs must match exactly.
+_TRANSITIONAL_HA_MCP_WEBSOCKETS_SPEC = "websockets==17.0"
 _MODULE_CACHE_MUTATORS = {
     "__delitem__",
     "__ior__",
@@ -43,6 +49,54 @@ def _constant_string(path: Path, name: str) -> str | None:
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             return value.value
     return None
+
+
+def _constant_string_tuple(path: Path, name: str) -> tuple[str, ...] | None:
+    """Read a tuple/list of string constants, resolving earlier string names."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    strings: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+        target_names = [target.id for target in targets if isinstance(target, ast.Name)]
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            for target_name in target_names:
+                strings[target_name] = value.value
+            continue
+        if name not in target_names or not isinstance(value, (ast.Tuple, ast.List)):
+            continue
+        resolved: list[str] = []
+        for item in value.elts:
+            if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                resolved.append(item.value)
+            elif isinstance(item, ast.Name) and item.id in strings:
+                resolved.append(strings[item.id])
+            else:
+                return None
+        return tuple(resolved)
+    return None
+
+
+def _requirement_name(requirement: str) -> str | None:
+    """Return a dependency's canonical distribution name."""
+    if (match := _REQUIREMENT_NAME.match(requirement.strip())) is None:
+        return None
+    return match.group(1).lower().replace("_", "-").replace(".", "-")
+
+
+def _requirement_map(requirements: list[str] | tuple[str, ...]) -> dict[str, str]:
+    """Map canonical distribution names to their complete requirement strings."""
+    mapped: dict[str, str] = {}
+    for requirement in requirements:
+        if (name := _requirement_name(requirement)) is not None:
+            mapped[name] = requirement
+    return mapped
 
 
 def _import_aliases(tree: ast.AST) -> tuple[set[str], set[str], set[str], set[str]]:
@@ -168,7 +222,7 @@ def validate_runtime_tree(component: Path = COMPONENT) -> list[str]:
 
 
 def validate_runtime_constants(const_path: Path = CONST_PATH) -> list[str]:
-    """Require an exact FastMCP pin validated against ha-mcp master."""
+    """Require safe, ordered shared specs validated against ha-mcp master."""
     errors: list[str] = []
     pip_spec = _constant_string(const_path, "DEFAULT_PIP_SPEC")
     if pip_spec is None or _EXACT_FASTMCP_PIN.fullmatch(pip_spec) is None:
@@ -176,6 +230,21 @@ def validate_runtime_constants(const_path: Path = CONST_PATH) -> list[str]:
     compat_ref = _constant_string(const_path, "HA_MCP_COMPAT_REF")
     if compat_ref != "master":
         errors.append("HA_MCP_COMPAT_REF must be 'master'")
+    shared = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
+    if shared is None:
+        errors.append("SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings")
+        return errors
+    shared_by_name = _requirement_map(shared)
+    if len(shared_by_name) != len(shared):
+        errors.append("SHARED_RUNTIME_REQUIREMENTS must contain unique valid requirements")
+    if shared_by_name.get("fastmcp") != pip_spec:
+        errors.append("SHARED_RUNTIME_REQUIREMENTS must contain DEFAULT_PIP_SPEC")
+    if shared[-1:] != (pip_spec,):
+        errors.append("DEFAULT_PIP_SPEC must be last so shared constraints install first")
+    if shared_by_name.get("websockets") != _SAFE_WEBSOCKETS_SPEC:
+        errors.append(
+            f"websockets must use HA-compatible range {_SAFE_WEBSOCKETS_SPEC!r}"
+        )
     return errors
 
 
@@ -209,31 +278,93 @@ def validate_worker_import_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[s
     return []
 
 
+def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
+    """Require installs to use Home Assistant's process-locked public API."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    direct_installs: list[ast.Call] = []
+    process_calls: list[ast.Call] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        direct_install = isinstance(node.func, ast.Name) and node.func.id == "install_package"
+        partial_install = (
+            isinstance(node.func, ast.Name)
+            and node.func.id == "partial"
+            and bool(node.args)
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "install_package"
+        )
+        if direct_install or partial_install:
+            direct_installs.append(node)
+        if isinstance(node.func, ast.Name) and node.func.id == "async_process_requirements":
+            process_calls.append(node)
+
+    errors = [
+        f"embedded dependency install at line {call.lineno} bypasses HA's requirements manager"
+        for call in direct_installs
+    ]
+    uses_shared_requirements = any(
+        any(
+            isinstance(descendant, ast.Name)
+            and descendant.id == "SHARED_RUNTIME_REQUIREMENTS"
+            for descendant in ast.walk(call)
+        )
+        for call in process_calls
+    )
+    if not uses_shared_requirements:
+        errors.append(
+            "embedded dependency install must use HA async_process_requirements "
+            "with SHARED_RUNTIME_REQUIREMENTS"
+        )
+    return errors
+
+
+def validate_ha_mcp_shared_requirements(
+    ha_mcp_pyproject: Path,
+    const_path: Path = CONST_PATH,
+) -> list[str]:
+    """Require every ESPHome MCP shared spec to match ha-mcp master."""
+    project = tomllib.loads(ha_mcp_pyproject.read_text())
+    dependencies = [
+        dependency
+        for dependency in project.get("project", {}).get("dependencies", [])
+        if isinstance(dependency, str)
+    ]
+    upstream_by_name = _requirement_map(dependencies)
+    local = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
+    if local is None:
+        return ["SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings"]
+
+    errors: list[str] = []
+    local_by_name = _requirement_map(local)
+    for name, local_spec in local_by_name.items():
+        upstream_spec = upstream_by_name.get(name)
+        if upstream_spec is None:
+            errors.append(f"ha-mcp is missing shared runtime dependency {name!r}")
+            continue
+        if upstream_spec == local_spec:
+            continue
+        if (
+            name == "websockets"
+            and local_spec == _SAFE_WEBSOCKETS_SPEC
+            and upstream_spec == _TRANSITIONAL_HA_MCP_WEBSOCKETS_SPEC
+        ):
+            continue
+        errors.append(
+            f"shared runtime dependency mismatch for {name}: "
+            f"ESPHome MCP uses {local_spec!r}, ha-mcp uses {upstream_spec!r}"
+        )
+    for name in sorted(upstream_by_name.keys() - local_by_name.keys()):
+        errors.append(f"ESPHome MCP is missing ha-mcp runtime dependency {name!r}")
+    return errors
+
+
 def validate_ha_mcp_pin(
     ha_mcp_pyproject: Path,
     const_path: Path = CONST_PATH,
 ) -> list[str]:
-    """Require FastMCP parity with the current ha-mcp master branch."""
-    project = tomllib.loads(ha_mcp_pyproject.read_text())
-    dependencies = project.get("project", {}).get("dependencies", [])
-    upstream_specs = [
-        dependency
-        for dependency in dependencies
-        if isinstance(dependency, str) and dependency.lower().startswith("fastmcp")
-    ]
-    if len(upstream_specs) != 1:
-        return [
-            "ha-mcp pyproject must contain exactly one FastMCP dependency; "
-            f"found {upstream_specs!r}"
-        ]
-
-    local_spec = _constant_string(const_path, "DEFAULT_PIP_SPEC")
-    if upstream_specs[0] != local_spec:
-        return [
-            "shared FastMCP pin mismatch: "
-            f"ESPHome MCP uses {local_spec!r}, ha-mcp uses {upstream_specs[0]!r}"
-        ]
-    return []
+    """Backward-compatible alias for the expanded shared-requirement gate."""
+    return validate_ha_mcp_shared_requirements(ha_mcp_pyproject, const_path)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -262,10 +393,11 @@ def main(argv: list[str] | None = None) -> int:
         *validate_runtime_tree(),
         *validate_runtime_constants(),
         *validate_worker_import_contract(),
+        *validate_install_contract(),
     ]
     if args.ha_mcp_pyproject is not None:
         try:
-            errors.extend(validate_ha_mcp_pin(args.ha_mcp_pyproject))
+            errors.extend(validate_ha_mcp_shared_requirements(args.ha_mcp_pyproject))
         except (OSError, tomllib.TOMLDecodeError) as err:
             errors.append(f"could not read ha-mcp pyproject: {err}")
     if errors:

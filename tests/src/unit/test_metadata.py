@@ -38,9 +38,9 @@ def test_manifest_is_hacs_ready() -> None:
         str(requirement).lower().startswith("fastmcp")
         for requirement in manifest.get("requirements", [])
     )
-    assert manifest["version"] == "0.1.7"
-    assert 'version = "0.1.7"' in pyproject
-    assert 'VERSION = "0.1.7"' in const
+    assert manifest["version"] == "0.1.8"
+    assert 'version = "0.1.8"' in pyproject
+    assert 'VERSION = "0.1.8"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -71,7 +71,8 @@ def test_server_defaults_are_scaffolded() -> None:
 
     assert "DEFAULT_SERVER_PORT = 9590" in const
     assert 'HA_MCP_COMPAT_REF = "master"' in const
-    assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.4"' in const
+    assert 'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"' in const
+    assert '"websockets>=15.0.1,<18"' in const
     assert "OPT_PIP_SPEC" not in const
     assert 'DATA_LAST_PIP_SPEC = "last_pip_spec"' in const
     assert 'name="esp_overview"' in server
@@ -185,7 +186,7 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v0.1.7") == []
+    assert validate_release_metadata("v0.1.8") == []
 
 
 @pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.8"])
@@ -267,7 +268,7 @@ def test_pr_template_and_validation_supply_release_notes() -> None:
 
 
 def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> None:
-    """Both CI gates protect shared FastMCP state and upstream pin parity."""
+    """Both CI gates protect shared runtime state and upstream dependency parity."""
     pr_workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text()
     sandbox = (ROOT / "scripts" / "check_runtime_dependency_sandbox.py").read_text()
@@ -278,7 +279,7 @@ def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> No
         assert "homeassistant-ai/ha-mcp/contents/pyproject.toml" in workflow
         assert "--ha-mcp-pyproject" in workflow
     assert "forbidden runtime dependency mutation" in sandbox
-    assert "shared FastMCP pin mismatch" in sandbox
+    assert "shared runtime dependency mismatch" in sandbox
     assert "HA_MCP_COMPAT_REF must be 'master'" in sandbox
 
 
@@ -338,7 +339,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             "pypi",
             "/^custom_components/esphome_mcp/const\\.py$/",
             const,
-            "3.4.4",
+            "3.4.5",
         ),
         "home-assistant/operating-system": (
             "github-releases",

@@ -11,6 +11,19 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "scripts" / "check_runtime_dependency_sandbox.py"
 
+HA_MCP_SHARED_REQUIREMENTS = [
+    "fastmcp==3.4.5",
+    "httpx[socks]==0.28.1",
+    "pydantic==2.13.4",
+    "python-dotenv==1.2.2",
+    "truststore==0.10.4",
+    "websockets>=15.0.1,<18",
+    "cryptography>=48.0.0,<51",
+    "pydantic-monty==0.0.18",
+    "tzdata>=2024.1",
+    "packaging>=24.0",
+]
+
 
 def _load_sandbox() -> ModuleType:
     spec = importlib.util.spec_from_file_location("runtime_dependency_sandbox", SCRIPT_PATH)
@@ -28,6 +41,7 @@ def test_repository_runtime_passes_dependency_sandbox() -> None:
     assert sandbox.validate_runtime_tree() == []
     assert sandbox.validate_runtime_constants() == []
     assert sandbox.validate_worker_import_contract() == []
+    assert sandbox.validate_install_contract() == []
 
 
 @pytest.mark.parametrize(
@@ -66,28 +80,73 @@ def test_sandbox_allows_read_only_shared_module_detection(tmp_path: Path) -> Non
     assert sandbox.validate_runtime_source(runtime_file) == []
 
 
-def test_ha_mcp_fastmcp_pin_parity(tmp_path: Path) -> None:
-    """The compatibility gate accepts the exact shared FastMCP version."""
+def _write_upstream_pyproject(path: Path, dependencies: list[str]) -> None:
+    quoted = ", ".join(repr(dependency) for dependency in dependencies)
+    path.write_text(f"[project]\nname = 'ha-mcp'\ndependencies = [{quoted}]\n")
+
+
+def test_ha_mcp_shared_requirement_parity(tmp_path: Path) -> None:
+    """The compatibility gate accepts the complete shared dependency set."""
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
-    upstream.write_text(
-        '[project]\nname = "ha-mcp"\ndependencies = ["fastmcp==3.4.4", "httpx==0.28.1"]\n'
-    )
+    _write_upstream_pyproject(upstream, HA_MCP_SHARED_REQUIREMENTS)
 
-    assert sandbox.validate_ha_mcp_pin(upstream) == []
+    assert sandbox.validate_ha_mcp_shared_requirements(upstream) == []
 
 
-def test_ha_mcp_fastmcp_pin_mismatch_fails(tmp_path: Path) -> None:
-    """A future ha-mcp dependency change blocks release until pins are aligned."""
+def test_ha_mcp_shared_requirement_mismatch_fails(tmp_path: Path) -> None:
+    """A changed ha-mcp dependency blocks release until its spec is aligned."""
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
-    upstream.write_text('[project]\nname = "ha-mcp"\ndependencies = ["fastmcp==9.9.9"]\n')
+    requirements = HA_MCP_SHARED_REQUIREMENTS.copy()
+    requirements[2] = "pydantic==9.9.9"
+    _write_upstream_pyproject(upstream, requirements)
 
-    errors = sandbox.validate_ha_mcp_pin(upstream)
+    errors = sandbox.validate_ha_mcp_shared_requirements(upstream)
 
     assert errors == [
-        "shared FastMCP pin mismatch: ESPHome MCP uses 'fastmcp==3.4.4', "
-        "ha-mcp uses 'fastmcp==9.9.9'"
+        "shared runtime dependency mismatch for pydantic: "
+        "ESPHome MCP uses 'pydantic==2.13.4', ha-mcp uses 'pydantic==9.9.9'"
+    ]
+
+
+def test_current_ha_mcp_websockets_pin_is_accepted_during_transition(
+    tmp_path: Path,
+) -> None:
+    """Current ha-mcp master remains compatible while its range fix lands."""
+    sandbox = _load_sandbox()
+    upstream = tmp_path / "pyproject.toml"
+    requirements = HA_MCP_SHARED_REQUIREMENTS.copy()
+    requirements[5] = "websockets==17.0"
+    _write_upstream_pyproject(upstream, requirements)
+
+    assert sandbox.validate_ha_mcp_shared_requirements(upstream) == []
+
+
+def test_ha_mcp_added_dependency_fails(tmp_path: Path) -> None:
+    """A new ha-mcp direct dependency must be mirrored by ESPHome MCP."""
+    sandbox = _load_sandbox()
+    upstream = tmp_path / "pyproject.toml"
+    _write_upstream_pyproject(upstream, [*HA_MCP_SHARED_REQUIREMENTS, "new-shared==1.0"])
+
+    assert sandbox.validate_ha_mcp_shared_requirements(upstream) == [
+        "ESPHome MCP is missing ha-mcp runtime dependency 'new-shared'"
+    ]
+
+
+def test_ha_mcp_removed_dependency_fails(tmp_path: Path) -> None:
+    """ESPHome MCP cannot retain a direct requirement removed from ha-mcp."""
+    sandbox = _load_sandbox()
+    upstream = tmp_path / "pyproject.toml"
+    requirements = [
+        requirement
+        for requirement in HA_MCP_SHARED_REQUIREMENTS
+        if not requirement.startswith("truststore")
+    ]
+    _write_upstream_pyproject(upstream, requirements)
+
+    assert sandbox.validate_ha_mcp_shared_requirements(upstream) == [
+        "ha-mcp is missing shared runtime dependency 'truststore'"
     ]
 
 
@@ -95,7 +154,11 @@ def test_runtime_constants_reject_stable_ha_mcp_release_ref(tmp_path: Path) -> N
     """Compatibility cannot silently drift back from ha-mcp master to a release tag."""
     sandbox = _load_sandbox()
     const = tmp_path / "const.py"
-    const.write_text('DEFAULT_PIP_SPEC = "fastmcp==3.4.4"\nHA_MCP_COMPAT_REF = "v7.12.3"\n')
+    const.write_text(
+        'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"\n'
+        'HA_MCP_COMPAT_REF = "v7.12.3"\n'
+        'SHARED_RUNTIME_REQUIREMENTS = ("websockets>=15.0.1,<18", DEFAULT_PIP_SPEC)\n'
+    )
 
     assert sandbox.validate_runtime_constants(const) == ["HA_MCP_COMPAT_REF must be 'master'"]
 
@@ -111,3 +174,34 @@ def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:
     assert sandbox.validate_worker_import_contract(embedded_server) == [
         "worker thread must call _import_server_runtime_with_retry"
     ]
+
+
+def test_install_contract_rejects_direct_package_install(tmp_path: Path) -> None:
+    """Shared package installs cannot bypass HA's requirements manager."""
+    sandbox = _load_sandbox()
+    embedded_server = tmp_path / "embedded_server.py"
+    embedded_server.write_text(
+        "from functools import partial\n"
+        "async def install(hass):\n"
+        "    partial(install_package, 'fastmcp==3.4.5', upgrade=True)\n"
+    )
+
+    assert sandbox.validate_install_contract(embedded_server) == [
+        "embedded dependency install at line 3 bypasses HA's requirements manager",
+        "embedded dependency install must use HA async_process_requirements "
+        "with SHARED_RUNTIME_REQUIREMENTS",
+    ]
+
+
+def test_install_contract_accepts_ha_requirements_manager(tmp_path: Path) -> None:
+    """The supported install shape delegates locking and constraints to HA."""
+    sandbox = _load_sandbox()
+    embedded_server = tmp_path / "embedded_server.py"
+    embedded_server.write_text(
+        "async def install(hass):\n"
+        "    await async_process_requirements(\n"
+        "        hass, 'ESPHome MCP', list(SHARED_RUNTIME_REQUIREMENTS)\n"
+        "    )\n"
+    )
+
+    assert sandbox.validate_install_contract(embedded_server) == []
