@@ -105,7 +105,8 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
 
     assert build_image.HAOS_VERSION == "18.2"
     assert build_image.HA_CORE_VERSION == "2026.8.0"
-    assert build_image.CORE_FIRST_BOOT_TIMEOUT == 900
+    assert build_image.CORE_FIRST_BOOT_TIMEOUT == 600
+    assert build_image.HA_GUEST_PORT == 80
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.repo == (
         "https://github.com/esphome/home-assistant-addon"
     )
@@ -132,6 +133,11 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "core-${ha_core_version}" in workflow
     assert "/tmp/haos-build/haos-serial.log" in workflow
     assert "img=/tmp/haos-build/haos-test-image.qcow2" in workflow
+
+    seed_config = (INITIAL_TEST_STATE / "configuration.yaml").read_text()
+    assert "\nhttp:" not in seed_config
+    assert "trusted_proxies:" not in seed_config
+    assert "-:{HA_GUEST_PORT}" in source
 
 
 def test_install_hacs_uses_supported_addon_and_restarts_core(monkeypatch) -> None:

@@ -44,7 +44,9 @@ ONBOARDING_NAME = "ESPHome MCP CI"
 HA_HOST_PORT = int(os.environ.get("HAOS_BUILD_HA_PORT", "18123"))
 SSH_HOST_PORT = int(os.environ.get("HAOS_BUILD_SSH_PORT", "12222"))
 OVMF_CODE_PATH = os.environ.get("HAOS_BUILD_OVMF", "/usr/share/OVMF/OVMF_CODE.fd")
-CORE_FIRST_BOOT_TIMEOUT = 900
+CORE_FIRST_BOOT_TIMEOUT = 600
+# Core 2026.8 moved Supervisor-managed installs from guest port 8123 to 80.
+HA_GUEST_PORT = 80
 
 ESPHOME_MCP_DOMAIN = "esphome_mcp"
 ESPHOME_MCP_UNIQUE_ID = "esphome_mcp-server"
@@ -182,7 +184,7 @@ def start_qemu(qcow2: Path, work_dir: Path) -> subprocess.Popen[bytes]:
         "-drive",
         f"if=virtio,file={qcow2},format=qcow2",
         "-netdev",
-        f"user,id=net0,hostfwd=tcp:127.0.0.1:{HA_HOST_PORT}-:8123,"
+        f"user,id=net0,hostfwd=tcp:127.0.0.1:{HA_HOST_PORT}-:{HA_GUEST_PORT},"
         f"hostfwd=tcp:127.0.0.1:{SSH_HOST_PORT}-:22",
         "-device",
         "virtio-net-pci,netdev=net0",
