@@ -9,6 +9,8 @@ import sys
 import tomllib
 from pathlib import Path
 
+from packaging.requirements import InvalidRequirement, Requirement
+
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
 CONST_PATH = COMPONENT / "const.py"
@@ -92,6 +94,14 @@ def _requirement_map(requirements: list[str] | tuple[str, ...]) -> dict[str, str
         if (name := _requirement_name(requirement)) is not None:
             mapped[name] = requirement
     return mapped
+
+
+def _requirements_match(left: str, right: str) -> bool:
+    """Return whether two requirement strings are semantically identical."""
+    try:
+        return Requirement(left) == Requirement(right)
+    except InvalidRequirement:
+        return False
 
 
 def _import_aliases(tree: ast.AST) -> tuple[set[str], set[str], set[str], set[str]]:
@@ -277,21 +287,16 @@ def validate_worker_import_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[s
 def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
     """Require installs to use Home Assistant's process-locked public API."""
     tree = ast.parse(path.read_text(), filename=str(path))
-    direct_installs: list[ast.Call] = []
+    direct_installs: list[ast.AST] = []
     process_calls: list[ast.Call] = []
     for node in ast.walk(tree):
+        if (isinstance(node, ast.Name) and node.id == "install_package") or (
+            isinstance(node, ast.Attribute) and node.attr == "install_package"
+        ):
+            direct_installs.append(node)
+            continue
         if not isinstance(node, ast.Call):
             continue
-        direct_install = isinstance(node.func, ast.Name) and node.func.id == "install_package"
-        partial_install = (
-            isinstance(node.func, ast.Name)
-            and node.func.id == "partial"
-            and bool(node.args)
-            and isinstance(node.args[0], ast.Name)
-            and node.args[0].id == "install_package"
-        )
-        if direct_install or partial_install:
-            direct_installs.append(node)
         if isinstance(node.func, ast.Name) and node.func.id == "async_process_requirements":
             process_calls.append(node)
 
@@ -341,7 +346,7 @@ def validate_ha_mcp_shared_requirements(
         if upstream_spec is None:
             errors.append(f"ha-mcp is missing shared runtime dependency {name!r}")
             continue
-        if upstream_spec == local_spec:
+        if _requirements_match(upstream_spec, local_spec):
             continue
         errors.append(
             f"shared runtime dependency mismatch for {name}: "
@@ -350,14 +355,6 @@ def validate_ha_mcp_shared_requirements(
     for name in sorted(upstream_shared.keys() - local_by_name.keys()):
         errors.append(f"ESPHome MCP is missing ha-mcp runtime dependency {name!r}")
     return errors
-
-
-def validate_ha_mcp_pin(
-    ha_mcp_pyproject: Path,
-    const_path: Path = CONST_PATH,
-) -> list[str]:
-    """Backward-compatible alias for the expanded shared-requirement gate."""
-    return validate_ha_mcp_shared_requirements(ha_mcp_pyproject, const_path)
 
 
 def main(argv: list[str] | None = None) -> int:

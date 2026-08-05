@@ -94,6 +94,17 @@ def test_ha_mcp_shared_requirement_parity(tmp_path: Path) -> None:
     assert sandbox.validate_ha_mcp_shared_requirements(upstream) == []
 
 
+def test_ha_mcp_shared_requirement_parity_is_semantic(tmp_path: Path) -> None:
+    """Equivalent formatting and specifier order do not create false drift."""
+    sandbox = _load_sandbox()
+    upstream = tmp_path / "pyproject.toml"
+    requirements = HA_MCP_RUNTIME_REQUIREMENTS.copy()
+    requirements[6] = "cryptography <51, >=48.0.0"
+    _write_upstream_pyproject(upstream, requirements)
+
+    assert sandbox.validate_ha_mcp_shared_requirements(upstream) == []
+
+
 def test_ha_mcp_shared_requirement_mismatch_fails(tmp_path: Path) -> None:
     """A changed ha-mcp dependency blocks release until its spec is aligned."""
     sandbox = _load_sandbox()
@@ -181,6 +192,39 @@ def test_runtime_constants_reject_esphome_websockets_requirement(tmp_path: Path)
     ]
 
 
+def test_runtime_constants_reject_fastmcp_before_shared_constraints(tmp_path: Path) -> None:
+    """FastMCP must install last so shared constraints resolve first."""
+    sandbox = _load_sandbox()
+    const = tmp_path / "const.py"
+    const.write_text(
+        'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"\n'
+        'HA_MCP_COMPAT_REF = "master"\n'
+        'HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)\n'
+        'SHARED_RUNTIME_REQUIREMENTS = (DEFAULT_PIP_SPEC, "pydantic==2.13.4")\n'
+    )
+
+    assert sandbox.validate_runtime_constants(const) == [
+        "DEFAULT_PIP_SPEC must be last so shared constraints install first"
+    ]
+
+
+def test_runtime_constants_reject_duplicate_shared_requirement(tmp_path: Path) -> None:
+    """A duplicated distribution makes the installed spec ambiguous."""
+    sandbox = _load_sandbox()
+    const = tmp_path / "const.py"
+    const.write_text(
+        'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"\n'
+        'HA_MCP_COMPAT_REF = "master"\n'
+        'HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)\n'
+        "SHARED_RUNTIME_REQUIREMENTS = ("
+        '"pydantic==2.13.4", "pydantic==2.13.3", DEFAULT_PIP_SPEC)\n'
+    )
+
+    assert sandbox.validate_runtime_constants(const) == [
+        "SHARED_RUNTIME_REQUIREMENTS must contain unique valid requirements"
+    ]
+
+
 def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:
     """The sandbox fails if the worker starts serving without safe preloading."""
     sandbox = _load_sandbox()
@@ -194,14 +238,24 @@ def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:
     ]
 
 
-def test_install_contract_rejects_direct_package_install(tmp_path: Path) -> None:
-    """Shared package installs cannot bypass HA's requirements manager."""
+@pytest.mark.parametrize(
+    "install_expression",
+    [
+        "partial(install_package, 'fastmcp==3.4.5', upgrade=True)",
+        "await hass.async_add_executor_job(install_package, 'fastmcp==3.4.5')",
+        "partial(func=install_package, requirement='fastmcp==3.4.5')",
+        "installer.install_package('fastmcp==3.4.5')",
+    ],
+)
+def test_install_contract_rejects_every_package_install_reference(
+    tmp_path: Path,
+    install_expression: str,
+) -> None:
+    """Any install_package reference bypasses HA's requirements manager."""
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
-        "from functools import partial\n"
-        "async def install(hass):\n"
-        "    partial(install_package, 'fastmcp==3.4.5', upgrade=True)\n"
+        f"from functools import partial\nasync def install(hass):\n    {install_expression}\n"
     )
 
     assert sandbox.validate_install_contract(embedded_server) == [

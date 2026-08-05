@@ -255,6 +255,7 @@ class EmbeddedServerManager:
         local_specs = _requirement_spec_map(SHARED_RUNTIME_REQUIREMENTS)
         ha_owned = {canonicalize_name(name) for name in HA_OWNED_RUNTIME_REQUIREMENTS}
         peer_conflicts: list[str] = []
+        peer_drift: list[str] = []
         for distribution, distribution_specs in peer_specs.items():
             peer_shared_specs = {
                 name: spec for name, spec in distribution_specs.items() if name not in ha_owned
@@ -263,11 +264,11 @@ class EmbeddedServerManager:
                 local_spec = local_specs.get(name)
                 peer_spec = peer_shared_specs.get(name)
                 if local_spec is None:
-                    peer_conflicts.append(
+                    peer_drift.append(
                         f"{distribution} requires {peer_spec}, which ESPHome MCP does not share"
                     )
                 elif peer_spec is None:
-                    peer_conflicts.append(
+                    peer_drift.append(
                         f"{distribution} does not declare ESPHome MCP requirement {local_spec}"
                     )
                 elif not _shared_requirement_specs_compatible(name, local_spec, peer_spec):
@@ -275,6 +276,11 @@ class EmbeddedServerManager:
                         f"{distribution} requires {peer_spec}, but ESPHome MCP "
                         f"requires {local_spec}"
                     )
+        if peer_drift:
+            _LOGGER.warning(
+                "Shared runtime declarations drifted from a peer MCP integration: %s",
+                "; ".join(peer_drift),
+            )
         if peer_conflicts:
             peer_summary = "; ".join(peer_conflicts)
             raise EmbeddedServerError(
@@ -381,7 +387,12 @@ def _shared_requirement_specs_compatible(
         peer = Requirement(peer_spec)
     except InvalidRequirement:
         return False
-    return canonicalize_name(name) == canonicalize_name(local.name) and local == peer
+    canonical_name = canonicalize_name(name)
+    return (
+        canonical_name == canonicalize_name(local.name)
+        and canonical_name == canonicalize_name(peer.name)
+        and local.specifier == peer.specifier
+    )
 
 
 def _installed_peer_runtime_specs() -> dict[str, dict[str, str]]:

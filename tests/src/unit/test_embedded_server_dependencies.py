@@ -343,6 +343,51 @@ def test_mismatched_ha_mcp_requirement_refuses_cold_downgrade(monkeypatch: Any) 
     assert hass.config_entries.updated is None
 
 
+def test_asymmetric_ha_mcp_requirements_warn_without_blocking(monkeypatch: Any) -> None:
+    """Peer-only or local-only requirements cannot cause a torn shared install."""
+    process_calls: list[list[str]] = []
+    warnings: list[str] = []
+
+    async def async_process_requirements(
+        _hass: Any,
+        _label: str,
+        requirements: list[str],
+        *,
+        is_built_in: bool,
+    ) -> None:
+        assert is_built_in is False
+        process_calls.append(requirements)
+
+    module = _load_embedded_server(
+        monkeypatch,
+        async_process_requirements=async_process_requirements,
+    )
+    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
+    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
+    peer_requirements = module._requirement_spec_map(module.SHARED_RUNTIME_REQUIREMENTS)
+    peer_requirements.pop("truststore")
+    peer_requirements["peer-only"] = "peer-only==1.0"
+    monkeypatch.setattr(
+        module,
+        "_installed_peer_runtime_specs",
+        lambda: {"ha-mcp": peer_requirements},
+    )
+    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
+    monkeypatch.setattr(
+        module._LOGGER,
+        "warning",
+        lambda message, *args: warnings.append(message % args),
+    )
+
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+    _run(manager._async_ensure_package())
+
+    assert process_calls == [list(module.SHARED_RUNTIME_REQUIREMENTS)]
+    assert len(warnings) == 1
+    assert "ha-mcp requires peer-only==1.0" in warnings[0]
+    assert "ha-mcp does not declare ESPHome MCP requirement truststore==0.10.4" in warnings[0]
+
+
 def test_install_that_does_not_produce_required_version_fails_closed(
     monkeypatch: Any,
 ) -> None:
@@ -390,6 +435,18 @@ def test_runtime_requirement_map_excludes_optional_extras(monkeypatch: Any) -> N
     assert module._requirement_spec_map(["fastmcp==3.4.5", "pytest==9.0.2; extra == 'dev'"]) == {
         "fastmcp": "fastmcp==3.4.5"
     }
+
+
+def test_runtime_requirement_compatibility_ignores_extras(monkeypatch: Any) -> None:
+    """Extras drift cannot be mistaken for an incompatible installed version."""
+    module = _load_embedded_server(monkeypatch)
+
+    assert module._shared_requirement_specs_compatible(
+        "httpx", "httpx[socks]==0.28.1", "httpx==0.28.1"
+    )
+    assert not module._shared_requirement_specs_compatible(
+        "httpx", "httpx[socks]==0.28.1", "httpx==0.27.2"
+    )
 
 
 def test_dependency_probe_does_not_import_runtime_packages(monkeypatch: Any) -> None:

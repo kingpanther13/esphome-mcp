@@ -163,6 +163,12 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "haos-version" in workflow
     assert "ha-core-version" in workflow
     assert "core-${ha_core_version}" in workflow
+    assert "version_pattern='^v?[0-9]+" in workflow
+    assert "ESPHOME_VERSION: ${{ steps.key.outputs.esphome-version }}" in workflow
+    assert '"esphome==$ESPHOME_VERSION"' in workflow
+    assert '"esphome==${{ steps.key.outputs.esphome-version }}"' not in workflow
+    assert "CACHE_HIT: ${{ steps.restore-cache.outputs.cache-hit }}" in workflow
+    assert "printf '::notice title=HAOS image cache::" in workflow
     assert "/tmp/haos-build/haos-serial.log" in workflow
     assert "img=/tmp/haos-build/haos-test-image.qcow2" in workflow
 
