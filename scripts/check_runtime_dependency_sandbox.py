@@ -9,8 +9,6 @@ import sys
 import tomllib
 from pathlib import Path
 
-from packaging.requirements import InvalidRequirement, Requirement
-
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
 CONST_PATH = COMPONENT / "const.py"
@@ -18,6 +16,12 @@ EMBEDDED_SERVER_PATH = COMPONENT / "embedded_server.py"
 
 _EXACT_FASTMCP_PIN = re.compile(r"fastmcp==(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)")
 _REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?")
+_REQUIREMENT_PARTS = re.compile(
+    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)"
+    r"(?:\[(?P<extras>[^]]+)\])?"
+    r"(?P<specifier>[^;]*)"
+    r"(?:;(?P<marker>.*))?$"
+)
 _MODULE_CACHE_MUTATORS = {
     "__delitem__",
     "__ior__",
@@ -96,12 +100,21 @@ def _requirement_map(requirements: list[str] | tuple[str, ...]) -> dict[str, str
     return mapped
 
 
+def _normalized_requirement(requirement: str) -> tuple[object, ...] | None:
+    """Normalize a static PEP 508 requirement without third-party imports."""
+    compact = re.sub(r"\s+", "", requirement)
+    if (match := _REQUIREMENT_PARTS.fullmatch(compact)) is None:
+        return None
+    name = match.group("name").lower().replace("_", "-").replace(".", "-")
+    extras = tuple(sorted(filter(None, (match.group("extras") or "").lower().split(","))))
+    specifiers = tuple(sorted(filter(None, match.group("specifier").split(","))))
+    return name, extras, specifiers, match.group("marker") or ""
+
+
 def _requirements_match(left: str, right: str) -> bool:
-    """Return whether two requirement strings are semantically identical."""
-    try:
-        return Requirement(left) == Requirement(right)
-    except InvalidRequirement:
-        return False
+    """Return whether two static requirement strings are semantically identical."""
+    normalized_left = _normalized_requirement(left)
+    return normalized_left is not None and normalized_left == _normalized_requirement(right)
 
 
 def _import_aliases(tree: ast.AST) -> tuple[set[str], set[str], set[str], set[str]]:
