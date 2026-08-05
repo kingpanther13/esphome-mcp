@@ -581,7 +581,7 @@ def _wait_core_version(
     while time.monotonic() < deadline:
         try:
             last_version = _core_version(base_url, token)
-        except (OSError, ValueError) as err:
+        except (OSError, ValueError, RuntimeError) as err:
             last_error = err
         else:
             if last_version == expected_version:

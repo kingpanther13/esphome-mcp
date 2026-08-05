@@ -200,7 +200,9 @@ def test_build_image_installs_exact_core_target_before_addons(monkeypatch) -> No
             timeout: float,
         ) -> dict[str, object]:
             events.append(("api", path, method, data, timeout))
-            return {}
+            from websockets.exceptions import ConnectionClosed
+
+            raise ConnectionClosed(None, None)
 
         def reconnect(self) -> None:
             events.append(("reconnect",))
