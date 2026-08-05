@@ -163,7 +163,10 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "haos-version" in workflow
     assert "ha-core-version" in workflow
     assert "core-${ha_core_version}" in workflow
-    assert "version_pattern='^v?[0-9]+" in workflow
+    assert (
+        r"version_pattern='^v?[0-9]+\.[0-9]+\.[0-9]+"
+        r"((a|b|rc)[0-9]+)?([.-][0-9A-Za-z]+)*$'" in workflow
+    )
     assert "ESPHOME_VERSION: ${{ steps.key.outputs.esphome-version }}" in workflow
     assert '"esphome==$ESPHOME_VERSION"' in workflow
     assert '"esphome==${{ steps.key.outputs.esphome-version }}"' not in workflow

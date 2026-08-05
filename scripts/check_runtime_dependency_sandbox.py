@@ -317,18 +317,38 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
         f"embedded dependency install at line {call.lineno} bypasses HA's requirements manager"
         for call in direct_installs
     ]
-    uses_shared_requirements = any(
-        any(
-            isinstance(descendant, ast.Name) and descendant.id == "SHARED_RUNTIME_REQUIREMENTS"
-            for descendant in ast.walk(call)
-        )
-        for call in process_calls
-    )
-    if not uses_shared_requirements:
+    if not process_calls:
         errors.append(
             "embedded dependency install must use HA async_process_requirements "
             "with SHARED_RUNTIME_REQUIREMENTS"
         )
+        return errors
+
+    for call in process_calls:
+        requirements_arg: ast.AST | None = call.args[2] if len(call.args) > 2 else None
+        if requirements_arg is None:
+            requirements_arg = next(
+                (keyword.value for keyword in call.keywords if keyword.arg == "requirements"),
+                None,
+            )
+        direct_shared = (
+            isinstance(requirements_arg, ast.Name)
+            and requirements_arg.id == "SHARED_RUNTIME_REQUIREMENTS"
+        )
+        copied_shared = (
+            isinstance(requirements_arg, ast.Call)
+            and isinstance(requirements_arg.func, ast.Name)
+            and requirements_arg.func.id == "list"
+            and len(requirements_arg.args) == 1
+            and not requirements_arg.keywords
+            and isinstance(requirements_arg.args[0], ast.Name)
+            and requirements_arg.args[0].id == "SHARED_RUNTIME_REQUIREMENTS"
+        )
+        if not (direct_shared or copied_shared):
+            errors.append(
+                f"HA requirements-manager call at line {call.lineno} must use exactly "
+                "SHARED_RUNTIME_REQUIREMENTS"
+            )
     return errors
 
 

@@ -277,3 +277,22 @@ def test_install_contract_accepts_ha_requirements_manager(tmp_path: Path) -> Non
     )
 
     assert sandbox.validate_install_contract(embedded_server) == []
+
+
+def test_install_contract_checks_every_requirements_manager_call(tmp_path: Path) -> None:
+    """One compliant requirements call cannot mask another unsafe requirement set."""
+    sandbox = _load_sandbox()
+    embedded_server = tmp_path / "embedded_server.py"
+    embedded_server.write_text(
+        "async def install(hass):\n"
+        "    await async_process_requirements(\n"
+        "        hass, 'ESPHome MCP', list(SHARED_RUNTIME_REQUIREMENTS)\n"
+        "    )\n"
+        "    await async_process_requirements(\n"
+        "        hass, 'other', OTHER_REQUIREMENTS + SHARED_RUNTIME_REQUIREMENTS\n"
+        "    )\n"
+    )
+
+    assert sandbox.validate_install_contract(embedded_server) == [
+        "HA requirements-manager call at line 5 must use exactly SHARED_RUNTIME_REQUIREMENTS"
+    ]
