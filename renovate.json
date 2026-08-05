@@ -31,6 +31,17 @@
       ],
       "depNameTemplate": "home-assistant/operating-system",
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^tests/haos_image_build/build_image\\.py$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=github-releases depName=home-assistant/core\\s+HA_CORE_VERSION\\s*=\\s*[\"'](?<currentValue>\\d+\\.\\d+\\.\\d+)[\"']"
+      ],
+      "depNameTemplate": "home-assistant/core",
+      "datasourceTemplate": "github-releases"
     }
   ],
   "packageRules": [
@@ -59,6 +70,20 @@
       "labels": [
         "dependencies",
         "haos",
+        "e2e"
+      ]
+    },
+    {
+      "description": "Home Assistant Core version verified by HAOS E2E",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "home-assistant/core"
+      ],
+      "labels": [
+        "dependencies",
+        "home-assistant",
         "e2e"
       ]
     }

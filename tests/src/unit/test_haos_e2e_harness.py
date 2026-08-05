@@ -104,6 +104,8 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     workflow = E2E_COMPONENT_WORKFLOW.read_text()
 
     assert build_image.HAOS_VERSION == "18.2"
+    assert build_image.HA_CORE_VERSION == "2026.8.0"
+    assert build_image.CORE_FIRST_BOOT_TIMEOUT == 900
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.repo == (
         "https://github.com/esphome/home-assistant-addon"
     )
@@ -125,6 +127,11 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "esphome-addon-hash" in workflow
     assert "hacs-addon-hash" in workflow
     assert "hacs-version" in workflow
+    assert "haos-version" in workflow
+    assert "ha-core-version" in workflow
+    assert "core-${ha_core_version}" in workflow
+    assert "/tmp/haos-build/haos-serial.log" in workflow
+    assert "img=/tmp/haos-build/haos-test-image.qcow2" in workflow
 
 
 def test_install_hacs_uses_supported_addon_and_restarts_core(monkeypatch) -> None:

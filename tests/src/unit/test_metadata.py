@@ -323,8 +323,9 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
     assert "schedule" not in renovate
-    assert len(renovate["customManagers"]) == 2
+    assert len(renovate["customManagers"]) == 3
     assert "home-assistant/operating-system" in json.dumps(renovate)
+    assert "home-assistant/core" in json.dumps(renovate)
     assert "fastmcp" in json.dumps(renovate)
     assert "homeassistant-ai/ha-mcp" not in json.dumps(renovate)
     assert "aioesphomeapi" in dependabot
@@ -348,6 +349,12 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             "/^tests/haos_image_build/build_image\\.py$/",
             build_image,
             "18.2",
+        ),
+        "home-assistant/core": (
+            "github-releases",
+            "/^tests/haos_image_build/build_image\\.py$/",
+            build_image,
+            "2026.8.0",
         ),
     }
     assert managers.keys() == expected.keys()

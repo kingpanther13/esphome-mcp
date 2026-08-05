@@ -30,6 +30,8 @@ LOG = logging.getLogger("haos_image_build")
 
 # renovate: datasource=github-releases depName=home-assistant/operating-system
 HAOS_VERSION = "18.2"
+# renovate: datasource=github-releases depName=home-assistant/core
+HA_CORE_VERSION = "2026.8.0"
 HAOS_QCOW2_URL = (
     f"https://github.com/home-assistant/operating-system/releases/download/"
     f"{HAOS_VERSION}/haos_ova-{HAOS_VERSION}.qcow2.xz"
@@ -42,6 +44,7 @@ ONBOARDING_NAME = "ESPHome MCP CI"
 HA_HOST_PORT = int(os.environ.get("HAOS_BUILD_HA_PORT", "18123"))
 SSH_HOST_PORT = int(os.environ.get("HAOS_BUILD_SSH_PORT", "12222"))
 OVMF_CODE_PATH = os.environ.get("HAOS_BUILD_OVMF", "/usr/share/OVMF/OVMF_CODE.fd")
+CORE_FIRST_BOOT_TIMEOUT = 900
 
 ESPHOME_MCP_DOMAIN = "esphome_mcp"
 ESPHOME_MCP_UNIQUE_ID = "esphome_mcp-server"
@@ -552,7 +555,10 @@ def install_hacs(ws: HAWebSocket, base_url: str) -> None:
 
 def _check_core_auth(base_url: str, token: str) -> None:
     cfg = _http("GET", f"{base_url}/api/config", token=token, timeout=10.0)
-    LOG.info("AUTH OK: /api/config version=%s state=%s", cfg.get("version"), cfg.get("state"))
+    version = cfg.get("version")
+    LOG.info("AUTH OK: /api/config version=%s state=%s", version, cfg.get("state"))
+    if version != HA_CORE_VERSION:
+        raise RuntimeError(f"Expected Home Assistant Core {HA_CORE_VERSION}, got {version!r}")
 
 
 def _load_storage_list(path: Path, *, expected_key: str, list_key: str) -> dict[str, Any]:
@@ -801,7 +807,7 @@ def build(work_dir: Path, output: Path) -> None:
     base_url = f"http://127.0.0.1:{HA_HOST_PORT}"
     try:
         _wait_port(HA_HOST_PORT, timeout=180)
-        _wait_http_ok(f"{base_url}/manifest.json", timeout=600)
+        _wait_http_ok(f"{base_url}/manifest.json", timeout=CORE_FIRST_BOOT_TIMEOUT)
         token = onboard(base_url)
         _check_core_auth(base_url, token)
         with HAWebSocket(base_url, token) as ws:

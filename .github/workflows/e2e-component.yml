@@ -37,6 +37,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          versions="$(
+            python3 -c 'from tests.haos_image_build.build_image import HAOS_VERSION, HA_CORE_VERSION; print(HAOS_VERSION, HA_CORE_VERSION)'
+          )"
+          read -r haos_version ha_core_version <<< "$versions"
           esphome_addon_config="$(
             gh api \
               -H "Accept: application/vnd.github.raw" \
@@ -77,7 +81,9 @@ jobs:
                 echo "hacs-release:$hacs_version"
               } \
             | sha256sum | cut -d' ' -f1 | head -c16)
-          echo "cache-key=esphome-mcp-haos-image-$hash" >> "$GITHUB_OUTPUT"
+          echo "cache-key=esphome-mcp-haos-${haos_version}-core-${ha_core_version}-$hash" >> "$GITHUB_OUTPUT"
+          echo "haos-version=$haos_version" >> "$GITHUB_OUTPUT"
+          echo "ha-core-version=$ha_core_version" >> "$GITHUB_OUTPUT"
           echo "esphome-addon-hash=$esphome_addon_hash" >> "$GITHUB_OUTPUT"
           echo "esphome-version=$esphome_version" >> "$GITHUB_OUTPUT"
           echo "hacs-addon-hash=$hacs_addon_hash" >> "$GITHUB_OUTPUT"
@@ -92,7 +98,7 @@ jobs:
 
       - name: Report image acquisition path
         run: |
-          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }} esphome-version=${{ steps.key.outputs.esphome-version }} hacs-addon-hash=${{ steps.key.outputs.hacs-addon-hash }} hacs-version=${{ steps.key.outputs.hacs-version }}"
+          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} haos=${{ steps.key.outputs.haos-version }} core=${{ steps.key.outputs.ha-core-version }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }} esphome-version=${{ steps.key.outputs.esphome-version }} hacs-addon-hash=${{ steps.key.outputs.hacs-addon-hash }} hacs-version=${{ steps.key.outputs.hacs-version }}"
 
       - name: Install QEMU, OVMF, and libguestfs
         run: |
@@ -169,7 +175,9 @@ jobs:
         run: |
           sudo chmod +r /boot/vmlinuz-* || true
           mkdir -p /tmp/haos-embedded-diagnostics
+          cp /tmp/haos-build/haos-serial.log /tmp/haos-embedded-diagnostics/bake-serial.log 2>/dev/null || true
           img=/tmp/haos-test-image.qcow2
+          [ -f "$img" ] || img=/tmp/haos-build/haos-test-image.qcow2
           if [ -f "$img" ]; then
             outdir=/tmp/haos-embedded-diagnostics/base
             mkdir -p "$outdir"
