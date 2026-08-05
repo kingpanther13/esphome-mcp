@@ -88,7 +88,7 @@ def _requirement_name(requirement: str) -> str | None:
     """Return a dependency's canonical distribution name."""
     if (match := _REQUIREMENT_NAME.match(requirement.strip())) is None:
         return None
-    return match.group(1).lower().replace("_", "-").replace(".", "-")
+    return _canonical_requirement_identifier(match.group(1))
 
 
 def _requirement_map(requirements: list[str] | tuple[str, ...]) -> dict[str, str]:
@@ -100,13 +100,46 @@ def _requirement_map(requirements: list[str] | tuple[str, ...]) -> dict[str, str
     return mapped
 
 
+def _canonical_requirement_identifier(identifier: str) -> str:
+    """Return the canonical spelling of a distribution name or extra."""
+    return re.sub(r"[-_.]+", "-", identifier).lower()
+
+
+def _remove_unquoted_whitespace(value: str) -> str | None:
+    """Remove requirement syntax whitespace while preserving quoted marker values."""
+    compact: list[str] = []
+    quote: str | None = None
+    escaped = False
+    for char in value:
+        if quote is not None:
+            compact.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+        elif char in {'"', "'"}:
+            quote = char
+            compact.append(char)
+        elif not char.isspace():
+            compact.append(char)
+    return None if quote is not None else "".join(compact)
+
+
 def _normalized_requirement(requirement: str) -> tuple[object, ...] | None:
     """Normalize a static PEP 508 requirement without third-party imports."""
-    compact = re.sub(r"\s+", "", requirement)
-    if (match := _REQUIREMENT_PARTS.fullmatch(compact)) is None:
+    if (compact := _remove_unquoted_whitespace(requirement)) is None or (
+        match := _REQUIREMENT_PARTS.fullmatch(compact)
+    ) is None:
         return None
-    name = match.group("name").lower().replace("_", "-").replace(".", "-")
-    extras = tuple(sorted(filter(None, (match.group("extras") or "").lower().split(","))))
+    name = _canonical_requirement_identifier(match.group("name"))
+    extras = tuple(
+        sorted(
+            _canonical_requirement_identifier(extra)
+            for extra in filter(None, (match.group("extras") or "").split(","))
+        )
+    )
     specifiers = tuple(sorted(filter(None, match.group("specifier").split(","))))
     return name, extras, specifiers, match.group("marker") or ""
 

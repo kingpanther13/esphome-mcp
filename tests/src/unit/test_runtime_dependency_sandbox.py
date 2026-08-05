@@ -105,6 +105,30 @@ def test_ha_mcp_shared_requirement_parity_is_semantic(tmp_path: Path) -> None:
     assert sandbox.validate_ha_mcp_shared_requirements(upstream) == []
 
 
+def test_requirement_normalization_preserves_marker_literal_whitespace() -> None:
+    """Syntax whitespace is ignored without changing quoted marker values."""
+    sandbox = _load_sandbox()
+
+    assert sandbox._requirements_match(
+        'demo; platform_system == "Windows 10"',
+        'demo;platform_system=="Windows 10"',
+    )
+    assert not sandbox._requirements_match(
+        'demo; platform_system == "Windows 10"',
+        'demo; platform_system == "Windows10"',
+    )
+
+
+def test_requirement_normalization_canonicalizes_names_and_extras() -> None:
+    """Equivalent separator runs in names and extras do not create false drift."""
+    sandbox = _load_sandbox()
+
+    assert sandbox._requirements_match(
+        "foo__bar[EXTRA.Name]==1",
+        "foo-bar[extra-name]==1",
+    )
+
+
 def test_ha_mcp_shared_requirement_mismatch_fails(tmp_path: Path) -> None:
     """A changed ha-mcp dependency blocks release until its spec is aligned."""
     sandbox = _load_sandbox()
