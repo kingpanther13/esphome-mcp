@@ -107,7 +107,13 @@ def test_dependency_fast_path_uses_home_assistant_requirements(monkeypatch: Any)
     )
     monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
     monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
-    monkeypatch.setattr(module, "_installed_peer_runtime_specs", lambda: {})
+    peer_requirements = module._requirement_spec_map(module.SHARED_RUNTIME_REQUIREMENTS)
+    peer_requirements["websockets"] = "websockets==17.0"
+    monkeypatch.setattr(
+        module,
+        "_installed_peer_runtime_specs",
+        lambda: {"ha-mcp": peer_requirements},
+    )
     monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
 
     entry = SimpleNamespace(
@@ -312,6 +318,7 @@ def test_mismatched_ha_mcp_requirement_refuses_cold_downgrade(monkeypatch: Any) 
     monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
     peer_requirements = module._requirement_spec_map(module.SHARED_RUNTIME_REQUIREMENTS)
     peer_requirements["fastmcp"] = "fastmcp==3.4.4"
+    peer_requirements["websockets"] = "websockets==17.0"
     monkeypatch.setattr(
         module,
         "_installed_peer_runtime_specs",
@@ -376,22 +383,10 @@ def test_runtime_rejects_non_exact_fastmcp_spec(monkeypatch: Any) -> None:
             raise AssertionError(f"EmbeddedServerError was not raised for {spec!r}")
 
 
-def test_runtime_peer_specs_allow_current_ha_mcp_websockets_transition(
-    monkeypatch: Any,
-) -> None:
-    """ha-mcp's exact 17.0 pin is safely contained by the coordinated range."""
+def test_runtime_requirement_map_excludes_optional_extras(monkeypatch: Any) -> None:
+    """Only active base dependencies participate in installed-peer parity."""
     module = _load_embedded_server(monkeypatch)
 
-    assert module._shared_requirement_specs_compatible(
-        "websockets",
-        "websockets>=15.0.1,<18",
-        "websockets==17.0",
-    )
-    assert not module._shared_requirement_specs_compatible(
-        "websockets",
-        "websockets>=15.0.1,<18",
-        "websockets==18.0",
-    )
     assert module._requirement_spec_map(
         ["fastmcp==3.4.5", "pytest==9.0.2; extra == 'dev'"]
     ) == {"fastmcp": "fastmcp==3.4.5"}

@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Literal
 from homeassistant.core import HomeAssistant
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
-from packaging.version import InvalidVersion, Version
 
 from .const import (
     DATA_LAST_PIP_SPEC,
@@ -25,6 +24,7 @@ from .const import (
     DEFAULT_BIND_HOST,
     DEFAULT_PIP_SPEC,
     DEFAULT_SERVER_PORT,
+    HA_OWNED_RUNTIME_REQUIREMENTS,
     OPT_BIND_HOST,
     OPT_SERVER_PORT,
     SERVER_CONFIG_SUBDIR,
@@ -253,11 +253,17 @@ class EmbeddedServerManager:
         peer_specs = await self._hass.async_add_executor_job(_installed_peer_runtime_specs)
         shared_runtime_loaded = await self._hass.async_add_executor_job(_fastmcp_runtime_loaded)
         local_specs = _requirement_spec_map(SHARED_RUNTIME_REQUIREMENTS)
+        ha_owned = {canonicalize_name(name) for name in HA_OWNED_RUNTIME_REQUIREMENTS}
         peer_conflicts: list[str] = []
         for distribution, distribution_specs in peer_specs.items():
-            for name in sorted(local_specs.keys() | distribution_specs.keys()):
+            peer_shared_specs = {
+                name: spec
+                for name, spec in distribution_specs.items()
+                if name not in ha_owned
+            }
+            for name in sorted(local_specs.keys() | peer_shared_specs.keys()):
                 local_spec = local_specs.get(name)
-                peer_spec = distribution_specs.get(name)
+                peer_spec = peer_shared_specs.get(name)
                 if local_spec is None:
                     peer_conflicts.append(
                         f"{distribution} requires {peer_spec}, which ESPHome MCP does not share"
@@ -291,10 +297,10 @@ class EmbeddedServerManager:
 
         try:
             # HA rechecks and installs these requirements while holding its single
-            # process-wide pip lock. The previous direct --upgrade call bypassed
-            # that lock and replaced compatible transitive packages such as
-            # websockets, allowing the torn-install failure in ha-mcp #2135/#2146.
-            # Constraints come before FastMCP so HA reuses compatible packages.
+            # process-wide pip lock. websockets is intentionally absent: HA Core
+            # already owns it, and FastMCP accepts the shipped version. The prior
+            # direct --upgrade path let pip replace HA's copy and opened the torn
+            # install failure in ha-mcp #2135/#2146.
             await async_process_requirements(
                 self._hass,
                 f"ESPHome MCP server ({self._pip_spec})",
@@ -371,23 +377,13 @@ def _shared_requirement_specs_compatible(
     local_spec: str,
     peer_spec: str,
 ) -> bool:
-    """Allow exact parity plus ha-mcp's temporary exact websockets 17 pin."""
+    """Return whether two shared requirement specifications match."""
     try:
         local = Requirement(local_spec)
         peer = Requirement(peer_spec)
     except InvalidRequirement:
         return False
-    if local == peer:
-        return True
-    if name != "websockets":
-        return False
-    peer_constraints = list(peer.specifier)
-    if len(peer_constraints) != 1 or peer_constraints[0].operator not in {"==", "==="}:
-        return False
-    try:
-        return Version(peer_constraints[0].version) in local.specifier
-    except InvalidVersion:
-        return False
+    return canonicalize_name(name) == canonicalize_name(local.name) and local == peer
 
 
 def _installed_peer_runtime_specs() -> dict[str, dict[str, str]]:

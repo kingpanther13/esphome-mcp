@@ -11,7 +11,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = ROOT / "scripts" / "check_runtime_dependency_sandbox.py"
 
-HA_MCP_SHARED_REQUIREMENTS = [
+HA_MCP_RUNTIME_REQUIREMENTS = [
     "fastmcp==3.4.5",
     "httpx[socks]==0.28.1",
     "pydantic==2.13.4",
@@ -89,7 +89,7 @@ def test_ha_mcp_shared_requirement_parity(tmp_path: Path) -> None:
     """The compatibility gate accepts the complete shared dependency set."""
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
-    _write_upstream_pyproject(upstream, HA_MCP_SHARED_REQUIREMENTS)
+    _write_upstream_pyproject(upstream, HA_MCP_RUNTIME_REQUIREMENTS)
 
     assert sandbox.validate_ha_mcp_shared_requirements(upstream) == []
 
@@ -98,7 +98,7 @@ def test_ha_mcp_shared_requirement_mismatch_fails(tmp_path: Path) -> None:
     """A changed ha-mcp dependency blocks release until its spec is aligned."""
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
-    requirements = HA_MCP_SHARED_REQUIREMENTS.copy()
+    requirements = HA_MCP_RUNTIME_REQUIREMENTS.copy()
     requirements[2] = "pydantic==9.9.9"
     _write_upstream_pyproject(upstream, requirements)
 
@@ -110,13 +110,13 @@ def test_ha_mcp_shared_requirement_mismatch_fails(tmp_path: Path) -> None:
     ]
 
 
-def test_current_ha_mcp_websockets_pin_is_accepted_during_transition(
+def test_ha_mcp_websockets_spec_is_excluded_as_ha_owned(
     tmp_path: Path,
 ) -> None:
-    """Current ha-mcp master remains compatible while its range fix lands."""
+    """ha-mcp may constrain websockets without making ESPHome install it."""
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
-    requirements = HA_MCP_SHARED_REQUIREMENTS.copy()
+    requirements = HA_MCP_RUNTIME_REQUIREMENTS.copy()
     requirements[5] = "websockets==17.0"
     _write_upstream_pyproject(upstream, requirements)
 
@@ -127,7 +127,7 @@ def test_ha_mcp_added_dependency_fails(tmp_path: Path) -> None:
     """A new ha-mcp direct dependency must be mirrored by ESPHome MCP."""
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
-    _write_upstream_pyproject(upstream, [*HA_MCP_SHARED_REQUIREMENTS, "new-shared==1.0"])
+    _write_upstream_pyproject(upstream, [*HA_MCP_RUNTIME_REQUIREMENTS, "new-shared==1.0"])
 
     assert sandbox.validate_ha_mcp_shared_requirements(upstream) == [
         "ESPHome MCP is missing ha-mcp runtime dependency 'new-shared'"
@@ -140,7 +140,7 @@ def test_ha_mcp_removed_dependency_fails(tmp_path: Path) -> None:
     upstream = tmp_path / "pyproject.toml"
     requirements = [
         requirement
-        for requirement in HA_MCP_SHARED_REQUIREMENTS
+        for requirement in HA_MCP_RUNTIME_REQUIREMENTS
         if not requirement.startswith("truststore")
     ]
     _write_upstream_pyproject(upstream, requirements)
@@ -157,10 +157,28 @@ def test_runtime_constants_reject_stable_ha_mcp_release_ref(tmp_path: Path) -> N
     const.write_text(
         'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"\n'
         'HA_MCP_COMPAT_REF = "v7.12.3"\n'
-        'SHARED_RUNTIME_REQUIREMENTS = ("websockets>=15.0.1,<18", DEFAULT_PIP_SPEC)\n'
+        'HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)\n'
+        'SHARED_RUNTIME_REQUIREMENTS = (DEFAULT_PIP_SPEC,)\n'
     )
 
     assert sandbox.validate_runtime_constants(const) == ["HA_MCP_COMPAT_REF must be 'master'"]
+
+
+def test_runtime_constants_reject_esphome_websockets_requirement(tmp_path: Path) -> None:
+    """ESPHome cannot reintroduce a direct websocket install over HA Core's copy."""
+    sandbox = _load_sandbox()
+    const = tmp_path / "const.py"
+    const.write_text(
+        'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"\n'
+        'HA_MCP_COMPAT_REF = "master"\n'
+        'HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)\n'
+        'SHARED_RUNTIME_REQUIREMENTS = ('
+        '"websockets>=15.0.1,<18", DEFAULT_PIP_SPEC)\n'
+    )
+
+    assert sandbox.validate_runtime_constants(const) == [
+        "websockets is HA-owned and must not be installed by ESPHome MCP"
+    ]
 
 
 def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:

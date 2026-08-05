@@ -16,11 +16,6 @@ EMBEDDED_SERVER_PATH = COMPONENT / "embedded_server.py"
 
 _EXACT_FASTMCP_PIN = re.compile(r"fastmcp==(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)")
 _REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?")
-_SAFE_WEBSOCKETS_SPEC = "websockets>=15.0.1,<18"
-# ha-mcp 8.1.0 still has this exact pin while #2146 is being fixed. It is
-# compatible with the safe range and may coexist during the coordinated
-# rollout; all other shared specs must match exactly.
-_TRANSITIONAL_HA_MCP_WEBSOCKETS_SPEC = "websockets==17.0"
 _MODULE_CACHE_MUTATORS = {
     "__delitem__",
     "__ior__",
@@ -235,16 +230,19 @@ def validate_runtime_constants(const_path: Path = CONST_PATH) -> list[str]:
         errors.append("SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings")
         return errors
     shared_by_name = _requirement_map(shared)
+    ha_owned = _constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS")
+    if ha_owned != ("websockets",):
+        errors.append(
+            "HA_OWNED_RUNTIME_REQUIREMENTS must contain only 'websockets'"
+        )
     if len(shared_by_name) != len(shared):
         errors.append("SHARED_RUNTIME_REQUIREMENTS must contain unique valid requirements")
     if shared_by_name.get("fastmcp") != pip_spec:
         errors.append("SHARED_RUNTIME_REQUIREMENTS must contain DEFAULT_PIP_SPEC")
     if shared[-1:] != (pip_spec,):
         errors.append("DEFAULT_PIP_SPEC must be last so shared constraints install first")
-    if shared_by_name.get("websockets") != _SAFE_WEBSOCKETS_SPEC:
-        errors.append(
-            f"websockets must use HA-compatible range {_SAFE_WEBSOCKETS_SPEC!r}"
-        )
+    if "websockets" in shared_by_name:
+        errors.append("websockets is HA-owned and must not be installed by ESPHome MCP")
     return errors
 
 
@@ -334,27 +332,27 @@ def validate_ha_mcp_shared_requirements(
     local = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
     if local is None:
         return ["SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings"]
+    ha_owned = set(
+        _constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS") or ()
+    )
+    upstream_shared = {
+        name: spec for name, spec in upstream_by_name.items() if name not in ha_owned
+    }
 
     errors: list[str] = []
     local_by_name = _requirement_map(local)
     for name, local_spec in local_by_name.items():
-        upstream_spec = upstream_by_name.get(name)
+        upstream_spec = upstream_shared.get(name)
         if upstream_spec is None:
             errors.append(f"ha-mcp is missing shared runtime dependency {name!r}")
             continue
         if upstream_spec == local_spec:
             continue
-        if (
-            name == "websockets"
-            and local_spec == _SAFE_WEBSOCKETS_SPEC
-            and upstream_spec == _TRANSITIONAL_HA_MCP_WEBSOCKETS_SPEC
-        ):
-            continue
         errors.append(
             f"shared runtime dependency mismatch for {name}: "
             f"ESPHome MCP uses {local_spec!r}, ha-mcp uses {upstream_spec!r}"
         )
-    for name in sorted(upstream_by_name.keys() - local_by_name.keys()):
+    for name in sorted(upstream_shared.keys() - local_by_name.keys()):
         errors.append(f"ESPHome MCP is missing ha-mcp runtime dependency {name!r}")
     return errors
 

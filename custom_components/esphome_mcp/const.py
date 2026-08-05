@@ -15,9 +15,10 @@ BIND_HOST_LOOPBACK = "127.0.0.1"
 HA_MCP_COMPAT_REF = "master"
 DEFAULT_PIP_SPEC = "fastmcp==3.4.5"  # renovate: datasource=pypi depName=fastmcp
 
-# Shared in-process requirements must stay aligned with ha-mcp. Install the
-# constraints before FastMCP so an already-compatible Home Assistant package
-# (especially websockets) is reused instead of upgraded in place.
+# Shared in-process requirements must stay aligned with ha-mcp. Home Assistant
+# Core already owns websockets, so it is deliberately absent: FastMCP accepts
+# HA's shipped version and ESPHome MCP must never ask pip to touch it directly.
+HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)
 SHARED_RUNTIME_REQUIREMENTS = (
     "httpx[socks]==0.28.1",
     "pydantic==2.13.4",
@@ -27,7 +28,6 @@ SHARED_RUNTIME_REQUIREMENTS = (
     "pydantic-monty==0.0.18",
     "tzdata>=2024.1",
     "packaging>=24.0",
-    "websockets>=15.0.1,<18",
     DEFAULT_PIP_SPEC,
 )
 
