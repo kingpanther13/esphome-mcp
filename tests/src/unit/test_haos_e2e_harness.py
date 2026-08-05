@@ -97,6 +97,38 @@ def test_build_image_injects_disabled_esphome_mcp_entry(tmp_path: Path) -> None:
     assert "pip_spec" not in entry["options"]
 
 
+def test_build_image_injects_disabled_esphome_fixture_entry(tmp_path: Path) -> None:
+    """The synthetic registry records have a valid single-owner config entry."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    config_dir = tmp_path / "homeassistant"
+    storage_dir = config_dir / ".storage"
+    storage_dir.mkdir(parents=True)
+    config_entries_path = storage_dir / "core.config_entries"
+    config_entries_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "minor_version": 1,
+                "key": "core.config_entries",
+                "data": {"entries": []},
+            }
+        )
+    )
+
+    build_image._inject_esphome_fixture_entry(config_dir)
+    build_image._inject_esphome_fixture_entry(config_dir)
+
+    entries = json.loads(config_entries_path.read_text())["data"]["entries"]
+    matching = [
+        entry for entry in entries if entry.get("entry_id") == build_image.ESPHOME_FIXTURE_ENTRY_ID
+    ]
+    assert len(matching) == 1
+    entry = matching[0]
+    assert entry["disabled_by"] == "user"
+    assert entry["domain"] == "esphome"
+    assert entry["data"]["device_name"] == build_image.ESPHOME_FIXTURE_NODE_ID
+
+
 def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     """The HAOS image has official Device Builder and complete HACS installs."""
     build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
@@ -268,10 +300,14 @@ def test_build_image_injects_esphome_registry_fixtures(tmp_path: Path) -> None:
     assert device["area_id"] == "kitchen"
     assert device["identifiers"] == [["esphome", build_image.ESPHOME_FIXTURE_NODE_ID]]
     assert device["name_by_user"] == "Kitchen ESPHome"
+    assert device["config_entries"] == [build_image.ESPHOME_FIXTURE_ENTRY_ID]
+    assert device["config_entries_subentries"] == {build_image.ESPHOME_FIXTURE_ENTRY_ID: [None]}
+    assert device["primary_config_entry"] == build_image.ESPHOME_FIXTURE_ENTRY_ID
 
     assert len(matching_entities) == 1
     entity = matching_entities[0]
     assert entity["device_id"] == build_image.ESPHOME_FIXTURE_DEVICE_ID
+    assert entity["config_entry_id"] == build_image.ESPHOME_FIXTURE_ENTRY_ID
     assert entity["platform"] == "esphome"
     assert entity["original_device_class"] == "temperature"
 

@@ -54,6 +54,7 @@ ESPHOME_MCP_ENTRY_ID = "e2e_test_esphome_mcp_server_entry"
 ESPHOME_MCP_WEBHOOK_ID = "esp_mcp_e2e_haos"
 ESPHOME_MCP_SECRET_PATH = "/private_e2e_esphome_mcp_haos"
 ESPHOME_MCP_PORT = 9590
+ESPHOME_FIXTURE_ENTRY_ID = "e2e_test_esphome_fixture_entry"
 ESPHOME_FIXTURE_DEVICE_ID = "ee2e0000000000000000000000000001"
 ESPHOME_FIXTURE_ENTITY_REGISTRY_ID = "ee2e0000000000000000000000000002"
 ESPHOME_FIXTURE_ENTITY_ID = "sensor.kitchen_esphome_temperature"
@@ -620,6 +621,42 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
     LOG.info("Injected disabled ESPHome MCP config entry (%s)", ESPHOME_MCP_ENTRY_ID)
 
 
+def _inject_esphome_fixture_entry(config_dir: Path) -> None:
+    """Seed a disabled ESPHome owner for the registry fixture."""
+    ce_path = config_dir / ".storage" / "core.config_entries"
+    ce_data = _load_storage_entries(ce_path)
+    entries = ce_data["data"]["entries"]
+    if not any(entry.get("entry_id") == ESPHOME_FIXTURE_ENTRY_ID for entry in entries):
+        entries.append(
+            {
+                "created_at": "2026-07-08T00:00:00+00:00",
+                "data": {
+                    "device_name": ESPHOME_FIXTURE_NODE_ID,
+                    "host": "127.0.0.1",
+                    "noise_psk": "",
+                    "password": "",
+                    "port": 6053,
+                },
+                "disabled_by": "user",
+                "discovery_keys": {},
+                "domain": "esphome",
+                "entry_id": ESPHOME_FIXTURE_ENTRY_ID,
+                "minor_version": 1,
+                "modified_at": "2026-07-08T00:00:00+00:00",
+                "options": {},
+                "pref_disable_new_entities": False,
+                "pref_disable_polling": False,
+                "source": "user",
+                "subentries": [],
+                "title": "Kitchen ESPHome",
+                "unique_id": "00:00:00:00:00:01",
+                "version": 1,
+            }
+        )
+    ce_path.write_text(json.dumps(ce_data, indent=2))
+    LOG.info("Injected disabled ESPHome fixture entry (%s)", ESPHOME_FIXTURE_ENTRY_ID)
+
+
 def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
     """Seed one ESPHome registry device/entity for HA search-tool E2E coverage."""
     storage_dir = config_dir / ".storage"
@@ -634,8 +671,8 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
         devices.append(
             {
                 "area_id": "kitchen",
-                "config_entries": [],
-                "config_entries_subentries": {},
+                "config_entries": [ESPHOME_FIXTURE_ENTRY_ID],
+                "config_entries_subentries": {ESPHOME_FIXTURE_ENTRY_ID: [None]},
                 "configuration_url": None,
                 "connections": [],
                 "created_at": "2026-07-08T00:00:00+00:00",
@@ -651,7 +688,7 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
                 "modified_at": "2026-07-08T00:00:00+00:00",
                 "name_by_user": "Kitchen ESPHome",
                 "name": "Kitchen ESPHome",
-                "primary_config_entry": None,
+                "primary_config_entry": ESPHOME_FIXTURE_ENTRY_ID,
                 "serial_number": None,
                 "sw_version": "2026.7.0",
                 "via_device_id": None,
@@ -673,7 +710,7 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
                 "area_id": None,
                 "categories": {},
                 "capabilities": {"state_class": "measurement"},
-                "config_entry_id": None,
+                "config_entry_id": ESPHOME_FIXTURE_ENTRY_ID,
                 "config_subentry_id": None,
                 "created_at": "2026-07-08T00:00:00+00:00",
                 "device_class": None,
@@ -739,6 +776,7 @@ def bake_component_into_config(qcow2: Path) -> None:
         LOG.info("Staged custom component %s", ESPHOME_MCP_DOMAIN)
 
         _inject_esphome_mcp_entry(config_dir)
+        _inject_esphome_fixture_entry(config_dir)
         _inject_esphome_registry_fixtures(config_dir)
 
         db_src = config_dir / "home-assistant_v2.db"
