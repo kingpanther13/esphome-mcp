@@ -138,6 +138,7 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert build_image.HAOS_VERSION == "18.2"
     assert build_image.HA_CORE_VERSION == "2026.8.0"
     assert build_image.CORE_FIRST_BOOT_TIMEOUT == 600
+    assert build_image.CORE_UPDATE_TIMEOUT == 900
     assert build_image.HA_GUEST_PORT == 80
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.repo == (
         "https://github.com/esphome/home-assistant-addon"
@@ -146,6 +147,9 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.start is True
     assert build_image.GET_HACS_ADDON.repo == "https://github.com/hacs/addons"
     assert build_image.GET_HACS_ADDON.name == "Get HACS"
+    assert source.index("ensure_core_version(ws, base_url, token)") < source.index(
+        "install_esphome_device_builder(ws)"
+    )
     assert source.index("install_esphome_device_builder(ws)") < source.index(
         "bake_component_into_config(qcow2)"
     )
@@ -179,6 +183,84 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "\nhttp:" not in seed_config
     assert "trusted_proxies:" not in seed_config
     assert "-:{HA_GUEST_PORT}" in source
+
+
+def test_build_image_installs_exact_core_target_before_addons(monkeypatch) -> None:
+    """A floating HAOS Core is changed to the explicit Renovate-managed target."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    events: list[tuple[object, ...]] = []
+
+    class FakeWebSocket:
+        def supervisor_api(
+            self,
+            path: str,
+            *,
+            method: str,
+            data: dict[str, object],
+            timeout: float,
+        ) -> dict[str, object]:
+            events.append(("api", path, method, data, timeout))
+            return {}
+
+        def reconnect(self) -> None:
+            events.append(("reconnect",))
+
+    versions = iter(["2026.8.1"])
+    monkeypatch.setattr(build_image, "_core_version", lambda _url, _token: next(versions))
+    monkeypatch.setattr(
+        build_image,
+        "_wait_supervisor_ready",
+        lambda _ws: events.append(("supervisor-ready",)),
+    )
+    monkeypatch.setattr(
+        build_image,
+        "_wait_core_version",
+        lambda url, token, version, *, timeout: events.append(
+            ("wait-core", url, token, version, timeout)
+        ),
+    )
+
+    build_image.ensure_core_version(
+        FakeWebSocket(),
+        "http://127.0.0.1:18123",
+        "token",
+    )
+
+    assert events == [
+        ("supervisor-ready",),
+        (
+            "api",
+            "/core/update",
+            "post",
+            {"version": "2026.8.0", "backup": False},
+            900,
+        ),
+        ("wait-core", "http://127.0.0.1:18123", "token", "2026.8.0", 900),
+        ("reconnect",),
+    ]
+
+
+def test_build_image_reuses_exact_core_target(monkeypatch) -> None:
+    """No Supervisor update is requested when HAOS already runs the target Core."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    monkeypatch.setattr(
+        build_image,
+        "_core_version",
+        lambda _url, _token: build_image.HA_CORE_VERSION,
+    )
+
+    class FailWebSocket:
+        def supervisor_api(self, *_args, **_kwargs):
+            raise AssertionError("exact Core target must not be reinstalled")
+
+        def reconnect(self) -> None:
+            raise AssertionError("exact Core target must not reconnect")
+
+    build_image.ensure_core_version(
+        FailWebSocket(),
+        "http://127.0.0.1:18123",
+        "token",
+    )
 
 
 def test_install_hacs_uses_supported_addon_and_restarts_core(monkeypatch) -> None:

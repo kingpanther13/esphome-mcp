@@ -449,6 +449,72 @@ def test_runtime_requirement_compatibility_ignores_extras(monkeypatch: Any) -> N
     )
 
 
+def test_stateless_http_server_does_not_enable_uvicorn_websockets(monkeypatch: Any) -> None:
+    """The MCP listener starts without importing Home Assistant's websockets copy."""
+    module = _load_embedded_server(monkeypatch)
+    captured: dict[str, Any] = {}
+
+    class FakeLifespan:
+        async def __aenter__(self) -> FakeLifespan:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+    class FakeMcp:
+        def http_app(self, *, path: str, stateless_http: bool) -> object:
+            captured["path"] = path
+            captured["stateless_http"] = stateless_http
+            return object()
+
+        def _lifespan_manager(self) -> FakeLifespan:
+            return FakeLifespan()
+
+    class FakeEspHomeMCPServer:
+        def __init__(self, _hass: Any) -> None:
+            self.mcp = FakeMcp()
+
+    class FakeConfig:
+        def __init__(self, _app: object, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    class FakeUvicornServer:
+        def __init__(self, _config: FakeConfig) -> None:
+            self.should_exit = False
+
+        async def serve(self) -> None:
+            return None
+
+    uvicorn_module = ModuleType("uvicorn")
+    uvicorn_module.Config = FakeConfig
+    uvicorn_module.Server = FakeUvicornServer
+    server_module = ModuleType("custom_components.esphome_mcp.server")
+    server_module.EspHomeMCPServer = FakeEspHomeMCPServer
+    monkeypatch.setitem(sys.modules, "uvicorn", uvicorn_module)
+    monkeypatch.setitem(sys.modules, "custom_components.esphome_mcp.server", server_module)
+
+    original_import = builtins.__import__
+
+    def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "websockets" or name.startswith("websockets."):
+            raise AssertionError(f"stateless MCP startup imported {name}")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    entry = SimpleNamespace(data={module.DATA_SECRET_PATH: "/private"}, options={})
+    manager = module.EmbeddedServerManager(_FakeHass(), entry)
+
+    async def run_server() -> None:
+        manager._stop_event = asyncio.Event()
+        await manager._serve()
+
+    _run(run_server())
+
+    assert captured["path"] == "/private"
+    assert captured["stateless_http"] is True
+    assert captured["ws"] == "none"
+
+
 def test_dependency_probe_does_not_import_runtime_packages(monkeypatch: Any) -> None:
     """Import checks do not cache stale FastMCP modules before forced installs."""
     module = _load_embedded_server(monkeypatch)

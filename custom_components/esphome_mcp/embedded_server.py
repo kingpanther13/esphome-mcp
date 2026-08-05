@@ -177,7 +177,10 @@ class EmbeddedServerManager:
             port=self._port,
             timeout_graceful_shutdown=2,
             lifespan="on",
-            ws="websockets-sansio",
+            # MCP uses stateless streamable HTTP. Disabling Uvicorn's WebSocket
+            # protocol keeps the embedded server from importing HA-owned
+            # websockets solely while loading its HTTP listener configuration.
+            ws="none",
             log_config=None,
         )
         uv_server = uvicorn.Server(config)

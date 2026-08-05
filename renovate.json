@@ -35,10 +35,14 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^tests/haos_image_build/build_image\\.py$/"
+        "/^tests/haos_image_build/build_image\\.py$/",
+        "/^hacs\\.json$/",
+        "/^README\\.md$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=github-releases depName=home-assistant/core\\s+HA_CORE_VERSION\\s*=\\s*[\"'](?<currentValue>\\d+\\.\\d+\\.\\d+)[\"']"
+        "# renovate: datasource=github-releases depName=home-assistant/core\\s+HA_CORE_VERSION\\s*=\\s*[\"'](?<currentValue>\\d+\\.\\d+\\.\\d+)[\"']",
+        "\"homeassistant\"\\s*:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "Home Assistant `(?<currentValue>\\d+\\.\\d+\\.\\d+)` or newer\\."
       ],
       "depNameTemplate": "home-assistant/core",
       "datasourceTemplate": "github-releases"
@@ -74,7 +78,7 @@
       ]
     },
     {
-      "description": "Home Assistant Core version verified by HAOS E2E",
+      "description": "Home Assistant Core version tested and required by ESPHome MCP",
       "matchDatasources": [
         "github-releases"
       ],

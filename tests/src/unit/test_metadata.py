@@ -9,6 +9,9 @@ from importlib import util
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
+from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
@@ -21,6 +24,15 @@ assert RELEASE_METADATA_SPEC.loader is not None
 release_metadata = util.module_from_spec(RELEASE_METADATA_SPEC)
 RELEASE_METADATA_SPEC.loader.exec_module(release_metadata)
 validate_release_metadata = release_metadata.validate_release_metadata
+
+RUNTIME_CONST_SPEC = util.spec_from_file_location(
+    "esphome_mcp_runtime_const",
+    COMPONENT / "const.py",
+)
+assert RUNTIME_CONST_SPEC is not None
+assert RUNTIME_CONST_SPEC.loader is not None
+runtime_const = util.module_from_spec(RUNTIME_CONST_SPEC)
+RUNTIME_CONST_SPEC.loader.exec_module(runtime_const)
 
 
 def test_manifest_is_hacs_ready() -> None:
@@ -46,9 +58,13 @@ def test_manifest_is_hacs_ready() -> None:
 def test_hacs_metadata_exists() -> None:
     """HACS metadata is present at the repository root only."""
     root_hacs = json.loads((ROOT / "hacs.json").read_text())
+    build_image = (ROOT / "tests" / "haos_image_build" / "build_image.py").read_text()
+    core_version_match = re.search(r'^HA_CORE_VERSION = "([^\"]+)"$', build_image, re.MULTILINE)
 
     assert root_hacs["name"] == "ESPHome MCP"
-    assert root_hacs["homeassistant"] == "2025.9.1"
+    assert root_hacs["homeassistant"] == "2026.8.0"
+    assert core_version_match is not None
+    assert root_hacs["homeassistant"] == core_version_match.group(1)
     assert root_hacs["render_readme"] is True
     assert "hide_default_branch" not in root_hacs
     assert "zip_release" not in root_hacs
@@ -93,6 +109,25 @@ def test_server_defaults_are_scaffolded() -> None:
     assert 'name="esp_firmware_jobs"' in server
     assert 'name="esp_get_firmware_job"' in server
     assert 'name="esp_follow_firmware_job"' in server
+
+
+def test_current_core_constraints_accept_shared_runtime_requirements() -> None:
+    """Exact Core 2026.8.0 constraints accept every overlapping shared spec."""
+    core_exact_constraints = {
+        "cryptography": "48.0.1",
+        "httpx": "0.28.1",
+        "pydantic": "2.13.4",
+    }
+    shared = {
+        canonicalize_name(parsed.name): parsed
+        for specification in runtime_const.SHARED_RUNTIME_REQUIREMENTS
+        if (parsed := Requirement(specification))
+    }
+
+    assert json.loads((ROOT / "hacs.json").read_text())["homeassistant"] == "2026.8.0"
+    for name, version in core_exact_constraints.items():
+        assert name in shared
+        assert Version(version) in shared[name].specifier
 
 
 def test_restart_repair_is_declared_for_shared_dependency_conflicts() -> None:
@@ -184,6 +219,7 @@ def test_readme_has_hacs_facing_usage_information() -> None:
     assert "## Safety Notes" in readme
     assert "latest published **ESPHome MCP** release" in readme
     assert "seven-character commit version" in readme
+    assert "Home Assistant `2026.8.0` or newer" in readme
 
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
@@ -313,6 +349,8 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     renovate_workflow = (ROOT / ".github" / "workflows" / "renovate.yml").read_text()
     const = (COMPONENT / "const.py").read_text()
     build_image = (ROOT / "tests" / "haos_image_build" / "build_image.py").read_text()
+    hacs = (ROOT / "hacs.json").read_text()
+    readme = (ROOT / "README.md").read_text()
 
     assert 'package-ecosystem: "github-actions"' in dependabot
     assert 'package-ecosystem: "pip"' in dependabot
@@ -350,14 +388,8 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             build_image,
             "18.2",
         ),
-        "home-assistant/core": (
-            "github-releases",
-            "/^tests/haos_image_build/build_image\\.py$/",
-            build_image,
-            "2026.8.0",
-        ),
     }
-    assert managers.keys() == expected.keys()
+    assert managers.keys() == expected.keys() | {"home-assistant/core"}
     for dep_name, (datasource, file_pattern, source, current_value) in expected.items():
         manager = managers[dep_name]
         assert manager["datasourceTemplate"] == datasource
@@ -366,6 +398,22 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
         pattern = manager["matchStrings"][0].replace("(?<", "(?P<")
         matches = list(re.finditer(pattern, source))
         assert [match.groupdict() for match in matches] == [{"currentValue": current_value}]
+
+    core_manager = managers["home-assistant/core"]
+    assert core_manager["datasourceTemplate"] == "github-releases"
+    assert core_manager["managerFilePatterns"] == [
+        "/^tests/haos_image_build/build_image\\.py$/",
+        "/^hacs\\.json$/",
+        "/^README\\.md$/",
+    ]
+    assert len(core_manager["matchStrings"]) == 3
+    for pattern, source in zip(
+        core_manager["matchStrings"],
+        (build_image, hacs, readme),
+        strict=True,
+    ):
+        matches = list(re.finditer(pattern.replace("(?<", "(?P<"), source))
+        assert [match.groupdict() for match in matches] == [{"currentValue": "2026.8.0"}]
 
 
 def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:

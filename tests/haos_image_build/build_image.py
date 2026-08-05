@@ -45,6 +45,7 @@ HA_HOST_PORT = int(os.environ.get("HAOS_BUILD_HA_PORT", "18123"))
 SSH_HOST_PORT = int(os.environ.get("HAOS_BUILD_SSH_PORT", "12222"))
 OVMF_CODE_PATH = os.environ.get("HAOS_BUILD_OVMF", "/usr/share/OVMF/OVMF_CODE.fd")
 CORE_FIRST_BOOT_TIMEOUT = 600
+CORE_UPDATE_TIMEOUT = 900
 # Core 2026.8 moved Supervisor-managed installs from guest port 8123 to 80.
 HA_GUEST_PORT = 80
 
@@ -556,10 +557,81 @@ def install_hacs(ws: HAWebSocket, base_url: str) -> None:
     ws.reconnect()
 
 
-def _check_core_auth(base_url: str, token: str) -> None:
+def _core_version(base_url: str, token: str) -> str:
+    """Return the authenticated Home Assistant Core version."""
     cfg = _http("GET", f"{base_url}/api/config", token=token, timeout=10.0)
     version = cfg.get("version")
     LOG.info("AUTH OK: /api/config version=%s state=%s", version, cfg.get("state"))
+    if not isinstance(version, str):
+        raise RuntimeError(f"Home Assistant /api/config returned invalid version {version!r}")
+    return version
+
+
+def _wait_core_version(
+    base_url: str,
+    token: str,
+    expected_version: str,
+    *,
+    timeout: float,
+) -> None:
+    """Wait until the requested Home Assistant Core version is serving requests."""
+    deadline = time.monotonic() + timeout
+    last_version: str | None = None
+    last_error: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            last_version = _core_version(base_url, token)
+        except (OSError, ValueError) as err:
+            last_error = err
+        else:
+            if last_version == expected_version:
+                return
+        time.sleep(3.0)
+    detail = f"last version={last_version!r}"
+    if last_error is not None:
+        detail += f", last error={last_error!r}"
+    raise TimeoutError(
+        f"Home Assistant Core {expected_version} did not become ready within "
+        f"{timeout:.0f}s ({detail})"
+    )
+
+
+def ensure_core_version(ws: HAWebSocket, base_url: str, token: str) -> None:
+    """Install the exact Core target instead of trusting HAOS's floating channel."""
+    current_version = _core_version(base_url, token)
+    if current_version == HA_CORE_VERSION:
+        return
+
+    _wait_supervisor_ready(ws)
+    from websockets.exceptions import ConnectionClosed
+
+    LOG.info(
+        "Changing Home Assistant Core from %s to requested version %s",
+        current_version,
+        HA_CORE_VERSION,
+    )
+    try:
+        ws.supervisor_api(
+            "/core/update",
+            method="post",
+            data={"version": HA_CORE_VERSION, "backup": False},
+            timeout=CORE_UPDATE_TIMEOUT,
+        )
+    except ConnectionClosed:
+        LOG.info("WebSocket closed during Core version change (expected)")
+
+    _wait_core_version(
+        base_url,
+        token,
+        HA_CORE_VERSION,
+        timeout=CORE_UPDATE_TIMEOUT,
+    )
+    ws.reconnect()
+
+
+def _check_core_auth(base_url: str, token: str) -> None:
+    """Require the authenticated API to report the exact Core target."""
+    version = _core_version(base_url, token)
     if version != HA_CORE_VERSION:
         raise RuntimeError(f"Expected Home Assistant Core {HA_CORE_VERSION}, got {version!r}")
 
@@ -849,8 +921,9 @@ def build(work_dir: Path, output: Path) -> None:
         _wait_port(HA_HOST_PORT, timeout=180)
         _wait_http_ok(f"{base_url}/manifest.json", timeout=CORE_FIRST_BOOT_TIMEOUT)
         token = onboard(base_url)
-        _check_core_auth(base_url, token)
         with HAWebSocket(base_url, token) as ws:
+            ensure_core_version(ws, base_url, token)
+            _check_core_auth(base_url, token)
             install_esphome_device_builder(ws)
             install_hacs(ws, base_url)
             stop_qemu(qemu, ws)
