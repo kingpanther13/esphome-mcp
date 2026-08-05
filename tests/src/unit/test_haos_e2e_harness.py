@@ -97,13 +97,49 @@ def test_build_image_injects_disabled_esphome_mcp_entry(tmp_path: Path) -> None:
     assert "pip_spec" not in entry["options"]
 
 
+def test_build_image_injects_disabled_esphome_fixture_entry(tmp_path: Path) -> None:
+    """The synthetic registry records have a valid single-owner config entry."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    config_dir = tmp_path / "homeassistant"
+    storage_dir = config_dir / ".storage"
+    storage_dir.mkdir(parents=True)
+    config_entries_path = storage_dir / "core.config_entries"
+    config_entries_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "minor_version": 1,
+                "key": "core.config_entries",
+                "data": {"entries": []},
+            }
+        )
+    )
+
+    build_image._inject_esphome_fixture_entry(config_dir)
+    build_image._inject_esphome_fixture_entry(config_dir)
+
+    entries = json.loads(config_entries_path.read_text())["data"]["entries"]
+    matching = [
+        entry for entry in entries if entry.get("entry_id") == build_image.ESPHOME_FIXTURE_ENTRY_ID
+    ]
+    assert len(matching) == 1
+    entry = matching[0]
+    assert entry["disabled_by"] == "user"
+    assert entry["domain"] == "esphome"
+    assert entry["data"]["device_name"] == build_image.ESPHOME_FIXTURE_NODE_ID
+
+
 def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     """The HAOS image has official Device Builder and complete HACS installs."""
     build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
     source = BUILD_IMAGE_PATH.read_text()
     workflow = E2E_COMPONENT_WORKFLOW.read_text()
 
-    assert build_image.HAOS_VERSION == "18.1"
+    assert build_image.HAOS_VERSION == "18.2"
+    assert build_image.HA_CORE_VERSION == "2026.8.0"
+    assert build_image.CORE_FIRST_BOOT_TIMEOUT == 600
+    assert build_image.CORE_UPDATE_TIMEOUT == 900
+    assert build_image.HA_GUEST_PORT == 80
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.repo == (
         "https://github.com/esphome/home-assistant-addon"
     )
@@ -111,6 +147,9 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert build_image.ESPHOME_DEVICE_BUILDER_ADDON.start is True
     assert build_image.GET_HACS_ADDON.repo == "https://github.com/hacs/addons"
     assert build_image.GET_HACS_ADDON.name == "Get HACS"
+    assert source.index("ensure_core_version(ws, base_url, token)") < source.index(
+        "install_esphome_device_builder(ws)"
+    )
     assert source.index("install_esphome_device_builder(ws)") < source.index(
         "bake_component_into_config(qcow2)"
     )
@@ -125,6 +164,105 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "esphome-addon-hash" in workflow
     assert "hacs-addon-hash" in workflow
     assert "hacs-version" in workflow
+    assert "haos-version" in workflow
+    assert "ha-core-version" in workflow
+    assert "core-${ha_core_version}" in workflow
+    assert (
+        r"version_pattern='^v?[0-9]+\.[0-9]+\.[0-9]+"
+        r"((a|b|rc)[0-9]+)?([.-][0-9A-Za-z]+)*$'" in workflow
+    )
+    assert "ESPHOME_VERSION: ${{ steps.key.outputs.esphome-version }}" in workflow
+    assert '"esphome==$ESPHOME_VERSION"' in workflow
+    assert '"esphome==${{ steps.key.outputs.esphome-version }}"' not in workflow
+    assert "CACHE_HIT: ${{ steps.restore-cache.outputs.cache-hit }}" in workflow
+    assert "printf '::notice title=HAOS image cache::" in workflow
+    assert "/tmp/haos-build/haos-serial.log" in workflow
+    assert "img=/tmp/haos-build/haos-test-image.qcow2" in workflow
+
+    seed_config = (INITIAL_TEST_STATE / "configuration.yaml").read_text()
+    assert "\nhttp:" not in seed_config
+    assert "trusted_proxies:" not in seed_config
+    assert "-:{HA_GUEST_PORT}" in source
+
+
+def test_build_image_installs_exact_core_target_before_addons(monkeypatch) -> None:
+    """A floating HAOS Core is changed to the explicit Renovate-managed target."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    events: list[tuple[object, ...]] = []
+
+    class FakeWebSocket:
+        def supervisor_api(
+            self,
+            path: str,
+            *,
+            method: str,
+            data: dict[str, object],
+            timeout: float,
+        ) -> dict[str, object]:
+            events.append(("api", path, method, data, timeout))
+            from websockets.exceptions import ConnectionClosed
+
+            raise ConnectionClosed(None, None)
+
+        def reconnect(self) -> None:
+            events.append(("reconnect",))
+
+    versions = iter(["2026.8.1"])
+    monkeypatch.setattr(build_image, "_core_version", lambda _url, _token: next(versions))
+    monkeypatch.setattr(
+        build_image,
+        "_wait_supervisor_ready",
+        lambda _ws: events.append(("supervisor-ready",)),
+    )
+    monkeypatch.setattr(
+        build_image,
+        "_wait_core_version",
+        lambda url, token, version, *, timeout: events.append(
+            ("wait-core", url, token, version, timeout)
+        ),
+    )
+
+    build_image.ensure_core_version(
+        FakeWebSocket(),
+        "http://127.0.0.1:18123",
+        "token",
+    )
+
+    assert events == [
+        ("supervisor-ready",),
+        (
+            "api",
+            "/core/update",
+            "post",
+            {"version": "2026.8.0", "backup": False},
+            900,
+        ),
+        ("wait-core", "http://127.0.0.1:18123", "token", "2026.8.0", 900),
+        ("reconnect",),
+    ]
+
+
+def test_build_image_reuses_exact_core_target(monkeypatch) -> None:
+    """No Supervisor update is requested when HAOS already runs the target Core."""
+    build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
+    monkeypatch.setattr(
+        build_image,
+        "_core_version",
+        lambda _url, _token: build_image.HA_CORE_VERSION,
+    )
+
+    class FailWebSocket:
+        def supervisor_api(self, *_args, **_kwargs):
+            raise AssertionError("exact Core target must not be reinstalled")
+
+        def reconnect(self) -> None:
+            raise AssertionError("exact Core target must not reconnect")
+
+    build_image.ensure_core_version(
+        FailWebSocket(),
+        "http://127.0.0.1:18123",
+        "token",
+    )
 
 
 def test_install_hacs_uses_supported_addon_and_restarts_core(monkeypatch) -> None:
@@ -255,10 +393,14 @@ def test_build_image_injects_esphome_registry_fixtures(tmp_path: Path) -> None:
     assert device["area_id"] == "kitchen"
     assert device["identifiers"] == [["esphome", build_image.ESPHOME_FIXTURE_NODE_ID]]
     assert device["name_by_user"] == "Kitchen ESPHome"
+    assert device["config_entries"] == [build_image.ESPHOME_FIXTURE_ENTRY_ID]
+    assert device["config_entries_subentries"] == {build_image.ESPHOME_FIXTURE_ENTRY_ID: [None]}
+    assert device["primary_config_entry"] == build_image.ESPHOME_FIXTURE_ENTRY_ID
 
     assert len(matching_entities) == 1
     entity = matching_entities[0]
     assert entity["device_id"] == build_image.ESPHOME_FIXTURE_DEVICE_ID
+    assert entity["config_entry_id"] == build_image.ESPHOME_FIXTURE_ENTRY_ID
     assert entity["platform"] == "esphome"
     assert entity["original_device_class"] == "temperature"
 

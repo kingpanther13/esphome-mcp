@@ -29,7 +29,9 @@ from typing import Any
 LOG = logging.getLogger("haos_image_build")
 
 # renovate: datasource=github-releases depName=home-assistant/operating-system
-HAOS_VERSION = "18.1"
+HAOS_VERSION = "18.2"
+# renovate: datasource=github-releases depName=home-assistant/core
+HA_CORE_VERSION = "2026.8.0"
 HAOS_QCOW2_URL = (
     f"https://github.com/home-assistant/operating-system/releases/download/"
     f"{HAOS_VERSION}/haos_ova-{HAOS_VERSION}.qcow2.xz"
@@ -42,6 +44,10 @@ ONBOARDING_NAME = "ESPHome MCP CI"
 HA_HOST_PORT = int(os.environ.get("HAOS_BUILD_HA_PORT", "18123"))
 SSH_HOST_PORT = int(os.environ.get("HAOS_BUILD_SSH_PORT", "12222"))
 OVMF_CODE_PATH = os.environ.get("HAOS_BUILD_OVMF", "/usr/share/OVMF/OVMF_CODE.fd")
+CORE_FIRST_BOOT_TIMEOUT = 600
+CORE_UPDATE_TIMEOUT = 900
+# Core 2026.8 moved Supervisor-managed installs from guest port 8123 to 80.
+HA_GUEST_PORT = 80
 
 ESPHOME_MCP_DOMAIN = "esphome_mcp"
 ESPHOME_MCP_UNIQUE_ID = "esphome_mcp-server"
@@ -49,6 +55,7 @@ ESPHOME_MCP_ENTRY_ID = "e2e_test_esphome_mcp_server_entry"
 ESPHOME_MCP_WEBHOOK_ID = "esp_mcp_e2e_haos"
 ESPHOME_MCP_SECRET_PATH = "/private_e2e_esphome_mcp_haos"
 ESPHOME_MCP_PORT = 9590
+ESPHOME_FIXTURE_ENTRY_ID = "e2e_test_esphome_fixture_entry"
 ESPHOME_FIXTURE_DEVICE_ID = "ee2e0000000000000000000000000001"
 ESPHOME_FIXTURE_ENTITY_REGISTRY_ID = "ee2e0000000000000000000000000002"
 ESPHOME_FIXTURE_ENTITY_ID = "sensor.kitchen_esphome_temperature"
@@ -179,7 +186,7 @@ def start_qemu(qcow2: Path, work_dir: Path) -> subprocess.Popen[bytes]:
         "-drive",
         f"if=virtio,file={qcow2},format=qcow2",
         "-netdev",
-        f"user,id=net0,hostfwd=tcp:127.0.0.1:{HA_HOST_PORT}-:8123,"
+        f"user,id=net0,hostfwd=tcp:127.0.0.1:{HA_HOST_PORT}-:{HA_GUEST_PORT},"
         f"hostfwd=tcp:127.0.0.1:{SSH_HOST_PORT}-:22",
         "-device",
         "virtio-net-pci,netdev=net0",
@@ -550,9 +557,83 @@ def install_hacs(ws: HAWebSocket, base_url: str) -> None:
     ws.reconnect()
 
 
-def _check_core_auth(base_url: str, token: str) -> None:
+def _core_version(base_url: str, token: str) -> str:
+    """Return the authenticated Home Assistant Core version."""
     cfg = _http("GET", f"{base_url}/api/config", token=token, timeout=10.0)
-    LOG.info("AUTH OK: /api/config version=%s state=%s", cfg.get("version"), cfg.get("state"))
+    version = cfg.get("version")
+    LOG.info("AUTH OK: /api/config version=%s state=%s", version, cfg.get("state"))
+    if not isinstance(version, str):
+        raise RuntimeError(f"Home Assistant /api/config returned invalid version {version!r}")
+    return version
+
+
+def _wait_core_version(
+    base_url: str,
+    token: str,
+    expected_version: str,
+    *,
+    timeout: float,
+) -> None:
+    """Wait until the requested Home Assistant Core version is serving requests."""
+    deadline = time.monotonic() + timeout
+    last_version: str | None = None
+    last_error: BaseException | None = None
+    while time.monotonic() < deadline:
+        try:
+            last_version = _core_version(base_url, token)
+        except (OSError, ValueError, RuntimeError) as err:
+            last_error = err
+        else:
+            if last_version == expected_version:
+                return
+        time.sleep(3.0)
+    detail = f"last version={last_version!r}"
+    if last_error is not None:
+        detail += f", last error={last_error!r}"
+    raise TimeoutError(
+        f"Home Assistant Core {expected_version} did not become ready within "
+        f"{timeout:.0f}s ({detail})"
+    )
+
+
+def ensure_core_version(ws: HAWebSocket, base_url: str, token: str) -> None:
+    """Install the exact Core target instead of trusting HAOS's floating channel."""
+    current_version = _core_version(base_url, token)
+    if current_version == HA_CORE_VERSION:
+        return
+
+    _wait_supervisor_ready(ws)
+    from websockets.exceptions import ConnectionClosed
+
+    LOG.info(
+        "Changing Home Assistant Core from %s to requested version %s",
+        current_version,
+        HA_CORE_VERSION,
+    )
+    try:
+        ws.supervisor_api(
+            "/core/update",
+            method="post",
+            data={"version": HA_CORE_VERSION, "backup": False},
+            timeout=CORE_UPDATE_TIMEOUT,
+        )
+    except ConnectionClosed:
+        LOG.info("WebSocket closed during Core version change (expected)")
+
+    _wait_core_version(
+        base_url,
+        token,
+        HA_CORE_VERSION,
+        timeout=CORE_UPDATE_TIMEOUT,
+    )
+    ws.reconnect()
+
+
+def _check_core_auth(base_url: str, token: str) -> None:
+    """Require the authenticated API to report the exact Core target."""
+    version = _core_version(base_url, token)
+    if version != HA_CORE_VERSION:
+        raise RuntimeError(f"Expected Home Assistant Core {HA_CORE_VERSION}, got {version!r}")
 
 
 def _load_storage_list(path: Path, *, expected_key: str, list_key: str) -> dict[str, Any]:
@@ -612,6 +693,42 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
     LOG.info("Injected disabled ESPHome MCP config entry (%s)", ESPHOME_MCP_ENTRY_ID)
 
 
+def _inject_esphome_fixture_entry(config_dir: Path) -> None:
+    """Seed a disabled ESPHome owner for the registry fixture."""
+    ce_path = config_dir / ".storage" / "core.config_entries"
+    ce_data = _load_storage_entries(ce_path)
+    entries = ce_data["data"]["entries"]
+    if not any(entry.get("entry_id") == ESPHOME_FIXTURE_ENTRY_ID for entry in entries):
+        entries.append(
+            {
+                "created_at": "2026-07-08T00:00:00+00:00",
+                "data": {
+                    "device_name": ESPHOME_FIXTURE_NODE_ID,
+                    "host": "127.0.0.1",
+                    "noise_psk": "",
+                    "password": "",
+                    "port": 6053,
+                },
+                "disabled_by": "user",
+                "discovery_keys": {},
+                "domain": "esphome",
+                "entry_id": ESPHOME_FIXTURE_ENTRY_ID,
+                "minor_version": 1,
+                "modified_at": "2026-07-08T00:00:00+00:00",
+                "options": {},
+                "pref_disable_new_entities": False,
+                "pref_disable_polling": False,
+                "source": "user",
+                "subentries": [],
+                "title": "Kitchen ESPHome",
+                "unique_id": "00:00:00:00:00:01",
+                "version": 1,
+            }
+        )
+    ce_path.write_text(json.dumps(ce_data, indent=2))
+    LOG.info("Injected disabled ESPHome fixture entry (%s)", ESPHOME_FIXTURE_ENTRY_ID)
+
+
 def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
     """Seed one ESPHome registry device/entity for HA search-tool E2E coverage."""
     storage_dir = config_dir / ".storage"
@@ -626,8 +743,8 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
         devices.append(
             {
                 "area_id": "kitchen",
-                "config_entries": [],
-                "config_entries_subentries": {},
+                "config_entries": [ESPHOME_FIXTURE_ENTRY_ID],
+                "config_entries_subentries": {ESPHOME_FIXTURE_ENTRY_ID: [None]},
                 "configuration_url": None,
                 "connections": [],
                 "created_at": "2026-07-08T00:00:00+00:00",
@@ -643,7 +760,7 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
                 "modified_at": "2026-07-08T00:00:00+00:00",
                 "name_by_user": "Kitchen ESPHome",
                 "name": "Kitchen ESPHome",
-                "primary_config_entry": None,
+                "primary_config_entry": ESPHOME_FIXTURE_ENTRY_ID,
                 "serial_number": None,
                 "sw_version": "2026.7.0",
                 "via_device_id": None,
@@ -665,7 +782,7 @@ def _inject_esphome_registry_fixtures(config_dir: Path) -> None:
                 "area_id": None,
                 "categories": {},
                 "capabilities": {"state_class": "measurement"},
-                "config_entry_id": None,
+                "config_entry_id": ESPHOME_FIXTURE_ENTRY_ID,
                 "config_subentry_id": None,
                 "created_at": "2026-07-08T00:00:00+00:00",
                 "device_class": None,
@@ -731,6 +848,7 @@ def bake_component_into_config(qcow2: Path) -> None:
         LOG.info("Staged custom component %s", ESPHOME_MCP_DOMAIN)
 
         _inject_esphome_mcp_entry(config_dir)
+        _inject_esphome_fixture_entry(config_dir)
         _inject_esphome_registry_fixtures(config_dir)
 
         db_src = config_dir / "home-assistant_v2.db"
@@ -801,10 +919,11 @@ def build(work_dir: Path, output: Path) -> None:
     base_url = f"http://127.0.0.1:{HA_HOST_PORT}"
     try:
         _wait_port(HA_HOST_PORT, timeout=180)
-        _wait_http_ok(f"{base_url}/manifest.json", timeout=600)
+        _wait_http_ok(f"{base_url}/manifest.json", timeout=CORE_FIRST_BOOT_TIMEOUT)
         token = onboard(base_url)
-        _check_core_auth(base_url, token)
         with HAWebSocket(base_url, token) as ws:
+            ensure_core_version(ws, base_url, token)
+            _check_core_auth(base_url, token)
             install_esphome_device_builder(ws)
             install_hacs(ws, base_url)
             stop_qemu(qemu, ws)

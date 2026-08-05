@@ -19,7 +19,7 @@ use, including Nabu Casa Remote UI.
 
 ## Requirements
 
-- Home Assistant `2025.9.1` or newer.
+- Home Assistant `2026.8.0` or newer.
 - HACS, if installing through the Home Assistant Community Store.
 - Home Assistant OS or Supervised Home Assistant for ESPHome add-on and Device
   Builder tools. These tools require Supervisor.
@@ -49,7 +49,7 @@ Builder tools need Supervisor.
 
 This repository is release-backed for HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v0.1.7`, which is the version HACS displays. Do not install a
+`v0.1.8`, which is the version HACS displays. Do not install a
 seven-character commit version such as `99cdab0`. If HACS has cached an old
 commit-only entry, refresh the custom repository before installing.
 

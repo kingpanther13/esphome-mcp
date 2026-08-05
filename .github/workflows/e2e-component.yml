@@ -37,6 +37,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          versions="$(
+            python3 -c 'from tests.haos_image_build.build_image import HAOS_VERSION, HA_CORE_VERSION; print(HAOS_VERSION, HA_CORE_VERSION)'
+          )"
+          read -r haos_version ha_core_version <<< "$versions"
           esphome_addon_config="$(
             gh api \
               -H "Accept: application/vnd.github.raw" \
@@ -49,8 +53,10 @@ jobs:
             printf '%s\n' "$esphome_addon_config" \
               | awk '/^version:/{gsub(/"/, "", $2); print $2; exit}'
           )"
-          if [ -z "$esphome_version" ]; then
-            echo "Failed to parse ESPHome Device Builder add-on version" >&2
+          version_pattern='^v?[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?([.-][0-9A-Za-z]+)*$'
+          if [[ ! "$esphome_version" =~ $version_pattern ]]; then
+            printf 'Invalid ESPHome Device Builder add-on version: %s\n' \
+              "$esphome_version" >&2
             exit 1
           fi
           hacs_addon_config="$(
@@ -62,8 +68,8 @@ jobs:
             printf '%s' "$hacs_addon_config" | sha256sum | cut -d' ' -f1 | head -c16
           )"
           hacs_version="$(gh api repos/hacs/integration/releases/latest --jq '.tag_name')"
-          if [ -z "$hacs_version" ]; then
-            echo "Failed to resolve the latest HACS release" >&2
+          if [[ ! "$hacs_version" =~ $version_pattern ]]; then
+            printf 'Invalid latest HACS release: %s\n' "$hacs_version" >&2
             exit 1
           fi
           hash=$(git ls-tree -r HEAD \
@@ -77,11 +83,15 @@ jobs:
                 echo "hacs-release:$hacs_version"
               } \
             | sha256sum | cut -d' ' -f1 | head -c16)
-          echo "cache-key=esphome-mcp-haos-image-$hash" >> "$GITHUB_OUTPUT"
-          echo "esphome-addon-hash=$esphome_addon_hash" >> "$GITHUB_OUTPUT"
-          echo "esphome-version=$esphome_version" >> "$GITHUB_OUTPUT"
-          echo "hacs-addon-hash=$hacs_addon_hash" >> "$GITHUB_OUTPUT"
-          echo "hacs-version=$hacs_version" >> "$GITHUB_OUTPUT"
+          printf 'cache-key=%s\n' \
+            "esphome-mcp-haos-${haos_version}-core-${ha_core_version}-$hash" \
+            >> "$GITHUB_OUTPUT"
+          printf 'haos-version=%s\n' "$haos_version" >> "$GITHUB_OUTPUT"
+          printf 'ha-core-version=%s\n' "$ha_core_version" >> "$GITHUB_OUTPUT"
+          printf 'esphome-addon-hash=%s\n' "$esphome_addon_hash" >> "$GITHUB_OUTPUT"
+          printf 'esphome-version=%s\n' "$esphome_version" >> "$GITHUB_OUTPUT"
+          printf 'hacs-addon-hash=%s\n' "$hacs_addon_hash" >> "$GITHUB_OUTPUT"
+          printf 'hacs-version=%s\n' "$hacs_version" >> "$GITHUB_OUTPUT"
 
       - name: Restore image from cache
         id: restore-cache
@@ -91,8 +101,19 @@ jobs:
           key: ${{ steps.key.outputs.cache-key }}
 
       - name: Report image acquisition path
+        env:
+          CACHE_HIT: ${{ steps.restore-cache.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.key.outputs.cache-key }}
+          HAOS_VERSION: ${{ steps.key.outputs.haos-version }}
+          HA_CORE_VERSION: ${{ steps.key.outputs.ha-core-version }}
+          ESPHOME_ADDON_HASH: ${{ steps.key.outputs.esphome-addon-hash }}
+          ESPHOME_VERSION: ${{ steps.key.outputs.esphome-version }}
+          HACS_ADDON_HASH: ${{ steps.key.outputs.hacs-addon-hash }}
+          HACS_VERSION: ${{ steps.key.outputs.hacs-version }}
         run: |
-          echo "::notice title=HAOS image cache::cache-hit=${{ steps.restore-cache.outputs.cache-hit }} key=${{ steps.key.outputs.cache-key }} esphome-addon-hash=${{ steps.key.outputs.esphome-addon-hash }} esphome-version=${{ steps.key.outputs.esphome-version }} hacs-addon-hash=${{ steps.key.outputs.hacs-addon-hash }} hacs-version=${{ steps.key.outputs.hacs-version }}"
+          printf '::notice title=HAOS image cache::cache-hit=%s key=%s haos=%s core=%s esphome-addon-hash=%s esphome-version=%s hacs-addon-hash=%s hacs-version=%s\n' \
+            "$CACHE_HIT" "$CACHE_KEY" "$HAOS_VERSION" "$HA_CORE_VERSION" \
+            "$ESPHOME_ADDON_HASH" "$ESPHOME_VERSION" "$HACS_ADDON_HASH" "$HACS_VERSION"
 
       - name: Install QEMU, OVMF, and libguestfs
         run: |
@@ -149,7 +170,9 @@ jobs:
           key: ${{ steps.key.outputs.cache-key }}
 
       - name: Install test dependencies
-        run: python -m pip install -e ".[dev,host-e2e]" "esphome==${{ steps.key.outputs.esphome-version }}"
+        env:
+          ESPHOME_VERSION: ${{ steps.key.outputs.esphome-version }}
+        run: python -m pip install -e ".[dev,host-e2e]" "esphome==$ESPHOME_VERSION"
 
       - name: Confirm image present
         run: ls -lh /tmp/haos-test-image.qcow2
@@ -169,7 +192,9 @@ jobs:
         run: |
           sudo chmod +r /boot/vmlinuz-* || true
           mkdir -p /tmp/haos-embedded-diagnostics
+          cp /tmp/haos-build/haos-serial.log /tmp/haos-embedded-diagnostics/bake-serial.log 2>/dev/null || true
           img=/tmp/haos-test-image.qcow2
+          [ -f "$img" ] || img=/tmp/haos-build/haos-test-image.qcow2
           if [ -f "$img" ]; then
             outdir=/tmp/haos-embedded-diagnostics/base
             mkdir -p "$outdir"
