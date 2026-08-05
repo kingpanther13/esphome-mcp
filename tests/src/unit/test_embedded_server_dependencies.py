@@ -387,9 +387,9 @@ def test_runtime_requirement_map_excludes_optional_extras(monkeypatch: Any) -> N
     """Only active base dependencies participate in installed-peer parity."""
     module = _load_embedded_server(monkeypatch)
 
-    assert module._requirement_spec_map(
-        ["fastmcp==3.4.5", "pytest==9.0.2; extra == 'dev'"]
-    ) == {"fastmcp": "fastmcp==3.4.5"}
+    assert module._requirement_spec_map(["fastmcp==3.4.5", "pytest==9.0.2; extra == 'dev'"]) == {
+        "fastmcp": "fastmcp==3.4.5"
+    }
 
 
 def test_dependency_probe_does_not_import_runtime_packages(monkeypatch: Any) -> None:

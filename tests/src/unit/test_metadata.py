@@ -191,7 +191,7 @@ def test_release_metadata_validation_accepts_manifest_version() -> None:
     assert validate_release_metadata("v0.1.8") == []
 
 
-@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.8"])
+@pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.7"])
 def test_release_metadata_validation_rejects_bad_versions(version: str) -> None:
     """The release guard rejects the short-commit path that broke HACS installs."""
     errors = validate_release_metadata(version)

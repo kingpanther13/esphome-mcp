@@ -158,7 +158,7 @@ def test_runtime_constants_reject_stable_ha_mcp_release_ref(tmp_path: Path) -> N
         'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"\n'
         'HA_MCP_COMPAT_REF = "v7.12.3"\n'
         'HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)\n'
-        'SHARED_RUNTIME_REQUIREMENTS = (DEFAULT_PIP_SPEC,)\n'
+        "SHARED_RUNTIME_REQUIREMENTS = (DEFAULT_PIP_SPEC,)\n"
     )
 
     assert sandbox.validate_runtime_constants(const) == ["HA_MCP_COMPAT_REF must be 'master'"]
@@ -172,7 +172,7 @@ def test_runtime_constants_reject_esphome_websockets_requirement(tmp_path: Path)
         'DEFAULT_PIP_SPEC = "fastmcp==3.4.5"\n'
         'HA_MCP_COMPAT_REF = "master"\n'
         'HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)\n'
-        'SHARED_RUNTIME_REQUIREMENTS = ('
+        "SHARED_RUNTIME_REQUIREMENTS = ("
         '"websockets>=15.0.1,<18", DEFAULT_PIP_SPEC)\n'
     )
 

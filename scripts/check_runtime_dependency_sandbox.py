@@ -232,9 +232,7 @@ def validate_runtime_constants(const_path: Path = CONST_PATH) -> list[str]:
     shared_by_name = _requirement_map(shared)
     ha_owned = _constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS")
     if ha_owned != ("websockets",):
-        errors.append(
-            "HA_OWNED_RUNTIME_REQUIREMENTS must contain only 'websockets'"
-        )
+        errors.append("HA_OWNED_RUNTIME_REQUIREMENTS must contain only 'websockets'")
     if len(shared_by_name) != len(shared):
         errors.append("SHARED_RUNTIME_REQUIREMENTS must contain unique valid requirements")
     if shared_by_name.get("fastmcp") != pip_spec:
@@ -303,8 +301,7 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
     ]
     uses_shared_requirements = any(
         any(
-            isinstance(descendant, ast.Name)
-            and descendant.id == "SHARED_RUNTIME_REQUIREMENTS"
+            isinstance(descendant, ast.Name) and descendant.id == "SHARED_RUNTIME_REQUIREMENTS"
             for descendant in ast.walk(call)
         )
         for call in process_calls
@@ -332,9 +329,7 @@ def validate_ha_mcp_shared_requirements(
     local = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
     if local is None:
         return ["SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings"]
-    ha_owned = set(
-        _constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS") or ()
-    )
+    ha_owned = set(_constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS") or ())
     upstream_shared = {
         name: spec for name, spec in upstream_by_name.items() if name not in ha_owned
     }

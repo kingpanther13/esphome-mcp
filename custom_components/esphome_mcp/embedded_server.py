@@ -257,9 +257,7 @@ class EmbeddedServerManager:
         peer_conflicts: list[str] = []
         for distribution, distribution_specs in peer_specs.items():
             peer_shared_specs = {
-                name: spec
-                for name, spec in distribution_specs.items()
-                if name not in ha_owned
+                name: spec for name, spec in distribution_specs.items() if name not in ha_owned
             }
             for name in sorted(local_specs.keys() | peer_shared_specs.keys()):
                 local_spec = local_specs.get(name)
