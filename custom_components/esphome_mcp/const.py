@@ -13,7 +13,7 @@ BIND_HOST_LOOPBACK = "127.0.0.1"
 # ha-mcp's embedded server pattern. FastMCP is process-global inside HA Core, so
 # this pin must match the current ha-mcp master branch used by ha_mcp_tools.
 HA_MCP_COMPAT_REF = "master"
-DEFAULT_PIP_SPEC = "fastmcp==3.4.5"  # renovate: datasource=pypi depName=fastmcp
+DEFAULT_PIP_SPEC = "fastmcp==3.4.7"  # renovate: datasource=pypi depName=fastmcp
 
 # Shared in-process requirements must stay aligned with ha-mcp. Home Assistant
 # Core already owns websockets, so it is deliberately absent: FastMCP accepts
