@@ -101,8 +101,7 @@ def _prebind_oauth_views(hass: HomeAssistant, entry: ConfigEntry) -> None:
         if auth_mode == WEBHOOK_AUTH_HA:
             raise
         _LOGGER.exception(
-            "Failed to prebind none-mode OAuth routes; continuing setup as "
-            "a plain secret-URL proxy"
+            "Failed to prebind none-mode OAuth routes; continuing setup as a plain secret-URL proxy"
         )
 
 
