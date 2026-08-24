@@ -79,6 +79,7 @@ class EmbeddedServerManager:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event: asyncio.Event | None = None
         self._thread_exc: BaseException | None = None
+        self._fastmcp_version: str | None = None
 
     @property
     def port(self) -> int:
@@ -89,6 +90,11 @@ class EmbeddedServerManager:
     def is_running(self) -> bool:
         """Return True while the worker thread is alive."""
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def fastmcp_version(self) -> str | None:
+        """Return the resolved FastMCP generation used by this manager."""
+        return self._fastmcp_version
 
     async def async_start(self) -> None:
         """Start the server thread."""
@@ -369,6 +375,7 @@ class EmbeddedServerManager:
                     kind="restart",
                 )
             self._pip_spec = peer_spec
+            self._fastmcp_version = installed_version
             self._store_effective_pip_spec()
             return
 
@@ -376,6 +383,7 @@ class EmbeddedServerManager:
         if importable and _version_satisfies_requirement(
             installed_version, STANDALONE_FASTMCP_SPEC
         ):
+            self._fastmcp_version = installed_version
             self._store_effective_pip_spec()
             return
 
@@ -415,6 +423,7 @@ class EmbeddedServerManager:
                 f"not satisfy {self._pip_spec}.",
                 kind="package",
             )
+        self._fastmcp_version = installed_version
         self._store_effective_pip_spec()
 
     def _store_effective_pip_spec(self) -> None:

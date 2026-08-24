@@ -46,6 +46,10 @@ Use one process-wide FastMCP runtime with explicit ownership:
    Assistant restart before ESPHome MCP starts, preventing mixed generations.
 6. Only a cold or unloaded standalone runtime may be installed or repaired,
    through Home Assistant's public `async_process_requirements` API.
+7. ESPHome MCP does not modify HA-MCP or claim control over its installer. An
+   operator must stop the standalone ESPHome server before installing, enabling,
+   updating, or reloading HA-MCP, then restart Home Assistant before starting
+   both integrations.
 
 The local compatibility range deliberately admits HA-MCP's previous 3.4.6 pin,
 its current 3.4.7 pin, and later compatible FastMCP 3.x releases. A future
@@ -97,8 +101,11 @@ mirrored or compared because the peer-owned path never installs them.
 Renovate no longer edits the production FastMCP requirement. Instead it tracks
 an exact pin in `tests/fastmcp_canary.txt`. Each FastMCP release opens a canary
 PR that installs that release, smoke-tests the API used by ESPHome MCP, and
-triggers the peer-free HAOS E2E. The production range remains a compatibility
-policy while dependency releases still receive an automatic CI event.
+triggers the peer-free HAOS E2E. The canary participates in the HAOS image cache
+key, and `esp_overview` reports the resolved runtime version so E2E proves the
+guest actually used the canary release. The production range remains a
+compatibility policy while dependency releases still receive an automatic CI
+event.
 
 ## Failure Handling
 
@@ -116,6 +123,9 @@ policy while dependency releases still receive an automatic CI event.
 - Installed version violates the peer requirement: restart/compatibility error.
 - Cached FastMCP version or origin differs from installed metadata: restart
   error before the ESPHome worker starts.
+- HA-MCP is installed, enabled, updated, or reloaded after a standalone ESPHome
+  worker starts: stop ESPHome MCP and restart Home Assistant before using either
+  shared runtime; ESPHome MCP intentionally does not patch HA-MCP's installer.
 - Loaded standalone version is outside the supported range or has incomplete
   imports: restart error and no mutation.
 - Cold standalone install fails or produces an incompatible version: package
@@ -130,6 +140,7 @@ standalone installation, cached-versus-installed generation drift, package
 provenance, duplicate peer declarations, and post-install validation. Sandbox
 tests cover the bounded constant, installer argument, and HA-MCP 3.4.6/3.4.7
 compatibility. Renovate's canary PR adds an exact-release FastMCP smoke test.
+HAOS E2E also asserts that the running server reports the exact canary version.
 
 GitHub CI remains the integration authority: Ruff, unit tests, metadata checks,
 the fetched HA-MCP compatibility gate, ESPHome host-device E2E, and HAOS embedded

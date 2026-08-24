@@ -52,6 +52,7 @@ READY_POLL_S = 5
 DEVICE_BUILDER_CONFIG_TIMEOUT_S = 180
 FIRMWARE_JOB_TIMEOUT_S = 120
 PERSISTENT_NOTIFICATION_ID = "esphome_mcp_server_connect"
+FASTMCP_CANARY_PATH = Path(__file__).resolve().parents[3] / "fastmcp_canary.txt"
 
 EXPECTED_ESP_TOOLS = {
     "esp_overview",
@@ -70,6 +71,18 @@ EXPECTED_ESP_TOOLS = {
     "esp_get_firmware_job",
     "esp_follow_firmware_job",
 }
+
+
+def _fastmcp_canary_version() -> str:
+    """Return the exact FastMCP release this E2E run must resolve."""
+    active = [
+        line.strip()
+        for line in FASTMCP_CANARY_PATH.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert len(active) == 1 and active[0].startswith("fastmcp=="), active
+    return active[0].partition("==")[2]
+
 
 E2E_DEVICE_NAME = "ESP MCP E2E"
 E2E_CONFIGURATION = "esp-mcp-e2e.yaml"
@@ -713,6 +726,7 @@ class TestEmbeddedServerOnHaos:
 
         assert payload["success"] is True
         assert payload["mcp_domain"] == "esphome_mcp"
+        assert payload["fastmcp_version"] == _fastmcp_canary_version()
         assert "device_count" in payload
 
     def test_local_brand_icon_uses_home_assistant_authenticated_proxy(

@@ -195,6 +195,7 @@ def test_enabled_peer_task_is_awaited_and_adopted_without_install(monkeypatch: A
 
     assert process_calls == []
     assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.7"}
+    assert manager.fastmcp_version == "3.4.7"
 
 
 def test_cancelling_esphome_wait_does_not_cancel_peer_bringup(monkeypatch: Any) -> None:
@@ -289,6 +290,7 @@ def test_inactive_installed_peer_is_adopted_without_install(monkeypatch: Any) ->
 
     assert process_calls == []
     assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.6"}
+    assert manager.fastmcp_version == "3.4.6"
 
 
 def test_ambiguous_peer_distributions_fail_without_install(monkeypatch: Any) -> None:
@@ -502,6 +504,7 @@ def test_compatible_standalone_runtime_is_reused_without_install(monkeypatch: An
     assert hass.config_entries.updated == {
         module.DATA_LAST_PIP_SPEC: module.STANDALONE_FASTMCP_SPEC
     }
+    assert manager.fastmcp_version == "3.4.7"
 
 
 def test_disabled_peer_entry_without_distribution_uses_standalone(

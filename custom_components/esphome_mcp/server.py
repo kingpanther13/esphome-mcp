@@ -24,7 +24,7 @@ from .addon_tools import (
     search_device_builder_yaml,
     write_device_builder_config,
 )
-from .const import DOMAIN, VERSION
+from .const import DATA_MANAGER, DOMAIN, VERSION
 
 
 class EspHomeMCPServer:
@@ -674,11 +674,14 @@ def _matches_optional(value: Any, expected: str | None) -> bool:
 async def _async_overview(hass: HomeAssistant) -> dict[str, Any]:
     """Build the overview payload on the Home Assistant event loop."""
     snapshot = await _async_snapshot(hass)
+    domain_data = hass.data.get(DOMAIN, {})
+    manager = domain_data.get(DATA_MANAGER) if isinstance(domain_data, dict) else None
     return {
         "success": True,
         "integration_domain": "esphome",
         "mcp_domain": DOMAIN,
         "server_version": VERSION,
+        "fastmcp_version": getattr(manager, "fastmcp_version", None),
         "config_entry_count": len(snapshot["config_entries"]),
         "device_count": len(snapshot["devices"]),
         "entity_count": len(snapshot["entities"]),

@@ -135,7 +135,11 @@ def test_mcp_server_registers_every_current_esp_tool(
     """The public MCP registration includes every current ESPHome tool."""
     module = _load_server_module(monkeypatch)
 
-    server = module.EspHomeMCPServer(SimpleNamespace(loop=None))
+    hass = SimpleNamespace(
+        loop=None,
+        data={module.DOMAIN: {module.DATA_MANAGER: SimpleNamespace(fastmcp_version="3.4.7")}},
+    )
+    server = module.EspHomeMCPServer(hass)
 
     assert set(server.mcp.tools) == EXPECTED_ESP_TOOLS
     assert server.mcp.kwargs["name"] == "esphome-mcp"
@@ -200,7 +204,11 @@ def test_ha_search_tools_filter_snapshot_and_report_overview(
 
     monkeypatch.setattr(module, "_async_snapshot", async_snapshot)
 
-    server = module.EspHomeMCPServer(SimpleNamespace(loop=None))
+    hass = SimpleNamespace(
+        loop=None,
+        data={module.DOMAIN: {module.DATA_MANAGER: SimpleNamespace(fastmcp_version="3.4.7")}},
+    )
+    server = module.EspHomeMCPServer(hass)
     tools = server.mcp.tools
 
     overview = _run(tools["esp_overview"].func())
@@ -236,6 +244,7 @@ def test_ha_search_tools_filter_snapshot_and_report_overview(
         "integration_domain": "esphome",
         "mcp_domain": module.DOMAIN,
         "server_version": module.VERSION,
+        "fastmcp_version": "3.4.7",
         "config_entry_count": 1,
         "device_count": 2,
         "entity_count": 3,

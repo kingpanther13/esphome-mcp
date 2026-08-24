@@ -75,6 +75,7 @@ jobs:
           hash=$(git ls-tree -r HEAD \
             tests/haos_image_build \
             tests/initial_test_state \
+            tests/fastmcp_canary.txt \
             custom_components/esphome_mcp \
             | {
                 cat

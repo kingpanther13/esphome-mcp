@@ -178,6 +178,12 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "printf '::notice title=HAOS image cache::" in workflow
     assert "/tmp/haos-build/haos-serial.log" in workflow
     assert "img=/tmp/haos-build/haos-test-image.qcow2" in workflow
+    cache_hash = workflow[
+        workflow.index("hash=$(git ls-tree") : workflow.index(
+            "| sha256sum", workflow.index("hash=$(git ls-tree")
+        )
+    ]
+    assert "tests/fastmcp_canary.txt" in cache_hash
 
     seed_config = (INITIAL_TEST_STATE / "configuration.yaml").read_text()
     assert "\nhttp:" not in seed_config
@@ -505,3 +511,4 @@ def test_embedded_e2e_module_tracks_expected_webhook_and_tool_names() -> None:
     assert "MCPServerUnavailableError" in source
     assert 'assert "<your-home-assistant-url>" not in connect_url' in source
     assert 'assert "Home Assistant URL unavailable" not in connect_url' in source
+    assert 'assert payload["fastmcp_version"] == _fastmcp_canary_version()' in source

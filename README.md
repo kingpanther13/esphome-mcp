@@ -150,6 +150,10 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
   FastMCP release through the peer-free CI/E2E path. A loaded version or package
   origin mismatch is rejected; restart Home Assistant after either integration
   updates shared runtime packages before reloading the other MCP integration.
+  ESPHome MCP cannot control another integration's installer, so do not install,
+  enable, update, or reload HA-MCP while the standalone ESPHome MCP server entry
+  is running; disable that entry first, then restart Home Assistant before
+  starting both integrations.
 
 ## Testing
 
