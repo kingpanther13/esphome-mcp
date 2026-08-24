@@ -10,6 +10,8 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -30,7 +32,6 @@ def _install_homeassistant_stubs(
     config_entries_mod.ConfigEntry = object
     core_mod = ModuleType("homeassistant.core")
     core_mod.HomeAssistant = object
-
     req_mod = ModuleType("homeassistant.requirements")
 
     async def default_async_process_requirements(*_args: Any, **_kwargs: Any) -> None:
@@ -45,7 +46,6 @@ def _install_homeassistant_stubs(
     monkeypatch.setitem(sys.modules, "homeassistant.config_entries", config_entries_mod)
     monkeypatch.setitem(sys.modules, "homeassistant.core", core_mod)
     monkeypatch.setitem(sys.modules, "homeassistant.requirements", req_mod)
-
     return requirements_not_found
 
 
@@ -67,18 +67,23 @@ class _FakeConfig:
 
 
 class _FakeConfigEntries:
-    def __init__(self) -> None:
+    def __init__(self, entries: list[Any] | None = None) -> None:
         self.updated: dict[str, Any] | None = None
+        self.entries = entries or []
 
     def async_update_entry(self, entry: Any, *, data: dict[str, Any]) -> None:
         self.updated = data
         entry.data = data
 
+    def async_entries(self, _domain: str) -> list[Any]:
+        return self.entries
+
 
 class _FakeHass:
-    def __init__(self) -> None:
+    def __init__(self, entries: list[Any] | None = None) -> None:
         self.config = _FakeConfig()
-        self.config_entries = _FakeConfigEntries()
+        self.config_entries = _FakeConfigEntries(entries)
+        self.data: dict[str, Any] = {}
 
     async def async_add_executor_job(self, func: Any, *args: Any) -> Any:
         return func(*args)
@@ -88,136 +93,41 @@ def _run(coro: Any) -> Any:
     return asyncio.run(coro)
 
 
-def test_dependency_fast_path_uses_home_assistant_requirements(monkeypatch: Any) -> None:
-    """An already-recorded importable dependency goes through HA's requirement manager."""
-    process_calls: list[tuple[str, list[str], bool]] = []
-
-    async def async_process_requirements(
-        _hass: Any,
-        label: str,
-        requirements: list[str],
-        *,
-        is_built_in: bool,
-    ) -> None:
-        process_calls.append((label, requirements, is_built_in))
-
-    module = _load_embedded_server(
-        monkeypatch,
-        async_process_requirements=async_process_requirements,
-    )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
-    peer_requirements = module._requirement_spec_map(module.SHARED_RUNTIME_REQUIREMENTS)
-    peer_requirements["websockets"] = "websockets==17.0"
-    monkeypatch.setattr(
-        module,
-        "_installed_peer_runtime_specs",
-        lambda: {"ha-mcp": peer_requirements},
-    )
-    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
-
-    entry = SimpleNamespace(
-        data={module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC},
-        options={"pip_spec": "fastmcp==0.0.1"},
-    )
-    manager = module.EmbeddedServerManager(_FakeHass(), entry)
-
-    _run(manager._async_ensure_package())
-
-    assert process_calls == [
-        (
-            "ESPHome MCP server (fastmcp==3.4.5)",
-            list(module.SHARED_RUNTIME_REQUIREMENTS),
-            False,
-        )
-    ]
+def _peer_entry(*, disabled_by: str | None = None) -> Any:
+    return SimpleNamespace(data={"entry_type": "server"}, disabled_by=disabled_by)
 
 
-def test_missing_dependency_uses_ha_requirements_manager(monkeypatch: Any) -> None:
-    """Missing dependencies are installed through HA's requirement manager."""
-    process_calls: list[tuple[str, list[str], bool]] = []
-    importable = iter([False, True])
-
-    async def async_process_requirements(
-        _hass: Any,
-        label: str,
-        requirements: list[str],
-        *,
-        is_built_in: bool,
-    ) -> None:
-        process_calls.append((label, requirements, is_built_in))
-
-    module = _load_embedded_server(
-        monkeypatch,
-        async_process_requirements=async_process_requirements,
-    )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: next(importable))
-    versions = iter([None, "3.4.5"])
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: next(versions))
-    monkeypatch.setattr(module, "_installed_peer_runtime_specs", lambda: {})
-    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
-
-    hass = _FakeHass()
-    entry = SimpleNamespace(data={}, options={"pip_spec": "fastmcp==0.0.1"})
-    manager = module.EmbeddedServerManager(hass, entry)
-
-    _run(manager._async_ensure_package())
-
-    assert process_calls == [
-        (
-            "ESPHome MCP server (fastmcp==3.4.5)",
-            list(module.SHARED_RUNTIME_REQUIREMENTS),
-            False,
-        )
-    ]
-    assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC}
-
-
-def test_changed_code_pin_forces_install_when_runtime_is_not_loaded(
+def _configure_runtime(
     monkeypatch: Any,
+    module: ModuleType,
+    *,
+    version: str | None,
+    peer_specs: dict[str, str | None],
+    importable: bool = True,
+    loaded: bool = False,
 ) -> None:
-    """A code pin change delegates the replacement to HA's requirement manager."""
-    process_calls: list[tuple[str, list[str], bool]] = []
+    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: version)
+    monkeypatch.setattr(module, "_installed_peer_fastmcp_specs", lambda: peer_specs)
+    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: importable)
+    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: loaded)
 
-    async def async_process_requirements(
-        _hass: Any,
-        label: str,
-        requirements: list[str],
-        *,
-        is_built_in: bool,
-    ) -> None:
-        process_calls.append((label, requirements, is_built_in))
 
-    module = _load_embedded_server(
-        monkeypatch,
-        async_process_requirements=async_process_requirements,
+def test_supported_range_accepts_current_and_announced_ha_mcp_pins(monkeypatch: Any) -> None:
+    """HA-MCP patch updates inside FastMCP 3.x do not require lockstep releases."""
+    module = _load_embedded_server(monkeypatch)
+
+    assert module._version_satisfies_requirement("3.4.6", module.STANDALONE_FASTMCP_SPEC)
+    assert module._version_satisfies_requirement("3.4.7", module.STANDALONE_FASTMCP_SPEC)
+    assert not module._version_satisfies_requirement(
+        "3.4.4", module.STANDALONE_FASTMCP_SPEC
     )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    versions = iter(["3.4.3", "3.4.5"])
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: next(versions))
-    monkeypatch.setattr(module, "_installed_peer_runtime_specs", lambda: {})
-    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
-
-    hass = _FakeHass()
-    entry = SimpleNamespace(data={module.DATA_LAST_PIP_SPEC: "fastmcp==0.0.1"}, options={})
-    manager = module.EmbeddedServerManager(hass, entry)
-
-    _run(manager._async_ensure_package())
-
-    assert process_calls == [
-        (
-            "ESPHome MCP server (fastmcp==3.4.5)",
-            list(module.SHARED_RUNTIME_REQUIREMENTS),
-            False,
-        )
-    ]
-    assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC}
+    assert not module._version_satisfies_requirement(
+        "4.0.0", module.STANDALONE_FASTMCP_SPEC
+    )
 
 
-def test_matching_installed_pin_repairs_stale_marker_without_reinstall(
-    monkeypatch: Any,
-) -> None:
-    """Matching on-disk FastMCP is reused even when the entry marker is stale."""
+def test_enabled_peer_task_is_awaited_and_adopted_without_install(monkeypatch: Any) -> None:
+    """ESPHome waits for HA-MCP ownership instead of racing its package install."""
     process_calls: list[list[str]] = []
 
     async def async_process_requirements(
@@ -231,27 +141,301 @@ def test_matching_installed_pin_repairs_stale_marker_without_reinstall(
         process_calls.append(requirements)
 
     module = _load_embedded_server(
-        monkeypatch,
-        async_process_requirements=async_process_requirements,
+        monkeypatch, async_process_requirements=async_process_requirements
     )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
-    monkeypatch.setattr(module, "_installed_peer_runtime_specs", lambda: {})
-    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: True)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.7",
+        peer_specs={"ha-mcp": "fastmcp==3.4.7"},
+        loaded=True,
+    )
+    hass = _FakeHass([_peer_entry()])
+    entry = SimpleNamespace(data={}, options={})
+    manager = module.EmbeddedServerManager(hass, entry)
 
+    async def scenario() -> None:
+        release = asyncio.Event()
+        peer_manager = SimpleNamespace(is_running=False)
+
+        async def bring_up_peer() -> None:
+            await release.wait()
+            peer_manager.is_running = True
+
+        ensure_task = asyncio.create_task(manager._async_ensure_package())
+        await asyncio.sleep(0)
+        assert not ensure_task.done()
+        peer_task = asyncio.create_task(bring_up_peer())
+        hass.data[module.HA_MCP_DOMAIN] = {
+            module.HA_MCP_BRINGUP_TASK_KEY: peer_task,
+            module.HA_MCP_MANAGER_KEY: peer_manager,
+        }
+        release.set()
+        await ensure_task
+        assert not peer_task.cancelled()
+
+    _run(scenario())
+
+    assert process_calls == []
+    assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.7"}
+
+
+def test_cancelling_esphome_wait_does_not_cancel_peer_bringup(monkeypatch: Any) -> None:
+    """ESPHome unload protects HA-MCP's independently owned background task."""
+    module = _load_embedded_server(monkeypatch)
+    hass = _FakeHass([_peer_entry()])
+    manager = module.EmbeddedServerManager(hass, SimpleNamespace(data={}, options={}))
+
+    async def scenario() -> None:
+        release = asyncio.Event()
+        peer_task = asyncio.create_task(release.wait())
+        hass.data[module.HA_MCP_DOMAIN] = {
+            module.HA_MCP_BRINGUP_TASK_KEY: peer_task,
+            module.HA_MCP_MANAGER_KEY: SimpleNamespace(is_running=False),
+        }
+        wait_task = asyncio.create_task(manager._async_wait_for_ha_mcp_owner())
+        await asyncio.sleep(0)
+        wait_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await wait_task
+        assert not peer_task.cancelled()
+        peer_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await peer_task
+
+    _run(scenario())
+
+
+def test_failed_enabled_peer_never_falls_back_to_install(monkeypatch: Any) -> None:
+    """A failed HA-MCP owner is surfaced without a competing ESPHome install."""
+    process_calls: list[list[str]] = []
+
+    async def async_process_requirements(
+        _hass: Any,
+        _label: str,
+        requirements: list[str],
+        *,
+        is_built_in: bool,
+    ) -> None:
+        assert is_built_in is False
+        process_calls.append(requirements)
+
+    module = _load_embedded_server(
+        monkeypatch, async_process_requirements=async_process_requirements
+    )
+    _configure_runtime(monkeypatch, module, version=None, peer_specs={}, importable=False)
+    hass = _FakeHass([_peer_entry()])
+    manager = module.EmbeddedServerManager(hass, SimpleNamespace(data={}, options={}))
+
+    async def scenario() -> None:
+        peer_task = asyncio.create_task(asyncio.sleep(0))
+        hass.data[module.HA_MCP_DOMAIN] = {
+            module.HA_MCP_BRINGUP_TASK_KEY: peer_task,
+            module.HA_MCP_MANAGER_KEY: SimpleNamespace(is_running=False),
+        }
+        with pytest.raises(module.EmbeddedServerError) as exc:
+            await manager._async_ensure_package()
+        assert exc.value.kind == "package"
+        assert "did not start its runtime" in str(exc.value)
+
+    _run(scenario())
+    assert process_calls == []
+
+
+def test_inactive_installed_peer_is_adopted_without_install(monkeypatch: Any) -> None:
+    """Installed HA-MCP metadata remains authoritative while its entry is inactive."""
+    process_calls: list[list[str]] = []
+
+    async def async_process_requirements(
+        _hass: Any,
+        _label: str,
+        requirements: list[str],
+        *,
+        is_built_in: bool,
+    ) -> None:
+        assert is_built_in is False
+        process_calls.append(requirements)
+
+    module = _load_embedded_server(
+        monkeypatch, async_process_requirements=async_process_requirements
+    )
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.6",
+        peer_specs={"ha-mcp": "fastmcp==3.4.6"},
+    )
+    hass = _FakeHass([_peer_entry(disabled_by="user")])
+    manager = module.EmbeddedServerManager(hass, SimpleNamespace(data={}, options={}))
+
+    _run(manager._async_ensure_package())
+
+    assert process_calls == []
+    assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.6"}
+
+
+def test_ambiguous_peer_distributions_fail_without_install(monkeypatch: Any) -> None:
+    """Stable and dev HA-MCP distributions cannot both claim the shared runtime."""
+    module = _load_embedded_server(monkeypatch)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.7",
+        peer_specs={"ha-mcp": "fastmcp==3.4.7", "ha-mcp-dev": "fastmcp==3.4.7"},
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        _run(manager._async_ensure_package())
+
+    assert exc.value.kind == "package"
+    assert "Both ha-mcp and ha-mcp-dev are installed" in str(exc.value)
+
+
+def test_peer_without_fastmcp_declaration_fails_without_install(monkeypatch: Any) -> None:
+    """A peer-owned graph with no declared FastMCP contract is never guessed."""
+    module = _load_embedded_server(monkeypatch)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.7",
+        peer_specs={"ha-mcp": None},
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        _run(manager._async_ensure_package())
+
+    assert exc.value.kind == "package"
+    assert "does not declare a FastMCP requirement" in str(exc.value)
+
+
+def test_peer_pin_outside_supported_range_requires_compatible_updates(
+    monkeypatch: Any,
+) -> None:
+    """FastMCP major-version adoption remains an explicit compatibility decision."""
+    module = _load_embedded_server(monkeypatch)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="4.0.0",
+        peer_specs={"ha-mcp": "fastmcp==4.0.0"},
+        loaded=True,
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        _run(manager._async_ensure_package())
+
+    assert exc.value.kind == "restart"
+    assert "outside ESPHome MCP's supported range" in str(exc.value)
+
+
+def test_installed_version_must_satisfy_peer_requirement(monkeypatch: Any) -> None:
+    """Peer metadata cannot mask a torn or incomplete dependency update."""
+    module = _load_embedded_server(monkeypatch)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.6",
+        peer_specs={"ha-mcp": "fastmcp==3.4.7"},
+        loaded=True,
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        _run(manager._async_ensure_package())
+
+    assert exc.value.kind == "restart"
+    assert "does not satisfy ha-mcp requirement fastmcp==3.4.7" in str(exc.value)
+
+
+def test_compatible_standalone_runtime_is_reused_without_install(monkeypatch: Any) -> None:
+    """A compatible preinstalled FastMCP remains untouched when HA-MCP is absent."""
+    process_calls: list[list[str]] = []
+
+    async def async_process_requirements(
+        _hass: Any,
+        _label: str,
+        requirements: list[str],
+        *,
+        is_built_in: bool,
+    ) -> None:
+        assert is_built_in is False
+        process_calls.append(requirements)
+
+    module = _load_embedded_server(
+        monkeypatch, async_process_requirements=async_process_requirements
+    )
+    _configure_runtime(monkeypatch, module, version="3.4.7", peer_specs={}, loaded=True)
     hass = _FakeHass()
-    entry = SimpleNamespace(data={module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.3"}, options={})
+    entry = SimpleNamespace(data={module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.5"}, options={})
     manager = module.EmbeddedServerManager(hass, entry)
 
     _run(manager._async_ensure_package())
 
-    assert process_calls == [list(module.SHARED_RUNTIME_REQUIREMENTS)]
-    assert hass.config_entries.updated == {module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.5"}
+    assert process_calls == []
+    assert hass.config_entries.updated == {
+        module.DATA_LAST_PIP_SPEC: module.STANDALONE_FASTMCP_SPEC
+    }
 
 
-def test_loaded_shared_fastmcp_mismatch_refuses_reinstall_and_preserves_modules(
+def test_disabled_peer_entry_without_distribution_uses_standalone(
     monkeypatch: Any,
 ) -> None:
+    """A disabled HA-MCP entry does not block a peer-free standalone runtime."""
+    module = _load_embedded_server(monkeypatch)
+    _configure_runtime(monkeypatch, module, version="3.4.6", peer_specs={})
+    hass = _FakeHass([_peer_entry(disabled_by="user")])
+    manager = module.EmbeddedServerManager(hass, SimpleNamespace(data={}, options={}))
+
+    _run(manager._async_ensure_package())
+
+    assert hass.config_entries.updated == {
+        module.DATA_LAST_PIP_SPEC: module.STANDALONE_FASTMCP_SPEC
+    }
+
+
+def test_cold_standalone_runtime_uses_bounded_requirement(monkeypatch: Any) -> None:
+    """Only a peer-free cold runtime invokes HA's requirement manager."""
+    process_calls: list[tuple[str, list[str], bool]] = []
+    importable = iter([False, True])
+    versions = iter([None, "3.4.7"])
+
+    async def async_process_requirements(
+        _hass: Any,
+        label: str,
+        requirements: list[str],
+        *,
+        is_built_in: bool,
+    ) -> None:
+        process_calls.append((label, requirements, is_built_in))
+
+    module = _load_embedded_server(
+        monkeypatch, async_process_requirements=async_process_requirements
+    )
+    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: next(importable))
+    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: next(versions))
+    monkeypatch.setattr(module, "_installed_peer_fastmcp_specs", lambda: {})
+    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
+    hass = _FakeHass()
+    manager = module.EmbeddedServerManager(hass, SimpleNamespace(data={}, options={}))
+
+    _run(manager._async_ensure_package())
+
+    assert process_calls == [
+        (
+            "ESPHome MCP server (fastmcp>=3.4.5,<4)",
+            ["fastmcp>=3.4.5,<4"],
+            False,
+        )
+    ]
+    assert hass.config_entries.updated == {
+        module.DATA_LAST_PIP_SPEC: module.STANDALONE_FASTMCP_SPEC
+    }
+
+
+def test_loaded_incompatible_standalone_runtime_is_preserved(monkeypatch: Any) -> None:
     """A running FastMCP consumer is never evicted or overwritten in-process."""
     process_calls: list[list[str]] = []
 
@@ -266,187 +450,44 @@ def test_loaded_shared_fastmcp_mismatch_refuses_reinstall_and_preserves_modules(
         process_calls.append(requirements)
 
     module = _load_embedded_server(
-        monkeypatch,
-        async_process_requirements=async_process_requirements,
+        monkeypatch, async_process_requirements=async_process_requirements
     )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.2")
-    monkeypatch.setattr(module, "_installed_peer_runtime_specs", lambda: {})
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.4",
+        peer_specs={},
+        loaded=True,
+    )
     fastmcp_module = ModuleType("fastmcp")
-    fastmcp_server_module = ModuleType("fastmcp.server")
     monkeypatch.setitem(sys.modules, "fastmcp", fastmcp_module)
-    monkeypatch.setitem(sys.modules, "fastmcp.server", fastmcp_server_module)
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
 
-    hass = _FakeHass()
-    entry = SimpleNamespace(data={module.DATA_LAST_PIP_SPEC: "fastmcp==3.4.2"}, options={})
-    manager = module.EmbeddedServerManager(hass, entry)
-
-    try:
+    with pytest.raises(module.EmbeddedServerError) as exc:
         _run(manager._async_ensure_package())
-    except module.EmbeddedServerError as err:
-        assert err.kind == "restart"
-        assert "Refusing to replace the shared runtime" in str(err)
-        assert "restart Home Assistant" in str(err)
-    else:
-        raise AssertionError("EmbeddedServerError was not raised")
 
+    assert exc.value.kind == "restart"
+    assert "Refusing to replace the shared runtime" in str(exc.value)
     assert process_calls == []
     assert sys.modules["fastmcp"] is fastmcp_module
-    assert sys.modules["fastmcp.server"] is fastmcp_server_module
-    assert hass.config_entries.updated is None
 
 
-def test_mismatched_ha_mcp_requirement_refuses_cold_downgrade(monkeypatch: Any) -> None:
-    """A peer package pin mismatch blocks pip even before FastMCP is imported."""
-    process_calls: list[list[str]] = []
-
-    async def async_process_requirements(
-        _hass: Any,
-        _label: str,
-        requirements: list[str],
-        *,
-        is_built_in: bool,
-    ) -> None:
-        assert is_built_in is False
-        process_calls.append(requirements)
-
-    module = _load_embedded_server(
-        monkeypatch,
-        async_process_requirements=async_process_requirements,
-    )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
-    peer_requirements = module._requirement_spec_map(module.SHARED_RUNTIME_REQUIREMENTS)
-    peer_requirements["fastmcp"] = "fastmcp==3.4.4"
-    peer_requirements["websockets"] = "websockets==17.0"
-    monkeypatch.setattr(
-        module,
-        "_installed_peer_runtime_specs",
-        lambda: {"ha-mcp": peer_requirements},
-    )
-    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
-
-    hass = _FakeHass()
-    entry = SimpleNamespace(data={}, options={})
-    manager = module.EmbeddedServerManager(hass, entry)
-
-    try:
-        _run(manager._async_ensure_package())
-    except module.EmbeddedServerError as err:
-        assert err.kind == "restart"
-        assert "ha-mcp requires fastmcp==3.4.4" in str(err)
-        assert "Refusing to replace a peer integration's shared dependencies" in str(err)
-    else:
-        raise AssertionError("EmbeddedServerError was not raised")
-
-    assert process_calls == []
-    assert hass.config_entries.updated is None
-
-
-def test_asymmetric_ha_mcp_requirements_warn_without_blocking(monkeypatch: Any) -> None:
-    """Peer-only or local-only requirements cannot cause a torn shared install."""
-    process_calls: list[list[str]] = []
-    warnings: list[str] = []
-
-    async def async_process_requirements(
-        _hass: Any,
-        _label: str,
-        requirements: list[str],
-        *,
-        is_built_in: bool,
-    ) -> None:
-        assert is_built_in is False
-        process_calls.append(requirements)
-
-    module = _load_embedded_server(
-        monkeypatch,
-        async_process_requirements=async_process_requirements,
-    )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
-    peer_requirements = module._requirement_spec_map(module.SHARED_RUNTIME_REQUIREMENTS)
-    peer_requirements.pop("truststore")
-    peer_requirements["peer-only"] = "peer-only==1.0"
-    monkeypatch.setattr(
-        module,
-        "_installed_peer_runtime_specs",
-        lambda: {"ha-mcp": peer_requirements},
-    )
-    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
-    monkeypatch.setattr(
-        module._LOGGER,
-        "warning",
-        lambda message, *args: warnings.append(message % args),
-    )
-
-    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
-    _run(manager._async_ensure_package())
-
-    assert process_calls == [list(module.SHARED_RUNTIME_REQUIREMENTS)]
-    assert len(warnings) == 1
-    assert "ha-mcp requires peer-only==1.0" in warnings[0]
-    assert "ha-mcp does not declare ESPHome MCP requirement truststore==0.10.4" in warnings[0]
-
-
-def test_install_that_does_not_produce_required_version_fails_closed(
-    monkeypatch: Any,
-) -> None:
-    """A successful pip exit cannot mask a stale or conflicting installed wheel."""
+def test_install_result_outside_supported_range_fails_closed(monkeypatch: Any) -> None:
+    """A successful installer exit cannot mask an incompatible resolver result."""
     module = _load_embedded_server(monkeypatch)
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    versions = iter([None, "3.4.2"])
+    importable = iter([False, True])
+    versions = iter([None, "4.0.0"])
+    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: next(importable))
     monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: next(versions))
-    monkeypatch.setattr(module, "_installed_peer_runtime_specs", lambda: {})
+    monkeypatch.setattr(module, "_installed_peer_fastmcp_specs", lambda: {})
     monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
 
-    hass = _FakeHass()
-    entry = SimpleNamespace(data={}, options={})
-    manager = module.EmbeddedServerManager(hass, entry)
-
-    try:
+    with pytest.raises(module.EmbeddedServerError) as exc:
         _run(manager._async_ensure_package())
-    except module.EmbeddedServerError as err:
-        assert err.kind == "package"
-        assert "version 3.4.2 does not match the required version 3.4.5" in str(err)
-    else:
-        raise AssertionError("EmbeddedServerError was not raised")
 
-    assert hass.config_entries.updated is None
-
-
-def test_runtime_rejects_non_exact_fastmcp_spec(monkeypatch: Any) -> None:
-    """Defense in depth rejects an unpinned requirement even outside CI."""
-    module = _load_embedded_server(monkeypatch)
-
-    for spec in ("fastmcp", "fastmcp>=3.4.3", "fastmcp==3.4.3,<4"):
-        try:
-            module._pinned_fastmcp_version(spec)
-        except module.EmbeddedServerError as err:
-            assert err.kind == "package"
-            assert "must be an exact FastMCP pin" in str(err)
-        else:
-            raise AssertionError(f"EmbeddedServerError was not raised for {spec!r}")
-
-
-def test_runtime_requirement_map_excludes_optional_extras(monkeypatch: Any) -> None:
-    """Only active base dependencies participate in installed-peer parity."""
-    module = _load_embedded_server(monkeypatch)
-
-    assert module._requirement_spec_map(["fastmcp==3.4.5", "pytest==9.0.2; extra == 'dev'"]) == {
-        "fastmcp": "fastmcp==3.4.5"
-    }
-
-
-def test_runtime_requirement_compatibility_ignores_extras(monkeypatch: Any) -> None:
-    """Extras drift cannot be mistaken for an incompatible installed version."""
-    module = _load_embedded_server(monkeypatch)
-
-    assert module._shared_requirement_specs_compatible(
-        "httpx", "httpx[socks]==0.28.1", "httpx==0.28.1"
-    )
-    assert not module._shared_requirement_specs_compatible(
-        "httpx", "httpx[socks]==0.28.1", "httpx==0.27.2"
-    )
+    assert exc.value.kind == "package"
+    assert "does not satisfy fastmcp>=3.4.5,<4" in str(exc.value)
 
 
 def test_stateless_http_server_does_not_enable_uvicorn_websockets(monkeypatch: Any) -> None:
@@ -516,7 +557,7 @@ def test_stateless_http_server_does_not_enable_uvicorn_websockets(monkeypatch: A
 
 
 def test_dependency_probe_does_not_import_runtime_packages(monkeypatch: Any) -> None:
-    """Import checks do not cache stale FastMCP modules before forced installs."""
+    """Import checks do not cache stale FastMCP modules before installs."""
     module = _load_embedded_server(monkeypatch)
     original_import = builtins.__import__
 
@@ -549,24 +590,14 @@ def test_requirement_install_failure_raises_package_error(monkeypatch: Any) -> N
         async_process_requirements=async_process_requirements,
         requirements_not_found=requirements_not_found,
     )
-    monkeypatch.setattr(module, "_server_dependencies_importable", lambda: True)
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.5")
-    monkeypatch.setattr(module, "_installed_peer_runtime_specs", lambda: {})
-    monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
+    _configure_runtime(monkeypatch, module, version=None, peer_specs={}, importable=False)
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
 
-    entry = SimpleNamespace(
-        data={module.DATA_LAST_PIP_SPEC: module.DEFAULT_PIP_SPEC},
-        options={},
-    )
-    manager = module.EmbeddedServerManager(_FakeHass(), entry)
-
-    try:
+    with pytest.raises(module.EmbeddedServerError) as exc:
         _run(manager._async_ensure_package())
-    except module.EmbeddedServerError as err:
-        assert err.kind == "package"
-        assert "fastmcp==3.4.5" in str(err)
-    else:
-        raise AssertionError("EmbeddedServerError was not raised")
+
+    assert exc.value.kind == "package"
+    assert "fastmcp>=3.4.5,<4" in str(exc.value)
 
 
 def test_module_lock_deadlock_is_retried_then_import_succeeds(monkeypatch: Any) -> None:
@@ -617,13 +648,10 @@ def test_non_deadlock_runtime_error_is_never_retried(monkeypatch: Any) -> None:
         lambda _delay: (_ for _ in ()).throw(AssertionError("must not sleep")),
     )
 
-    try:
+    with pytest.raises(RuntimeError) as exc:
         module._import_server_runtime_with_retry()
-    except RuntimeError as err:
-        assert err is failure
-    else:
-        raise AssertionError("RuntimeError was not raised")
 
+    assert exc.value is failure
     assert calls == ["uvicorn"]
 
 
@@ -639,15 +667,12 @@ def test_repeated_module_lock_deadlocks_require_restart(monkeypatch: Any) -> Non
     monkeypatch.setattr(module.time, "sleep", sleeps.append)
     monkeypatch.setattr(module, "_IMPORT_DEADLOCK_RETRY_DELAYS_SECONDS", (0.1, 0.2))
 
-    try:
+    with pytest.raises(module.EmbeddedServerError) as exc:
         module._import_server_runtime_with_retry()
-    except module.EmbeddedServerError as err:
-        assert err.kind == "restart"
-        assert "repeatedly collided" in str(err)
-        assert isinstance(err.__cause__, RuntimeError)
-    else:
-        raise AssertionError("EmbeddedServerError was not raised")
 
+    assert exc.value.kind == "restart"
+    assert "repeatedly collided" in str(exc.value)
+    assert isinstance(exc.value.__cause__, RuntimeError)
     assert sleeps == [0.1, 0.2]
 
 
