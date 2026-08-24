@@ -49,7 +49,7 @@ Builder tools need Supervisor.
 
 This repository is release-backed for HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v0.1.9`, which is the version HACS displays. Do not install a
+`v1.0.0`, which is the version HACS displays. Do not install a
 seven-character commit version such as `99cdab0`. If HACS has cached an old
 commit-only entry, refresh the custom repository before installing.
 
@@ -68,10 +68,16 @@ https://<your-home-assistant-url>/api/webhook/<webhook-secret>
 ```
 
 The default webhook mode treats that URL as the credential. Keep it private.
+For MCP clients that probe OAuth during setup, ESPHome MCP also publishes its
+own component-scoped discovery, dynamic registration, and invisible PKCE
+authorize/token endpoints. That compatibility flow requires no Home Assistant
+login; its token is cosmetic because the secret URL remains the credential.
 
 The options flow can switch webhook access to Home Assistant `ha_auth`. Clients
 that support MCP OAuth/protected-resource discovery can then sign in with a Home
-Assistant administrator account.
+Assistant administrator account. The scoped endpoints follow HA-MCP's current
+DCR/CIMD translation, refresh-token envelope, and revocation behavior while
+Home Assistant core remains the authorization authority.
 
 Direct LAN access is also available when the server is bound to `0.0.0.0`:
 

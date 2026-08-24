@@ -1,7 +1,7 @@
 """Constants for the ESPHome MCP custom component."""
 
 DOMAIN = "esphome_mcp"
-VERSION = "0.1.9"
+VERSION = "1.0.0"
 
 DEFAULT_SERVER_PORT = 9590
 DEFAULT_BIND_HOST = "0.0.0.0"
@@ -29,6 +29,7 @@ OPT_ENABLE_PERSISTENT_NOTIFICATION = "enable_persistent_notification"
 
 DATA_WEBHOOK_ID = "webhook_id"
 DATA_SECRET_PATH = "secret_path"
+DATA_DCR_SIGNING_KEY = "dcr_signing_key"
 DATA_MANAGER = "manager"
 DATA_WEBHOOK = "webhook"
 DATA_BRINGUP_TASK = "bringup_task"
