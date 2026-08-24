@@ -31,7 +31,7 @@ LOG = logging.getLogger("haos_image_build")
 # renovate: datasource=github-releases depName=home-assistant/operating-system
 HAOS_VERSION = "18.2"
 # renovate: datasource=github-releases depName=home-assistant/core
-HA_CORE_VERSION = "2026.8.0"
+HA_CORE_VERSION = "2026.8.3"
 HAOS_QCOW2_URL = (
     f"https://github.com/home-assistant/operating-system/releases/download/"
     f"{HAOS_VERSION}/haos_ova-{HAOS_VERSION}.qcow2.xz"
