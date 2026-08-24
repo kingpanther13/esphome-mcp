@@ -119,6 +119,16 @@ def test_standalone_runtime_is_bounded_to_compatible_fastmcp_3x() -> None:
     assert Version("3.4.5") in parsed.specifier
     assert Version("3.4.7") in parsed.specifier
     assert Version("4.0.0") not in parsed.specifier
+    canary_lines = [
+        line.strip()
+        for line in (ROOT / "tests" / "fastmcp_canary.txt").read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    assert len(canary_lines) == 1
+    canary = Requirement(canary_lines[0])
+    assert canary.name == "fastmcp"
+    assert Version("3.4.7") in canary.specifier
+    assert all(Version(spec.version) in parsed.specifier for spec in canary.specifier)
     assert json.loads((ROOT / "hacs.json").read_text())["homeassistant"] == "2026.8.0"
 
 
@@ -322,7 +332,8 @@ def test_repository_maintenance_scaffolding_exists() -> None:
 
     assert (github_dir / "dependabot.yml").is_file()
     assert (ROOT / "renovate.json").is_file()
-    assert "fastmcp" not in (ROOT / "renovate.json").read_text().lower()
+    assert (ROOT / "tests" / "fastmcp_canary.txt").is_file()
+    assert "fastmcp" in (ROOT / "renovate.json").read_text().lower()
     assert (workflows_dir / "renovate.yml").is_file()
     assert (workflows_dir / "close-inactive-issues.yml").is_file()
     assert (github_dir / "pull_request_template.md").is_file()
@@ -354,14 +365,14 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
     assert "schedule" not in renovate
-    assert len(renovate["customManagers"]) == 2
+    assert len(renovate["customManagers"]) == 3
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "home-assistant/core" in json.dumps(renovate)
-    assert "fastmcp" not in json.dumps(renovate).lower()
+    assert "fastmcp" in json.dumps(renovate).lower()
     assert "homeassistant-ai/ha-mcp" not in json.dumps(renovate)
     assert "aioesphomeapi" in dependabot
     assert "esphome" in dependabot
-    assert "custom_components/esphome_mcp/const" not in json.dumps(renovate)
+    assert "tests/fastmcp_canary" in json.dumps(renovate)
     assert 'cron: "0 9 * * 4"' in renovate_workflow
     assert "configurationFile:" not in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
@@ -369,6 +380,12 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
 
     managers = {manager["depNameTemplate"]: manager for manager in renovate["customManagers"]}
     expected = {
+        "fastmcp": (
+            "pypi",
+            "/^tests/fastmcp_canary\\.txt$/",
+            (ROOT / "tests" / "fastmcp_canary.txt").read_text(),
+            "3.4.7",
+        ),
         "home-assistant/operating-system": (
             "github-releases",
             "/^tests/haos_image_build/build_image\\.py$/",
@@ -401,6 +418,11 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     ):
         matches = list(re.finditer(pattern.replace("(?<", "(?P<"), source))
         assert [match.groupdict() for match in matches] == [{"currentValue": "2026.8.0"}]
+
+    pr_workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
+    assert "name: FastMCP Standalone Canary" in pr_workflow
+    assert "tests/fastmcp_canary.txt" in pr_workflow
+    assert "scripts/check_fastmcp_canary.py" in pr_workflow
 
 
 def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:

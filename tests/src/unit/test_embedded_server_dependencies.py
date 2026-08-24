@@ -105,11 +105,32 @@ def _configure_runtime(
     peer_specs: dict[str, str | None],
     importable: bool = True,
     loaded: bool = False,
+    loaded_version: str | None = None,
+    loaded_origin: str | None = None,
+    installed_origin: str | None = None,
 ) -> None:
+    default_origin = "/config/deps/fastmcp/__init__.py"
     monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: version)
     monkeypatch.setattr(module, "_installed_peer_fastmcp_specs", lambda: peer_specs)
     monkeypatch.setattr(module, "_server_dependencies_importable", lambda: importable)
     monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: loaded)
+    monkeypatch.setattr(
+        module,
+        "_loaded_fastmcp_fingerprint",
+        lambda: (
+            (
+                loaded_version if loaded_version is not None else version,
+                loaded_origin if loaded_origin is not None else default_origin,
+            )
+            if loaded
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        module,
+        "_installed_fastmcp_origin",
+        lambda: installed_origin if installed_origin is not None else default_origin,
+    )
 
 
 def test_supported_range_accepts_current_and_announced_ha_mcp_pins(monkeypatch: Any) -> None:
@@ -344,6 +365,113 @@ def test_installed_version_must_satisfy_peer_requirement(monkeypatch: Any) -> No
 
     assert exc.value.kind == "restart"
     assert "does not satisfy ha-mcp requirement fastmcp==3.4.7" in str(exc.value)
+
+
+def test_loaded_peer_runtime_must_match_newer_installed_metadata(monkeypatch: Any) -> None:
+    """A peer update cannot mix cached old modules with newly installed files."""
+    module = _load_embedded_server(monkeypatch)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.7",
+        peer_specs={"ha-mcp": "fastmcp==3.4.7"},
+        loaded=True,
+        loaded_version="3.4.6",
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        _run(manager._async_ensure_package())
+
+    assert exc.value.kind == "restart"
+    assert "loaded FastMCP 3.4.6" in str(exc.value)
+    assert "installed FastMCP 3.4.7" in str(exc.value)
+
+
+def test_loaded_peer_runtime_must_match_installed_provenance(monkeypatch: Any) -> None:
+    """A shadowed FastMCP module is not accepted as the installed peer runtime."""
+    module = _load_embedded_server(monkeypatch)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        version="3.4.7",
+        peer_specs={"ha-mcp": "fastmcp==3.4.7"},
+        loaded=True,
+        loaded_origin="/config/custom_components/shadow/fastmcp/__init__.py",
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        _run(manager._async_ensure_package())
+
+    assert exc.value.kind == "restart"
+    assert "loaded FastMCP 3.4.7" in str(exc.value)
+    assert "does not match installed package metadata" in str(exc.value)
+
+
+def test_duplicate_active_peer_fastmcp_requirements_fail_closed(monkeypatch: Any) -> None:
+    """Multiple active peer declarations cannot be reduced to the first one."""
+    module = _load_embedded_server(monkeypatch)
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        module._declared_fastmcp_spec(
+            ["fastmcp>=3.4.5", "fastmcp<4"],
+            distribution="ha-mcp",
+        )
+
+    assert exc.value.kind == "package"
+    assert "multiple active FastMCP requirements" in str(exc.value)
+
+
+def test_peer_fastmcp_metadata_uses_only_active_marker(monkeypatch: Any) -> None:
+    """Inactive platform declarations do not make peer ownership ambiguous."""
+    module = _load_embedded_server(monkeypatch)
+
+    assert (
+        module._declared_fastmcp_spec(
+            [
+                'fastmcp==3.4.6; python_version < "3"',
+                'fastmcp==3.4.7; python_version >= "3"',
+                "malformed=>requirement",
+            ],
+            distribution="ha-mcp",
+        )
+        == "fastmcp==3.4.7"
+    )
+
+
+def test_loaded_fastmcp_fingerprint_reads_cached_module_without_import(
+    monkeypatch: Any,
+) -> None:
+    """The loaded generation comes from the existing root module only."""
+    module = _load_embedded_server(monkeypatch)
+    fastmcp_module = ModuleType("fastmcp")
+    fastmcp_module.__version__ = "3.4.6"
+    fastmcp_module.__file__ = "/config/deps/fastmcp/__init__.py"
+    monkeypatch.setitem(sys.modules, "fastmcp", fastmcp_module)
+
+    assert module._loaded_fastmcp_fingerprint() == (
+        "3.4.6",
+        "/config/deps/fastmcp/__init__.py",
+    )
+
+
+def test_installed_fastmcp_origin_comes_from_slim_distribution(monkeypatch: Any) -> None:
+    """Package provenance follows the distribution that owns the import tree."""
+    module = _load_embedded_server(monkeypatch)
+    distribution = SimpleNamespace(
+        files=(Path("fastmcp/__init__.py"),),
+        locate_file=lambda installed_file: Path("/config/deps") / installed_file,
+    )
+
+    def get_distribution(name: str) -> Any:
+        if name == "fastmcp-slim":
+            return distribution
+        raise module.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(module.metadata, "distribution", get_distribution)
+
+    assert module._installed_fastmcp_origin() == "/config/deps/fastmcp/__init__.py"
 
 
 def test_compatible_standalone_runtime_is_reused_without_install(monkeypatch: Any) -> None:

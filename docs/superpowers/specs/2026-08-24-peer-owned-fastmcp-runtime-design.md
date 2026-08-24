@@ -41,7 +41,10 @@ Use one process-wide FastMCP runtime with explicit ownership:
    owns a standalone `fastmcp>=3.4.5,<4` requirement.
 4. Any already-installed FastMCP version that satisfies the effective
    requirement and resolves with Uvicorn is reused without an installer call.
-5. Only a cold or unloaded standalone runtime may be installed or repaired,
+5. Any cached FastMCP root module must expose the same version and file origin
+   as the installed `fastmcp-slim` distribution. A mismatch requires a Home
+   Assistant restart before ESPHome MCP starts, preventing mixed generations.
+6. Only a cold or unloaded standalone runtime may be installed or repaired,
    through Home Assistant's public `async_process_requirements` API.
 
 The local compatibility range deliberately admits HA-MCP's previous 3.4.6 pin,
@@ -60,15 +63,18 @@ ESPHome MCP worker thread starts:
 3. Read distribution metadata for `ha-mcp` and `ha-mcp-dev`. More than one peer
    distribution is an ambiguous owner and fails closed. A peer distribution
    that does not declare FastMCP also fails closed.
-4. Read the installed FastMCP version without importing it and check that the
-   server modules resolve.
-5. For a peer-owned runtime, require the installed version to satisfy both the
+4. Read the installed FastMCP version and package origin without importing it,
+   check that the server modules resolve, and fingerprint any cached root
+   module through its existing `__version__` and `__file__` attributes.
+5. If cached code cannot be proven to match the installed version and origin,
+   require a Home Assistant restart before doing any further runtime work.
+6. For a peer-owned runtime, require the installed version to satisfy both the
    peer requirement and ESPHome MCP's supported range. Record the peer's
    effective FastMCP requirement and skip the Home Assistant installer.
-6. For a standalone runtime, reuse a compatible installed version. If no
+7. For a standalone runtime, reuse a compatible installed version. If no
    compatible runtime is loaded, ask Home Assistant to process only the bounded
    standalone FastMCP requirement, then recheck imports and version constraints.
-7. If an incompatible or incomplete FastMCP runtime is already loaded, refuse
+8. If an incompatible or incomplete FastMCP runtime is already loaded, refuse
    in-process replacement and surface the existing restart repair issue.
 
 Waiting for HA-MCP uses `asyncio.shield`: unloading ESPHome MCP may cancel its
@@ -88,9 +94,11 @@ FastMCP requirement, and verifies an exact upstream pin falls inside ESPHome
 MCP's supported range. Other HA-MCP direct dependencies are intentionally not
 mirrored or compared because the peer-owned path never installs them.
 
-Renovate no longer opens FastMCP pin PRs for ESPHome MCP. The bounded range is a
-compatibility policy, not an update target. HA-MCP compatibility CI and HAOS E2E
-detect when that policy needs to change.
+Renovate no longer edits the production FastMCP requirement. Instead it tracks
+an exact pin in `tests/fastmcp_canary.txt`. Each FastMCP release opens a canary
+PR that installs that release, smoke-tests the API used by ESPHome MCP, and
+triggers the peer-free HAOS E2E. The production range remains a compatibility
+policy while dependency releases still receive an automatic CI event.
 
 ## Failure Handling
 
@@ -100,10 +108,14 @@ detect when that policy needs to change.
   error, with no fallback install.
 - Both `ha-mcp` and `ha-mcp-dev` installed: package error identifying ambiguous
   ownership.
+- Multiple active FastMCP declarations from one peer: package error identifying
+  ambiguous ownership.
 - Peer requirement missing or incompatible with ESPHome MCP's supported range:
   restart/compatibility error instructing the operator to update the
   integrations.
 - Installed version violates the peer requirement: restart/compatibility error.
+- Cached FastMCP version or origin differs from installed metadata: restart
+  error before the ESPHome worker starts.
 - Loaded standalone version is outside the supported range or has incomplete
   imports: restart error and no mutation.
 - Cold standalone install fails or produces an incompatible version: package
@@ -114,8 +126,10 @@ detect when that policy needs to change.
 Unit tests cover peer task waiting, cancellation shielding, peer adoption with
 3.4.6 and 3.4.7, inactive installed-peer adoption, ambiguous peers, incompatible
 peer and loaded standalone versions, compatible standalone reuse, cold
-standalone installation, and post-install validation. Sandbox tests cover the
-bounded constant, installer argument, and HA-MCP 3.4.6/3.4.7 compatibility.
+standalone installation, cached-versus-installed generation drift, package
+provenance, duplicate peer declarations, and post-install validation. Sandbox
+tests cover the bounded constant, installer argument, and HA-MCP 3.4.6/3.4.7
+compatibility. Renovate's canary PR adds an exact-release FastMCP smoke test.
 
 GitHub CI remains the integration authority: Ruff, unit tests, metadata checks,
 the fetched HA-MCP compatibility gate, ESPHome host-device E2E, and HAOS embedded

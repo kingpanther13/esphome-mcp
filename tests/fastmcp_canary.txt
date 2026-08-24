@@ -1,0 +1,4 @@
+# Renovate opens a PR for each FastMCP release. That PR runs the standalone
+# smoke test and the peer-free HAOS E2E before this canary advances.
+# renovate: datasource=pypi depName=fastmcp
+fastmcp==3.4.7

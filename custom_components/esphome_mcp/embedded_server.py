@@ -314,6 +314,28 @@ class EmbeddedServerManager:
         installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
         shared_runtime_loaded = await self._hass.async_add_executor_job(_fastmcp_runtime_loaded)
+        if shared_runtime_loaded:
+            loaded_fingerprint = await self._hass.async_add_executor_job(
+                _loaded_fastmcp_fingerprint
+            )
+            installed_origin = await self._hass.async_add_executor_job(_installed_fastmcp_origin)
+            if not _loaded_fastmcp_matches_install(
+                loaded_fingerprint,
+                installed_version,
+                installed_origin,
+            ):
+                loaded_version, loaded_origin = loaded_fingerprint or (None, None)
+                raise EmbeddedServerError(
+                    "The loaded FastMCP "
+                    f"{loaded_version or 'version is unknown'} from "
+                    f"{loaded_origin or 'an unknown location'} does not match "
+                    "installed package metadata (installed FastMCP "
+                    f"{installed_version or 'unknown'} at "
+                    f"{installed_origin or 'an unknown location'}). Refusing to "
+                    "mix process-global runtime generations; restart Home "
+                    "Assistant before starting ESPHome MCP.",
+                    kind="restart",
+                )
 
         if peer_entry_owner and peer_owner is None:
             raise EmbeddedServerError(
@@ -428,8 +450,13 @@ def _installed_fastmcp_version() -> str | None:
         return None
 
 
-def _declared_fastmcp_spec(requirements: list[str]) -> str | None:
+def _declared_fastmcp_spec(
+    requirements: list[str],
+    *,
+    distribution: str,
+) -> str | None:
     """Return one active, marker-free FastMCP requirement."""
+    active_specs: list[str] = []
     for requirement in requirements:
         try:
             parsed = Requirement(requirement)
@@ -438,8 +465,14 @@ def _declared_fastmcp_spec(requirements: list[str]) -> str | None:
         if parsed.marker is not None and not parsed.marker.evaluate({"extra": ""}):
             continue
         if canonicalize_name(parsed.name) == "fastmcp":
-            return requirement.partition(";")[0].strip()
-    return None
+            active_specs.append(requirement.partition(";")[0].strip())
+    if len(active_specs) > 1:
+        raise EmbeddedServerError(
+            f"Installed {distribution} declares multiple active FastMCP "
+            "requirements, so shared runtime ownership is ambiguous.",
+            kind="package",
+        )
+    return active_specs[0] if active_specs else None
 
 
 def _installed_peer_fastmcp_specs() -> dict[str, str | None]:
@@ -450,7 +483,10 @@ def _installed_peer_fastmcp_specs() -> dict[str, str | None]:
             requirements = metadata.requires(distribution) or []
         except metadata.PackageNotFoundError:
             continue
-        peer_specs[distribution] = _declared_fastmcp_spec(requirements)
+        peer_specs[distribution] = _declared_fastmcp_spec(
+            requirements,
+            distribution=distribution,
+        )
     return peer_specs
 
 
@@ -492,6 +528,53 @@ def _version_satisfies_requirement(version: str | None, requirement: str) -> boo
         and bool(parsed_requirement.specifier)
         and parsed_requirement.specifier.contains(parsed_version, prereleases=True)
     )
+
+
+def _loaded_fastmcp_fingerprint() -> tuple[str | None, str | None] | None:
+    """Return the cached FastMCP generation without importing or reloading it."""
+    if not _fastmcp_runtime_loaded():
+        return None
+    module = sys.modules.get("fastmcp")
+    if module is None:
+        return None, None
+    version = getattr(module, "__version__", None)
+    origin = getattr(module, "__file__", None)
+    return (
+        version if isinstance(version, str) and version else None,
+        os.path.realpath(origin) if isinstance(origin, str) and origin else None,
+    )
+
+
+def _installed_fastmcp_origin() -> str | None:
+    """Return the installed distribution path that owns fastmcp/__init__.py."""
+    for distribution_name in ("fastmcp-slim", "fastmcp"):
+        try:
+            distribution = metadata.distribution(distribution_name)
+        except metadata.PackageNotFoundError:
+            continue
+        for installed_file in distribution.files or ():
+            normalized = str(installed_file).replace("\\", "/")
+            if normalized == "fastmcp/__init__.py" or normalized.endswith("/fastmcp/__init__.py"):
+                return os.path.realpath(distribution.locate_file(installed_file))
+    return None
+
+
+def _loaded_fastmcp_matches_install(
+    loaded: tuple[str | None, str | None] | None,
+    installed_version: str | None,
+    installed_origin: str | None,
+) -> bool:
+    """Return whether cached FastMCP code matches current package metadata."""
+    if loaded is None or installed_version is None or installed_origin is None:
+        return False
+    loaded_version, loaded_origin = loaded
+    if loaded_version is None or loaded_origin is None:
+        return False
+    try:
+        versions_match = Version(loaded_version) == Version(installed_version)
+    except InvalidVersion:
+        return False
+    return versions_match and os.path.realpath(loaded_origin) == os.path.realpath(installed_origin)
 
 
 def _fastmcp_runtime_loaded() -> bool:

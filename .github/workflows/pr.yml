@@ -46,6 +46,19 @@ jobs:
           python scripts/check_runtime_dependency_sandbox.py \
             --ha-mcp-pyproject /tmp/ha-mcp-pyproject.toml
 
+  fastmcp-canary:
+    name: FastMCP Standalone Canary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install exact FastMCP canary
+        run: python -m pip install -r tests/fastmcp_canary.txt
+      - name: Smoke-test ESPHome MCP's standalone FastMCP API
+        run: python scripts/check_fastmcp_canary.py
+
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest

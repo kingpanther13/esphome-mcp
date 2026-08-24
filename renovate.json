@@ -12,6 +12,18 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
+        "/^tests/fastmcp_canary\\.txt$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=pypi depName=fastmcp\\s+fastmcp==(?<currentValue>\\d+\\.\\d+\\.\\d+(?:(?:a|b|rc)\\d+)?)"
+      ],
+      "depNameTemplate": "fastmcp",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "pep440"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
         "/^tests/haos_image_build/build_image\\.py$/"
       ],
       "matchStrings": [
@@ -37,6 +49,21 @@
     }
   ],
   "packageRules": [
+    {
+      "description": "FastMCP standalone release canary",
+      "matchDatasources": [
+        "pypi"
+      ],
+      "matchPackageNames": [
+        "fastmcp"
+      ],
+      "labels": [
+        "dependencies",
+        "python",
+        "compatibility",
+        "e2e"
+      ]
+    },
     {
       "description": "Home Assistant OS image version used by HAOS E2E",
       "matchDatasources": [

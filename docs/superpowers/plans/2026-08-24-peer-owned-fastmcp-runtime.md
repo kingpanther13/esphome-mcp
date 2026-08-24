@@ -4,7 +4,7 @@
 
 **Goal:** Make ESPHome MCP adopt HA-MCP's FastMCP dependency when present and use a bounded FastMCP 3.x standalone runtime otherwise.
 
-**Architecture:** The component detects an enabled HA-MCP server entry, waits for its background bring-up, and treats installed `ha-mcp` distribution metadata as authoritative. Only installations without a peer may invoke Home Assistant's requirement manager, and only with `fastmcp>=3.4.5,<4`; loaded incompatible runtimes always fail closed.
+**Architecture:** The component detects an enabled HA-MCP server entry, waits for its background bring-up, and treats installed `ha-mcp` distribution metadata as authoritative. Only installations without a peer may invoke Home Assistant's requirement manager, and only with `fastmcp>=3.4.5,<4`; loaded incompatible or metadata-mismatched runtimes always fail closed. A canary-only Renovate input triggers CI for each FastMCP release without editing the production requirement.
 
 **Tech Stack:** Python 3.13, Home Assistant config-entry APIs, `importlib.metadata`, `packaging`, pytest, Ruff, GitHub Actions, HAOS E2E.
 
@@ -237,23 +237,28 @@ git add scripts/check_runtime_dependency_sandbox.py tests/src/unit/test_runtime_
 git commit -m "ci: validate FastMCP compatibility range"
 ```
 
-### Task 4: Remove pin automation and release the behavior change
+### Task 4: Replace lockstep pin automation and release the behavior change
 
 **Files:**
 - Modify: `renovate.json`
+- Modify: `.github/workflows/pr.yml`
 - Modify: `README.md`
 - Modify: `pyproject.toml`
 - Modify: `custom_components/esphome_mcp/manifest.json`
 - Modify: `custom_components/esphome_mcp/const.py`
+- Add: `tests/fastmcp_canary.txt`
+- Add: `scripts/check_fastmcp_canary.py`
 
 **Interfaces:**
 - Consumes: The peer-owned runtime behavior from Tasks 2 and 3.
 - Produces: Release version `0.1.9` and user-facing ownership documentation.
 
-- [ ] **Step 1: Remove FastMCP Renovate automation**
+- [ ] **Step 1: Replace production-pin Renovate automation with a CI canary**
 
-Delete the custom manager that edits `DEFAULT_PIP_SPEC` and its FastMCP package
-rule. Keep the HAOS and Home Assistant Core managers unchanged.
+Delete the custom manager that edits `DEFAULT_PIP_SPEC`. Add a canary manager
+that edits only `tests/fastmcp_canary.txt`; its PR installs that exact release,
+smoke-tests the standalone API, and triggers peer-free HAOS E2E. Keep the HAOS
+and Home Assistant Core managers unchanged.
 
 - [ ] **Step 2: Update runtime documentation**
 
@@ -312,9 +317,10 @@ Expected: every command exits zero.
 
 - [ ] **Step 2: Audit the final diff and history**
 
-Confirm no `sys.modules` mutation, direct package installer, exact FastMCP pin,
-FastMCP Renovate manager, or unrelated file change remains. Confirm every commit
-uses `kingpanther13 <kingpanther13@users.noreply.github.com>`.
+Confirm no `sys.modules` mutation, direct package installer, production exact
+FastMCP pin, production-pin Renovate manager, or unrelated file change remains.
+Confirm the test-only canary remains and every commit uses
+`kingpanther13 <kingpanther13@users.noreply.github.com>`.
 
 - [ ] **Step 3: Verify GitHub identity and push**
 

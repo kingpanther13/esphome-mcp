@@ -146,8 +146,10 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
   When HA-MCP is installed, ESPHome MCP adopts HA-MCP's declared FastMCP runtime
   without invoking pip. Without HA-MCP, ESPHome MCP reuses or installs a
   compatible FastMCP 3.x runtime. CI checks the current HA-MCP `master` pin
-  against that supported range. Keep both integrations current and restart Home
-  Assistant after an incompatible shared-runtime change.
+  against that supported range, and a Renovate canary PR smoke-tests every new
+  FastMCP release through the peer-free CI/E2E path. A loaded version or package
+  origin mismatch is rejected; restart Home Assistant after either integration
+  updates shared runtime packages before reloading the other MCP integration.
 
 ## Testing
 
