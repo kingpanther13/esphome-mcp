@@ -8,23 +8,12 @@ DEFAULT_BIND_HOST = "0.0.0.0"
 BIND_HOST_ALL = "0.0.0.0"
 BIND_HOST_LOOPBACK = "127.0.0.1"
 
-# Installed at runtime when the in-process server entry is enabled. Keeping this
-# out of manifest.json lets HAOS boot with the baked entry disabled, matching
-# ha-mcp's embedded server pattern. FastMCP is process-global inside HA Core.
-# An installed ha-mcp distribution owns its declared runtime; this bounded range
-# is used only when ESPHome MCP is the standalone owner.
-HA_MCP_COMPAT_REF = "master"
-STANDALONE_FASTMCP_SPEC = "fastmcp>=3.4.5,<4"
-STANDALONE_RUNTIME_REQUIREMENTS = (STANDALONE_FASTMCP_SPEC,)
-
-# HA-MCP's public integration domain and stable server-entry runtime keys.
-# ESPHome MCP reads these values for startup ordering only; it never mutates
-# another integration's data.
+# HA-MCP's public integration domain. ESPHome MCP only reads the installed
+# component metadata; it never mutates another integration's data.
 HA_MCP_DOMAIN = "ha_mcp_tools"
 HA_MCP_ENTRY_TYPE_KEY = "entry_type"
 HA_MCP_SERVER_ENTRY_TYPE = "server"
 HA_MCP_BRINGUP_TASK_KEY = "bringup_task"
-HA_MCP_MANAGER_KEY = "manager"
 
 SERVER_CONFIG_SUBDIR = ".esphome_mcp"
 

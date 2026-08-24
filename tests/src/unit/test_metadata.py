@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
-from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
@@ -24,14 +23,14 @@ release_metadata = util.module_from_spec(RELEASE_METADATA_SPEC)
 RELEASE_METADATA_SPEC.loader.exec_module(release_metadata)
 validate_release_metadata = release_metadata.validate_release_metadata
 
-RUNTIME_CONST_SPEC = util.spec_from_file_location(
-    "esphome_mcp_runtime_const",
-    COMPONENT / "const.py",
+RUNTIME_CONTRACT_SPEC = util.spec_from_file_location(
+    "esphome_mcp_runtime_contract",
+    COMPONENT / "ha_mcp_runtime" / "contract.py",
 )
-assert RUNTIME_CONST_SPEC is not None
-assert RUNTIME_CONST_SPEC.loader is not None
-runtime_const = util.module_from_spec(RUNTIME_CONST_SPEC)
-RUNTIME_CONST_SPEC.loader.exec_module(runtime_const)
+assert RUNTIME_CONTRACT_SPEC is not None
+assert RUNTIME_CONTRACT_SPEC.loader is not None
+runtime_contract = util.module_from_spec(RUNTIME_CONTRACT_SPEC)
+RUNTIME_CONTRACT_SPEC.loader.exec_module(runtime_contract)
 
 
 def test_manifest_is_hacs_ready() -> None:
@@ -85,9 +84,6 @@ def test_server_defaults_are_scaffolded() -> None:
     server = (COMPONENT / "server.py").read_text()
 
     assert "DEFAULT_SERVER_PORT = 9590" in const
-    assert 'HA_MCP_COMPAT_REF = "master"' in const
-    assert 'STANDALONE_FASTMCP_SPEC = "fastmcp>=3.4.5,<4"' in const
-    assert "STANDALONE_RUNTIME_REQUIREMENTS = (STANDALONE_FASTMCP_SPEC,)" in const
     assert '"websockets>=' not in const
     assert '"websockets==' not in const
     assert "OPT_PIP_SPEC" not in const
@@ -110,25 +106,22 @@ def test_server_defaults_are_scaffolded() -> None:
     assert 'name="esp_follow_firmware_job"' in server
 
 
-def test_standalone_runtime_is_bounded_to_compatible_fastmcp_3x() -> None:
-    """Standalone installation owns only the supported FastMCP requirement."""
-    requirements = runtime_const.STANDALONE_RUNTIME_REQUIREMENTS
-    assert requirements == (runtime_const.STANDALONE_FASTMCP_SPEC,)
-    parsed = Requirement(requirements[0])
+def test_runtime_contract_mirrors_both_sides_of_ha_mcp_master() -> None:
+    """One immutable master snapshot owns server and component metadata."""
+    requirements = runtime_contract.HA_MCP_SERVER_REQUIREMENTS
+    parsed = Requirement(runtime_contract.HA_MCP_FASTMCP_REQUIREMENT)
     assert parsed.name == "fastmcp"
-    assert Version("3.4.5") in parsed.specifier
-    assert Version("3.4.7") in parsed.specifier
-    assert Version("4.0.0") not in parsed.specifier
-    canary_lines = [
-        line.strip()
-        for line in (ROOT / "tests" / "fastmcp_canary.txt").read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    assert len(canary_lines) == 1
-    canary = Requirement(canary_lines[0])
-    assert canary.name == "fastmcp"
-    assert Version("3.4.7") in canary.specifier
-    assert all(Version(spec.version) in parsed.specifier for spec in canary.specifier)
+    assert str(parsed.specifier) == "==3.4.7"
+    assert runtime_contract.HA_MCP_FASTMCP_REQUIREMENT in requirements
+    assert runtime_contract.HA_MCP_COMPONENT_REQUIREMENTS == (
+        "ruamel.yaml>=0.18.0",
+    )
+    assert runtime_contract.HA_MCP_COMPONENT_VERSION == "2.0.1"
+    assert len(runtime_contract.HA_MCP_MASTER_SHA) == 40
+    assert not any(
+        Requirement(requirement).name.lower() == "websockets"
+        for requirement in requirements
+    )
     assert json.loads((ROOT / "hacs.json").read_text())["homeassistant"] == "2026.8.0"
 
 
@@ -308,7 +301,7 @@ def test_pr_template_and_validation_supply_release_notes() -> None:
 
 
 def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> None:
-    """Both CI gates protect shared runtime state and upstream compatibility."""
+    """Both CI gates protect and regenerate the immutable upstream snapshot."""
     pr_workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text()
     sandbox = (ROOT / "scripts" / "check_runtime_dependency_sandbox.py").read_text()
@@ -316,12 +309,11 @@ def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> No
     for workflow in (pr_workflow, release_workflow):
         assert "Runtime dependency sandbox" in workflow
         assert "python scripts/check_runtime_dependency_sandbox.py" in workflow
-        assert "homeassistant-ai/ha-mcp/contents/pyproject.toml" in workflow
-        assert "--ha-mcp-pyproject" in workflow
+        assert "sync_ha_mcp_runtime_contract.py --contract-ref --check" in workflow
     assert "forbidden runtime dependency mutation" in sandbox
-    assert "outside ESPHome MCP supported range" in sandbox
-    assert "STANDALONE_RUNTIME_REQUIREMENTS" in sandbox
-    assert "HA_MCP_COMPAT_REF must be 'master'" in sandbox
+    assert "HA_MCP_SERVER_REQUIREMENTS" in sandbox
+    assert "HA_MCP_COMPONENT_REQUIREMENTS" in sandbox
+    assert "HA_MCP_MASTER_SHA must be one immutable" in sandbox
 
 
 def test_repository_maintenance_scaffolding_exists() -> None:
@@ -332,8 +324,8 @@ def test_repository_maintenance_scaffolding_exists() -> None:
 
     assert (github_dir / "dependabot.yml").is_file()
     assert (ROOT / "renovate.json").is_file()
-    assert (ROOT / "tests" / "fastmcp_canary.txt").is_file()
-    assert "fastmcp" in (ROOT / "renovate.json").read_text().lower()
+    assert (COMPONENT / "ha_mcp_runtime" / "contract.py").is_file()
+    assert (ROOT / "scripts" / "sync_ha_mcp_runtime_contract.py").is_file()
     assert (workflows_dir / "renovate.yml").is_file()
     assert (workflows_dir / "close-inactive-issues.yml").is_file()
     assert (github_dir / "pull_request_template.md").is_file()
@@ -365,27 +357,20 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
     assert "schedule" not in renovate
-    assert len(renovate["customManagers"]) == 3
+    assert len(renovate["customManagers"]) == 4
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "home-assistant/core" in json.dumps(renovate)
-    assert "fastmcp" in json.dumps(renovate).lower()
-    assert "homeassistant-ai/ha-mcp" not in json.dumps(renovate)
+    assert "tests/fastmcp_canary" not in json.dumps(renovate)
+    assert "https://github.com/homeassistant-ai/ha-mcp" in json.dumps(renovate)
     assert "aioesphomeapi" in dependabot
     assert "esphome" in dependabot
-    assert "tests/fastmcp_canary" in json.dumps(renovate)
-    assert 'cron: "0 9 * * 4"' in renovate_workflow
+    assert 'cron: "0 9 * * *"' in renovate_workflow
     assert "configurationFile:" not in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
-    assert "RENOVATE_ALLOWED_POST_UPGRADE_COMMANDS" not in renovate_workflow
+    assert "RENOVATE_ALLOWED_COMMANDS" in renovate_workflow
 
     managers = {manager["depNameTemplate"]: manager for manager in renovate["customManagers"]}
     expected = {
-        "fastmcp": (
-            "pypi",
-            "/^tests/fastmcp_canary\\.txt$/",
-            (ROOT / "tests" / "fastmcp_canary.txt").read_text(),
-            "3.4.7",
-        ),
         "home-assistant/operating-system": (
             "github-releases",
             "/^tests/haos_image_build/build_image\\.py$/",
@@ -393,7 +378,11 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             "18.2",
         ),
     }
-    assert managers.keys() == expected.keys() | {"home-assistant/core"}
+    assert managers.keys() == expected.keys() | {
+        "home-assistant/core",
+        "HA-MCP master runtime contract",
+        "renovate",
+    }
     for dep_name, (datasource, file_pattern, source, current_value) in expected.items():
         manager = managers[dep_name]
         assert manager["datasourceTemplate"] == datasource
@@ -402,6 +391,48 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
         pattern = manager["matchStrings"][0].replace("(?<", "(?P<")
         matches = list(re.finditer(pattern, source))
         assert [match.groupdict() for match in matches] == [{"currentValue": current_value}]
+
+    contract_manager = managers["HA-MCP master runtime contract"]
+    assert contract_manager["datasourceTemplate"] == "git-refs"
+    assert contract_manager["currentValueTemplate"] == "master"
+    assert contract_manager["packageNameTemplate"] == (
+        "https://github.com/homeassistant-ai/ha-mcp"
+    )
+    contract_source = (COMPONENT / "ha_mcp_runtime" / "contract.py").read_text()
+    contract_pattern = contract_manager["matchStrings"][0].replace(
+        "(?<",
+        "(?P<",
+    )
+    matches = list(re.finditer(contract_pattern, contract_source))
+    assert [match.groupdict() for match in matches] == [
+        {"currentDigest": runtime_contract.HA_MCP_MASTER_SHA}
+    ]
+    contract_rule = next(
+        rule
+        for rule in renovate["packageRules"]
+        if rule["description"].startswith("HA-MCP master")
+    )
+    assert contract_rule["postUpgradeTasks"]["commands"] == [
+        "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref"
+    ]
+
+    renovate_manager = managers["renovate"]
+    assert renovate_manager["datasourceTemplate"] == "npm"
+    assert renovate_manager["versioningTemplate"] == "npm"
+    engine_matches = []
+    for source in (
+        (ROOT / ".github" / "workflows" / "pr.yml").read_text(),
+        renovate_workflow,
+    ):
+        for pattern in renovate_manager["matchStrings"]:
+            engine_matches.extend(
+                match.groupdict()
+                for match in re.finditer(pattern.replace("(?<", "(?P<"), source)
+            )
+    assert engine_matches == [
+        {"currentValue": "44.41.0"},
+        {"currentValue": "44.41.0"},
+    ]
 
     core_manager = managers["home-assistant/core"]
     assert core_manager["datasourceTemplate"] == "github-releases"
@@ -420,9 +451,9 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
         assert [match.groupdict() for match in matches] == [{"currentValue": "2026.8.0"}]
 
     pr_workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
-    assert "name: FastMCP Standalone Canary" in pr_workflow
-    assert "tests/fastmcp_canary.txt" in pr_workflow
-    assert "scripts/check_fastmcp_canary.py" in pr_workflow
+    assert "name: FastMCP Standalone Canary" not in pr_workflow
+    assert "name: Renovate Config" in pr_workflow
+    assert "renovate-config-validator renovate.json" in pr_workflow
 
 
 def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:
@@ -447,6 +478,8 @@ def test_hacs_release_archive_contains_component_payload() -> None:
         "embedded_entry.py",
         "embedded_server.py",
         "embedded_setup.py",
+        "ha_mcp_runtime/__init__.py",
+        "ha_mcp_runtime/contract.py",
         "manifest.json",
         "mcp_webhook.py",
         "server.py",

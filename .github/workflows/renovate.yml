@@ -2,8 +2,8 @@ name: Renovate
 
 on:
   schedule:
-    # Run every Thursday at 09:00 UTC (04:00 EST), one hour after Dependabot.
-    - cron: "0 9 * * 4"
+    # Follow HA-MCP master daily; Dependabot keeps its separate Thursday run.
+    - cron: "0 9 * * *"
   workflow_dispatch:
     inputs:
       logLevel:
@@ -33,7 +33,10 @@ jobs:
       - name: Self-hosted Renovate
         uses: renovatebot/github-action@v46.2.0
         with:
+          renovate-version: "44.41.0"
           token: ${{ secrets.GITHUB_TOKEN }}
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          RENOVATE_ALLOWED_COMMANDS: >-
+            ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$"]
           RENOVATE_REPOSITORIES: ${{ github.repository }}

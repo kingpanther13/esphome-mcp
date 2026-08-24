@@ -26,13 +26,17 @@ from .const import (
     HA_MCP_BRINGUP_TASK_KEY,
     HA_MCP_DOMAIN,
     HA_MCP_ENTRY_TYPE_KEY,
-    HA_MCP_MANAGER_KEY,
     HA_MCP_SERVER_ENTRY_TYPE,
     OPT_BIND_HOST,
     OPT_SERVER_PORT,
     SERVER_CONFIG_SUBDIR,
-    STANDALONE_FASTMCP_SPEC,
-    STANDALONE_RUNTIME_REQUIREMENTS,
+)
+from .ha_mcp_runtime import (
+    HA_MCP_COMPONENT_VERSION,
+    HA_MCP_FASTMCP_REQUIREMENT,
+    HA_MCP_MASTER_SHA,
+    HA_MCP_RUNTIME_CONTRACT_ID,
+    HA_MCP_SERVER_REQUIREMENTS,
 )
 
 if TYPE_CHECKING:
@@ -45,8 +49,7 @@ _READY_POLL_INTERVAL_SECONDS = 0.5
 _STOP_JOIN_TIMEOUT_SECONDS = 10.0
 _IMPORT_DEADLOCK_RETRY_DELAYS_SECONDS = (0.25, 0.5, 1.0, 2.0)
 _MODULE_LOCK_DEADLOCK_TEXT = "deadlock detected by _ModuleLock"
-_PEER_TASK_REGISTRATION_TIMEOUT_SECONDS = 30.0
-_PEER_TASK_POLL_INTERVAL_SECONDS = 0.1
+_HA_MCP_DISTRIBUTIONS = ("ha-mcp", "ha-mcp-dev")
 
 
 class EmbeddedServerError(Exception):
@@ -73,7 +76,7 @@ class EmbeddedServerManager:
         self._port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
         self._bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
         self._secret_path = str(entry.data.get(DATA_SECRET_PATH, ""))
-        self._pip_spec = STANDALONE_FASTMCP_SPEC
+        self._pip_spec = HA_MCP_FASTMCP_REQUIREMENT
         self._config_dir = hass.config.path(SERVER_CONFIG_SUBDIR)
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -253,72 +256,98 @@ class EmbeddedServerManager:
             await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
         return True
 
-    async def _async_wait_for_ha_mcp_owner(self) -> bool:
-        """Wait for an enabled HA-MCP server entry to initialize its runtime."""
+    async def _async_validate_ha_mcp_component(self) -> bool:
+        """Validate a configured HA-MCP component and report server ownership."""
         peer_entries = [
             entry
             for entry in self._hass.config_entries.async_entries(HA_MCP_DOMAIN)
-            if entry.data.get(HA_MCP_ENTRY_TYPE_KEY) == HA_MCP_SERVER_ENTRY_TYPE
-            and getattr(entry, "disabled_by", None) is None
+            if getattr(entry, "disabled_by", None) is None
         ]
         if not peer_entries:
             return False
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + _PEER_TASK_REGISTRATION_TIMEOUT_SECONDS
-        peer_task = None
-        while peer_task is None:
-            peer_data = self._hass.data.get(HA_MCP_DOMAIN, {})
-            if isinstance(peer_data, dict):
-                peer_task = peer_data.get(HA_MCP_BRINGUP_TASK_KEY)
-            if peer_task is not None:
-                break
-            if loop.time() >= deadline:
-                raise EmbeddedServerError(
-                    "HA-MCP has an enabled server entry but did not register its "
-                    "runtime bring-up task. Reload both MCP integrations.",
-                    kind="package",
-                )
-            await asyncio.sleep(_PEER_TASK_POLL_INTERVAL_SECONDS)
+        from homeassistant.loader import async_get_integration
 
         try:
-            await asyncio.shield(peer_task)
+            integration = await async_get_integration(self._hass, HA_MCP_DOMAIN)
+        except Exception as err:
+            raise EmbeddedServerError(
+                f"Could not read the configured HA-MCP component version: {err}",
+                kind="package",
+            ) from err
+        installed_version = getattr(integration, "version", None)
+        if installed_version != HA_MCP_COMPONENT_VERSION:
+            raise EmbeddedServerError(
+                "The configured HA-MCP custom component is version "
+                f"{installed_version or 'unknown'}, but ESPHome MCP mirrors "
+                f"component {HA_MCP_COMPONENT_VERSION} from HA-MCP master "
+                f"{HA_MCP_MASTER_SHA[:12]}. Update both custom components from "
+                "their matching dependency PR, then restart Home Assistant.",
+                kind="package",
+            )
+        return any(
+            entry.data.get(HA_MCP_ENTRY_TYPE_KEY) == HA_MCP_SERVER_ENTRY_TYPE
+            for entry in peer_entries
+        )
+
+    async def _async_wait_for_ha_mcp_install(self) -> None:
+        """Wait read-only for an enabled HA-MCP server's package bring-up."""
+        domain_data = self._hass.data.get(HA_MCP_DOMAIN, {})
+        bringup_task = (
+            domain_data.get(HA_MCP_BRINGUP_TASK_KEY)
+            if isinstance(domain_data, dict)
+            else None
+        )
+        if bringup_task is None:
+            raise EmbeddedServerError(
+                "HA-MCP has an enabled server entry but has not published its "
+                "package bring-up task. Let HA-MCP finish setup, then reload "
+                "ESPHome MCP.",
+                kind="package",
+            )
+        try:
+            await asyncio.shield(bringup_task)
         except asyncio.CancelledError as err:
-            if not peer_task.cancelled():
+            if not bringup_task.cancelled():
                 raise
             raise EmbeddedServerError(
-                "HA-MCP's runtime bring-up task was cancelled. Reload HA-MCP "
-                "before starting ESPHome MCP.",
+                "HA-MCP's package bring-up was cancelled. Resolve its repair "
+                "issue, then reload ESPHome MCP.",
                 kind="package",
             ) from err
         except Exception as err:
             raise EmbeddedServerError(
-                f"HA-MCP's runtime bring-up task failed: {err}",
+                f"HA-MCP's package bring-up failed: {err}",
                 kind="package",
             ) from err
 
-        peer_data = self._hass.data.get(HA_MCP_DOMAIN, {})
-        peer_manager = peer_data.get(HA_MCP_MANAGER_KEY) if isinstance(peer_data, dict) else None
-        if not bool(getattr(peer_manager, "is_running", False)):
-            raise EmbeddedServerError(
-                "HA-MCP finished bring-up but did not start its runtime. Resolve "
-                "HA-MCP's repair issue before starting ESPHome MCP.",
-                kind="package",
-            )
-        return True
-
     async def _async_ensure_package(self) -> None:
-        """Adopt a peer FastMCP runtime or prepare a bounded standalone one."""
+        """Reuse or install the exact dependency contract mirrored from HA-MCP."""
         from homeassistant.requirements import (
             RequirementsNotFound,
             async_process_requirements,
         )
 
-        peer_entry_owner = await self._async_wait_for_ha_mcp_owner()
-        peer_specs = await self._hass.async_add_executor_job(_installed_peer_fastmcp_specs)
-        peer_owner = _select_peer_fastmcp_spec(peer_specs)
+        peer_server_enabled = await self._async_validate_ha_mcp_component()
+        if peer_server_enabled:
+            await self._async_wait_for_ha_mcp_install()
+        peer_requirements = await self._hass.async_add_executor_job(
+            _installed_ha_mcp_requirements
+        )
+        if peer_server_enabled and not peer_requirements:
+            raise EmbeddedServerError(
+                "HA-MCP finished package bring-up but no ha-mcp distribution "
+                "metadata is installed. Resolve HA-MCP's package repair issue "
+                "before reloading ESPHome MCP.",
+                kind="package",
+            )
+        _validate_installed_ha_mcp_contract(peer_requirements)
+
         installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
+        violations = await self._hass.async_add_executor_job(
+            _unsatisfied_runtime_requirements
+        )
         shared_runtime_loaded = await self._hass.async_add_executor_job(_fastmcp_runtime_loaded)
         if shared_runtime_loaded:
             loaded_fingerprint = await self._hass.async_add_executor_job(
@@ -343,86 +372,61 @@ class EmbeddedServerManager:
                     kind="restart",
                 )
 
-        if peer_entry_owner and peer_owner is None:
-            raise EmbeddedServerError(
-                "HA-MCP started its server entry but no ha-mcp distribution owns "
-                "the FastMCP runtime. Resolve HA-MCP's package repair issue.",
-                kind="package",
-            )
-
-        if peer_owner is not None:
-            distribution, peer_spec = peer_owner
-            if installed_version is None or not importable:
-                raise EmbeddedServerError(
-                    f"{distribution} owns {peer_spec}, but its FastMCP runtime is "
-                    "not installed and importable. Resolve HA-MCP's package repair "
-                    "issue before starting ESPHome MCP.",
-                    kind="package",
-                )
-            if not _version_satisfies_requirement(installed_version, STANDALONE_FASTMCP_SPEC):
-                raise EmbeddedServerError(
-                    f"{distribution} installed FastMCP {installed_version}, which is "
-                    "outside ESPHome MCP's supported range "
-                    f"{STANDALONE_FASTMCP_SPEC}. Update both MCP integrations, then "
-                    "restart Home Assistant.",
-                    kind="restart",
-                )
-            if not _version_satisfies_requirement(installed_version, peer_spec):
-                raise EmbeddedServerError(
-                    f"Installed FastMCP {installed_version} does not satisfy "
-                    f"{distribution} requirement {peer_spec}. Resolve the torn "
-                    "HA-MCP install, then restart Home Assistant.",
-                    kind="restart",
-                )
-            self._pip_spec = peer_spec
-            self._fastmcp_version = installed_version
-            self._store_effective_pip_spec()
-            return
-
-        self._pip_spec = STANDALONE_FASTMCP_SPEC
-        if importable and _version_satisfies_requirement(
-            installed_version, STANDALONE_FASTMCP_SPEC
-        ):
+        if not violations and importable:
             self._fastmcp_version = installed_version
             self._store_effective_pip_spec()
             return
 
         if shared_runtime_loaded:
-            loaded_version = installed_version or "an unknown version"
             raise EmbeddedServerError(
-                f"FastMCP {loaded_version} is already loaded by Home Assistant, "
-                f"but ESPHome MCP requires {STANDALONE_FASTMCP_SPEC}. Refusing to "
-                "replace the shared runtime inside a running process. Update the "
-                "MCP integrations, then restart Home Assistant.",
+                "FastMCP is already loaded by Home Assistant, but the HA-MCP "
+                "master dependency contract is not satisfied: "
+                f"{'; '.join(violations) if violations else 'runtime modules are missing'}. "
+                "Refusing to replace process-global packages; apply the matching "
+                "dependency update and restart Home Assistant.",
                 kind="restart",
+            )
+
+        if peer_server_enabled:
+            detail = (
+                "; ".join(violations)
+                if violations
+                else "runtime modules are missing"
+            )
+            raise EmbeddedServerError(
+                "HA-MCP owns the enabled shared runtime, but its dependency "
+                f"graph is not usable: {detail}. ESPHome MCP will not invoke "
+                "pip in the peer-owned path; resolve HA-MCP's repair issue, "
+                "then reload ESPHome MCP.",
+                kind="package",
             )
 
         try:
             await async_process_requirements(
                 self._hass,
-                f"ESPHome MCP server ({self._pip_spec})",
-                list(STANDALONE_RUNTIME_REQUIREMENTS),
+                f"ESPHome MCP server ({HA_MCP_RUNTIME_CONTRACT_ID})",
+                list(HA_MCP_SERVER_REQUIREMENTS),
                 is_built_in=False,
             )
         except RequirementsNotFound as err:
             raise EmbeddedServerError(
-                f"Could not install the server requirement ({self._pip_spec!r}): {err}",
+                "Could not install the HA-MCP master dependency contract "
+                f"({HA_MCP_MASTER_SHA[:12]}): {err}",
                 kind="package",
             ) from err
 
-        if not await self._hass.async_add_executor_job(_server_dependencies_importable):
+        importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
+        violations = await self._hass.async_add_executor_job(
+            _unsatisfied_runtime_requirements
+        )
+        if violations or not importable:
+            detail = "; ".join(violations) if violations else "runtime modules are missing"
             raise EmbeddedServerError(
-                f"Installed the server requirement ({self._pip_spec!r}) but FastMCP "
-                "server dependencies are still not importable.",
+                "Installed the HA-MCP master dependency contract, but it is still "
+                f"not usable: {detail}.",
                 kind="package",
             )
         installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
-        if not _version_satisfies_requirement(installed_version, self._pip_spec):
-            raise EmbeddedServerError(
-                f"Installed FastMCP version {installed_version or 'unknown'} does "
-                f"not satisfy {self._pip_spec}.",
-                kind="package",
-            )
         self._fastmcp_version = installed_version
         self._store_effective_pip_spec()
 
@@ -459,84 +463,142 @@ def _installed_fastmcp_version() -> str | None:
         return None
 
 
-def _declared_fastmcp_spec(
-    requirements: list[str],
-    *,
-    distribution: str,
-) -> str | None:
-    """Return one active, marker-free FastMCP requirement."""
-    active_specs: list[str] = []
-    for requirement in requirements:
+def _installed_ha_mcp_requirements() -> dict[str, tuple[str, ...]]:
+    """Return direct requirements declared by installed HA-MCP distributions."""
+    installed: dict[str, tuple[str, ...]] = {}
+    for distribution in _HA_MCP_DISTRIBUTIONS:
         try:
-            parsed = Requirement(requirement)
-        except InvalidRequirement:
-            continue
-        if parsed.marker is not None and not parsed.marker.evaluate({"extra": ""}):
-            continue
-        if canonicalize_name(parsed.name) == "fastmcp":
-            active_specs.append(requirement.partition(";")[0].strip())
-    if len(active_specs) > 1:
-        raise EmbeddedServerError(
-            f"Installed {distribution} declares multiple active FastMCP "
-            "requirements, so shared runtime ownership is ambiguous.",
-            kind="package",
-        )
-    return active_specs[0] if active_specs else None
-
-
-def _installed_peer_fastmcp_specs() -> dict[str, str | None]:
-    """Return FastMCP requirements declared by installed HA-MCP distributions."""
-    peer_specs: dict[str, str | None] = {}
-    for distribution in ("ha-mcp", "ha-mcp-dev"):
-        try:
-            requirements = metadata.requires(distribution) or []
+            requirements = metadata.requires(distribution)
         except metadata.PackageNotFoundError:
             continue
-        peer_specs[distribution] = _declared_fastmcp_spec(
-            requirements,
-            distribution=distribution,
-        )
-    return peer_specs
+        installed[distribution] = tuple(requirements or ())
+    return installed
 
 
-def _select_peer_fastmcp_spec(
-    peer_specs: dict[str, str | None],
-) -> tuple[str, str] | None:
-    """Return the sole installed peer's FastMCP requirement."""
-    if len(peer_specs) > 1:
-        raise EmbeddedServerError(
-            "Both ha-mcp and ha-mcp-dev are installed, so FastMCP runtime "
-            "ownership is ambiguous. Reinstall the selected HA-MCP channel.",
-            kind="package",
-        )
-    if not peer_specs:
-        return None
-    distribution, spec = next(iter(peer_specs.items()))
-    if spec is None:
-        raise EmbeddedServerError(
-            f"Installed {distribution} does not declare a FastMCP requirement. "
-            "Update or reinstall HA-MCP before starting ESPHome MCP.",
-            kind="package",
-        )
-    return distribution, spec
-
-
-def _version_satisfies_requirement(version: str | None, requirement: str) -> bool:
-    """Return whether a version satisfies one bounded FastMCP requirement."""
-    if version is None:
-        return False
-    try:
-        parsed_requirement = Requirement(requirement)
-        parsed_version = Version(version)
-    except (InvalidRequirement, InvalidVersion):
-        return False
+def _normalized_requirement(raw: str) -> tuple[str, tuple[str, ...], str, str, str]:
+    """Return a stable comparison key for one PEP 508 requirement."""
+    requirement = Requirement(raw)
     return (
-        canonicalize_name(parsed_requirement.name) == "fastmcp"
-        and parsed_requirement.url is None
-        and parsed_requirement.marker is None
-        and bool(parsed_requirement.specifier)
-        and parsed_requirement.specifier.contains(parsed_version, prereleases=True)
+        canonicalize_name(requirement.name),
+        tuple(sorted(requirement.extras)),
+        str(requirement.specifier),
+        requirement.url or "",
+        str(requirement.marker) if requirement.marker is not None else "",
     )
+
+
+def _requirement_map(requirements: tuple[str, ...]) -> dict[tuple[object, ...], str]:
+    """Map normalized requirements to their readable form."""
+    normalized: dict[tuple[object, ...], str] = {}
+    for raw in requirements:
+        try:
+            key = _normalized_requirement(raw)
+        except InvalidRequirement as err:
+            raise EmbeddedServerError(
+                f"Invalid requirement metadata {raw!r}: {err}",
+                kind="package",
+            ) from err
+        if key in normalized:
+            raise EmbeddedServerError(
+                f"Duplicate requirement metadata for {raw!r}",
+                kind="package",
+            )
+        normalized[key] = str(Requirement(raw))
+    return normalized
+
+
+def _validate_installed_ha_mcp_contract(
+    installed: dict[str, tuple[str, ...]],
+) -> None:
+    """Fail closed when an installed HA-MCP server declares another contract."""
+    if len(installed) > 1:
+        raise EmbeddedServerError(
+            "Both ha-mcp and ha-mcp-dev are installed. They share one import "
+            "package, so select one HA-MCP channel before starting ESPHome MCP.",
+            kind="package",
+        )
+    if not installed:
+        return
+
+    distribution, requirements = next(iter(installed.items()))
+    expected = _requirement_map(HA_MCP_SERVER_REQUIREMENTS)
+    actual = _requirement_map(requirements)
+    if expected == actual:
+        return
+
+    missing = sorted(expected[key] for key in expected.keys() - actual.keys())
+    unexpected = sorted(actual[key] for key in actual.keys() - expected.keys())
+    differences = []
+    if missing:
+        differences.append(f"missing {', '.join(missing)}")
+    if unexpected:
+        differences.append(f"unexpected {', '.join(unexpected)}")
+    raise EmbeddedServerError(
+        f"Installed {distribution} does not match HA-MCP master "
+        f"{HA_MCP_MASTER_SHA[:12]} ({'; '.join(differences)}). Update the "
+        "HA-MCP server and both custom components from their matching dependency "
+        "updates, then restart Home Assistant.",
+        kind="package",
+    )
+
+
+def _unsatisfied_runtime_requirements() -> tuple[str, ...]:
+    """Audit the mirrored runtime graph, including requested dependency extras."""
+    queue = []
+    for raw in HA_MCP_SERVER_REQUIREMENTS:
+        requirement = Requirement(raw)
+        if requirement.marker is None or requirement.marker.evaluate({"extra": ""}):
+            queue.append((requirement, "HA-MCP master contract"))
+    seen: set[tuple[str, tuple[str, ...], str, str, str]] = set()
+    violations: list[str] = []
+
+    while queue:
+        requirement, required_by = queue.pop(0)
+        key = _normalized_requirement(str(requirement))
+        if key in seen:
+            continue
+        seen.add(key)
+        name = canonicalize_name(requirement.name)
+        try:
+            distribution = metadata.distribution(name)
+        except metadata.PackageNotFoundError:
+            violations.append(f"{name} is missing (required by {required_by})")
+            continue
+
+        installed_version = distribution.version
+        try:
+            parsed_version = Version(installed_version)
+        except InvalidVersion:
+            violations.append(
+                f"{name} has invalid version {installed_version!r} "
+                f"(required by {required_by})"
+            )
+            continue
+        if requirement.specifier and not requirement.specifier.contains(
+            parsed_version, prereleases=True
+        ):
+            violations.append(
+                f"{name} {installed_version} does not satisfy {requirement} "
+                f"(required by {required_by})"
+            )
+
+        marker_extras = {"", *requirement.extras}
+        for child_raw in distribution.requires or ():
+            try:
+                child = Requirement(child_raw)
+            except InvalidRequirement:
+                violations.append(
+                    f"{name} {installed_version} declares invalid requirement "
+                    f"{child_raw!r}"
+                )
+                continue
+            if child.marker is not None and not any(
+                child.marker.evaluate({"extra": extra}) for extra in marker_extras
+            ):
+                continue
+            queue.append((child, f"{name} {installed_version}"))
+
+    return tuple(sorted(set(violations)))
 
 
 def _loaded_fastmcp_fingerprint() -> tuple[str | None, str | None] | None:

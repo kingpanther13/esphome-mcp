@@ -12,14 +12,15 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^tests/fastmcp_canary\\.txt$/"
+        "/^custom_components/esphome_mcp/ha_mcp_runtime/contract\\.py$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=pypi depName=fastmcp\\s+fastmcp==(?<currentValue>\\d+\\.\\d+\\.\\d+(?:(?:a|b|rc)\\d+)?)"
+        "HA_MCP_MASTER_SHA\\s*=\\s*[\"'](?<currentDigest>[0-9a-f]{40})[\"']"
       ],
-      "depNameTemplate": "fastmcp",
-      "datasourceTemplate": "pypi",
-      "versioningTemplate": "pep440"
+      "currentValueTemplate": "master",
+      "depNameTemplate": "HA-MCP master runtime contract",
+      "packageNameTemplate": "https://github.com/homeassistant-ai/ha-mcp",
+      "datasourceTemplate": "git-refs"
     },
     {
       "customType": "regex",
@@ -31,6 +32,20 @@
       ],
       "depNameTemplate": "home-assistant/operating-system",
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/pr\\.yml$/",
+        "/^\\.github/workflows/renovate\\.yml$/"
+      ],
+      "matchStrings": [
+        "renovate@(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "renovate-version:\\s*[\"'](?<currentValue>\\d+\\.\\d+\\.\\d+)[\"']"
+      ],
+      "depNameTemplate": "renovate",
+      "datasourceTemplate": "npm",
+      "versioningTemplate": "npm"
     },
     {
       "customType": "regex",
@@ -50,19 +65,31 @@
   ],
   "packageRules": [
     {
-      "description": "FastMCP standalone release canary",
+      "description": "HA-MCP master server and custom-component lockstep",
       "matchDatasources": [
-        "pypi"
+        "git-refs"
       ],
       "matchPackageNames": [
-        "fastmcp"
+        "https://github.com/homeassistant-ai/ha-mcp"
       ],
       "labels": [
         "dependencies",
         "python",
-        "compatibility",
+        "ha-mcp",
         "e2e"
-      ]
+      ],
+      "postUpgradeTasks": {
+        "commands": [
+          "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref"
+        ],
+        "fileFilters": [
+          "custom_components/esphome_mcp/ha_mcp_runtime/contract.py"
+        ],
+        "executionMode": "update",
+        "installTools": {
+          "python": {}
+        }
+      }
     },
     {
       "description": "Home Assistant OS image version used by HAOS E2E",

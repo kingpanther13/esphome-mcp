@@ -1,4 +1,4 @@
-"""Tests for the shared runtime-dependency sandbox lint."""
+"""Tests for the HA-MCP master runtime sandbox lint."""
 
 from __future__ import annotations
 
@@ -13,7 +13,10 @@ SCRIPT_PATH = ROOT / "scripts" / "check_runtime_dependency_sandbox.py"
 
 
 def _load_sandbox() -> ModuleType:
-    spec = importlib.util.spec_from_file_location("runtime_dependency_sandbox", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "runtime_dependency_sandbox",
+        SCRIPT_PATH,
+    )
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -22,11 +25,11 @@ def _load_sandbox() -> ModuleType:
 
 
 def test_repository_runtime_passes_dependency_sandbox() -> None:
-    """Production component code preserves the peer-owned runtime contract."""
+    """Production source preserves the generated lockstep contract."""
     sandbox = _load_sandbox()
 
     assert sandbox.validate_runtime_tree() == []
-    assert sandbox.validate_runtime_constants() == []
+    assert sandbox.validate_runtime_contract() == []
     assert sandbox.validate_worker_import_contract() == []
     assert sandbox.validate_install_contract() == []
 
@@ -59,7 +62,7 @@ def test_sandbox_rejects_shared_module_cache_mutation(
 
 
 def test_sandbox_allows_read_only_shared_module_detection(tmp_path: Path) -> None:
-    """Runtime code may inspect module state without mutating another integration."""
+    """Runtime code may inspect shared module state without mutating it."""
     sandbox = _load_sandbox()
     runtime_file = tmp_path / "runtime.py"
     runtime_file.write_text("import sys\nloaded = 'fastmcp' in sys.modules\n")
@@ -67,139 +70,85 @@ def test_sandbox_allows_read_only_shared_module_detection(tmp_path: Path) -> Non
     assert sandbox.validate_runtime_source(runtime_file) == []
 
 
-def _write_upstream_pyproject(path: Path, fastmcp_requirement: str | None) -> None:
-    dependencies = (
-        ["httpx==0.28.1"] if fastmcp_requirement is None else [fastmcp_requirement, "httpx==0.28.1"]
-    )
-    quoted = ", ".join(repr(dependency) for dependency in dependencies)
-    path.write_text(f"[project]\nname = 'ha-mcp'\ndependencies = [{quoted}]\n")
-
-
-@pytest.mark.parametrize("version", ["3.4.6", "3.4.7"])
-def test_ha_mcp_supported_patch_pins_are_compatible(
-    tmp_path: Path,
-    version: str,
-) -> None:
-    """Previous and current HA-MCP pins fit the standalone compatibility range."""
-    sandbox = _load_sandbox()
-    upstream = tmp_path / "pyproject.toml"
-    _write_upstream_pyproject(upstream, f"fastmcp=={version}")
-
-    assert sandbox.validate_ha_mcp_fastmcp_compatibility(upstream) == []
-
-
-@pytest.mark.parametrize("version", ["3.4.4", "4.0.0"])
-def test_ha_mcp_pin_outside_supported_range_fails(
-    tmp_path: Path,
-    version: str,
-) -> None:
-    """CI blocks HA-MCP pins that ESPHome MCP has not declared compatible."""
-    sandbox = _load_sandbox()
-    upstream = tmp_path / "pyproject.toml"
-    _write_upstream_pyproject(upstream, f"fastmcp=={version}")
-
-    assert sandbox.validate_ha_mcp_fastmcp_compatibility(upstream) == [
-        f"ha-mcp FastMCP pin {version} is outside ESPHome MCP supported range fastmcp>=3.4.5,<4"
-    ]
-
-
-def test_ha_mcp_missing_fastmcp_requirement_fails(tmp_path: Path) -> None:
-    """CI requires an explicit upstream owner contract."""
-    sandbox = _load_sandbox()
-    upstream = tmp_path / "pyproject.toml"
-    _write_upstream_pyproject(upstream, None)
-
-    assert sandbox.validate_ha_mcp_fastmcp_compatibility(upstream) == [
-        "ha-mcp does not declare a FastMCP runtime dependency"
-    ]
-
-
-def test_ha_mcp_non_exact_fastmcp_requirement_requires_checker_update(
-    tmp_path: Path,
-) -> None:
-    """An upstream policy change cannot silently bypass compatibility validation."""
-    sandbox = _load_sandbox()
-    upstream = tmp_path / "pyproject.toml"
-    _write_upstream_pyproject(upstream, "fastmcp>=3.4.5,<4")
-
-    assert sandbox.validate_ha_mcp_fastmcp_compatibility(upstream) == [
-        "ha-mcp FastMCP requirement must be an exact pin for compatibility "
-        "validation: 'fastmcp>=3.4.5,<4'"
-    ]
-
-
-def _write_runtime_constants(
+def _write_contract(
     path: Path,
     *,
-    spec: str = "fastmcp>=3.4.5,<4",
-    requirements: str = "(STANDALONE_FASTMCP_SPEC,)",
-    compat_ref: str = "master",
+    repository: str = "homeassistant-ai/ha-mcp",
+    sha: str = "a" * 40,
+    fastmcp: str = "fastmcp==3.4.7",
+    server_requirements: str = '("fastmcp==3.4.7", "httpx==0.28.1")',
+    component_requirements: str = '("ruamel.yaml>=0.18.0",)',
 ) -> None:
     path.write_text(
-        f'STANDALONE_FASTMCP_SPEC = "{spec}"\n'
-        f"STANDALONE_RUNTIME_REQUIREMENTS = {requirements}\n"
-        f'HA_MCP_COMPAT_REF = "{compat_ref}"\n'
+        f'HA_MCP_REPOSITORY = "{repository}"\n'
+        f'HA_MCP_MASTER_SHA = "{sha}"\n'
+        'HA_MCP_SERVER_VERSION = "8.3.0"\n'
+        'HA_MCP_COMPONENT_VERSION = "2.0.1"\n'
+        f"HA_MCP_SERVER_REQUIREMENTS = {server_requirements}\n"
+        f"HA_MCP_COMPONENT_REQUIREMENTS = {component_requirements}\n"
+        f'HA_MCP_FASTMCP_REQUIREMENT = "{fastmcp}"\n'
     )
 
 
-def test_runtime_constants_reject_exact_pin(tmp_path: Path) -> None:
-    """Standalone policy must not recreate HA-MCP lockstep patch releases."""
+def test_contract_requires_an_immutable_commit(tmp_path: Path) -> None:
+    """A moving branch name cannot masquerade as the mirrored snapshot."""
     sandbox = _load_sandbox()
-    const = tmp_path / "const.py"
-    _write_runtime_constants(const, spec="fastmcp==3.4.7")
+    contract = tmp_path / "contract.py"
+    _write_contract(contract, sha="master")
 
-    assert sandbox.validate_runtime_constants(const) == [
-        "STANDALONE_FASTMCP_SPEC must be bounded as fastmcp>=X.Y.Z,<N"
+    assert sandbox.validate_runtime_contract(contract) == [
+        "HA_MCP_MASTER_SHA must be one immutable 40-character SHA"
     ]
 
 
-def test_runtime_constants_reject_unbounded_range(tmp_path: Path) -> None:
-    """Standalone compatibility needs an explicit future-major ceiling."""
+def test_contract_requires_both_component_and_server_metadata(tmp_path: Path) -> None:
+    """Component requirements cannot be omitted from a server-only update."""
     sandbox = _load_sandbox()
-    const = tmp_path / "const.py"
-    _write_runtime_constants(const, spec="fastmcp>=3.4.5")
+    contract = tmp_path / "contract.py"
+    _write_contract(contract, component_requirements="None")
 
-    assert sandbox.validate_runtime_constants(const) == [
-        "STANDALONE_FASTMCP_SPEC must be bounded as fastmcp>=X.Y.Z,<N"
+    assert sandbox.validate_runtime_contract(contract) == [
+        "HA_MCP_COMPONENT_REQUIREMENTS must be a string tuple"
     ]
 
 
-@pytest.mark.parametrize(
-    "requirements",
-    [
-        '("uvicorn>=0.35", STANDALONE_FASTMCP_SPEC)',
-        '("websockets>=15", STANDALONE_FASTMCP_SPEC)',
-    ],
-)
-def test_runtime_constants_reject_mirrored_or_ha_owned_requirements(
+def test_contract_requires_exact_fastmcp_pin_inside_server_tuple(
     tmp_path: Path,
-    requirements: str,
 ) -> None:
-    """ESPHome MCP installs only FastMCP in standalone mode."""
+    """The reported FastMCP generation must be the mirrored direct dependency."""
     sandbox = _load_sandbox()
-    const = tmp_path / "const.py"
-    _write_runtime_constants(const, requirements=requirements)
+    contract = tmp_path / "contract.py"
+    _write_contract(contract, fastmcp="fastmcp>=3.4.7,<4")
 
-    assert sandbox.validate_runtime_constants(const) == [
-        "STANDALONE_RUNTIME_REQUIREMENTS must contain only STANDALONE_FASTMCP_SPEC"
+    assert sandbox.validate_runtime_contract(contract) == [
+        "HA_MCP_FASTMCP_REQUIREMENT must be an exact FastMCP pin",
+        "HA_MCP_FASTMCP_REQUIREMENT must be present in "
+        "HA_MCP_SERVER_REQUIREMENTS",
     ]
 
 
-def test_runtime_constants_reject_stable_ha_mcp_release_ref(tmp_path: Path) -> None:
-    """Compatibility follows the HA-MCP branch that can change next."""
+def test_contract_rejects_duplicate_distributions(tmp_path: Path) -> None:
+    """One generated contract cannot declare competing pins for a package."""
     sandbox = _load_sandbox()
-    const = tmp_path / "const.py"
-    _write_runtime_constants(const, compat_ref="v8.2.0")
+    contract = tmp_path / "contract.py"
+    _write_contract(
+        contract,
+        server_requirements='("fastmcp==3.4.7", "FastMCP>=3.4.0")',
+    )
 
-    assert sandbox.validate_runtime_constants(const) == ["HA_MCP_COMPAT_REF must be 'master'"]
+    assert sandbox.validate_runtime_contract(contract) == [
+        "HA_MCP_SERVER_REQUIREMENTS contains duplicate distributions"
+    ]
 
 
 def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:
-    """The sandbox fails if the worker starts serving without safe preloading."""
+    """The sandbox fails if the worker serves without safe preloading."""
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
-        "class EmbeddedServerManager:\n    def _thread_main(self):\n        self._serve()\n"
+        "class EmbeddedServerManager:\n"
+        "    def _thread_main(self):\n"
+        "        self._serve()\n"
     )
 
     assert sandbox.validate_worker_import_contract(embedded_server) == [
@@ -210,58 +159,61 @@ def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "install_expression",
     [
-        "partial(install_package, 'fastmcp>=3.4.5,<4', upgrade=True)",
-        "await hass.async_add_executor_job(install_package, 'fastmcp>=3.4.5,<4')",
-        "partial(func=install_package, requirement='fastmcp>=3.4.5,<4')",
-        "installer.install_package('fastmcp>=3.4.5,<4')",
+        "partial(install_package, 'fastmcp==3.4.7', upgrade=True)",
+        "await hass.async_add_executor_job(install_package, 'fastmcp==3.4.7')",
+        "partial(func=install_package, requirement='fastmcp==3.4.7')",
+        "installer.install_package('fastmcp==3.4.7')",
     ],
 )
-def test_install_contract_rejects_every_package_install_reference(
+def test_install_contract_rejects_direct_package_install(
     tmp_path: Path,
     install_expression: str,
 ) -> None:
-    """Any install_package reference bypasses HA's requirements manager."""
+    """Any install_package reference bypasses Home Assistant's lock."""
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
-        f"from functools import partial\nasync def install(hass):\n    {install_expression}\n"
+        "from functools import partial\n"
+        "async def install(hass):\n"
+        f"    {install_expression}\n"
     )
 
     assert sandbox.validate_install_contract(embedded_server) == [
         "embedded dependency install at line 3 bypasses HA's requirements manager",
         "embedded dependency install must use HA async_process_requirements "
-        "with STANDALONE_RUNTIME_REQUIREMENTS",
+        "with HA_MCP_SERVER_REQUIREMENTS",
     ]
 
 
-def test_install_contract_accepts_ha_requirements_manager(tmp_path: Path) -> None:
-    """The supported install shape delegates locking and constraints to HA."""
+def test_install_contract_accepts_generated_server_tuple(tmp_path: Path) -> None:
+    """The supported install shape delegates locking to Home Assistant."""
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
         "async def install(hass):\n"
         "    await async_process_requirements(\n"
-        "        hass, 'ESPHome MCP', list(STANDALONE_RUNTIME_REQUIREMENTS)\n"
+        "        hass, 'ESPHome MCP', list(HA_MCP_SERVER_REQUIREMENTS)\n"
         "    )\n"
     )
 
     assert sandbox.validate_install_contract(embedded_server) == []
 
 
-def test_install_contract_checks_every_requirements_manager_call(tmp_path: Path) -> None:
-    """One compliant requirements call cannot mask another unsafe requirement set."""
+def test_install_contract_checks_every_requirements_manager_call(
+    tmp_path: Path,
+) -> None:
+    """One compliant call cannot mask another untracked dependency set."""
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
         "async def install(hass):\n"
         "    await async_process_requirements(\n"
-        "        hass, 'ESPHome MCP', list(STANDALONE_RUNTIME_REQUIREMENTS)\n"
+        "        hass, 'ESPHome MCP', list(HA_MCP_SERVER_REQUIREMENTS)\n"
         "    )\n"
-        "    await async_process_requirements(\n"
-        "        hass, 'other', OTHER_REQUIREMENTS + STANDALONE_RUNTIME_REQUIREMENTS\n"
-        "    )\n"
+        "    await async_process_requirements(hass, 'other', OTHER_REQUIREMENTS)\n"
     )
 
     assert sandbox.validate_install_contract(embedded_server) == [
-        "HA requirements-manager call at line 5 must use exactly STANDALONE_RUNTIME_REQUIREMENTS"
+        "HA requirements-manager call at line 5 must use exactly "
+        "HA_MCP_SERVER_REQUIREMENTS"
     ]

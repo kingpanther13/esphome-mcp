@@ -25,6 +25,12 @@ from .addon_tools import (
     write_device_builder_config,
 )
 from .const import DATA_MANAGER, DOMAIN, VERSION
+from .ha_mcp_runtime import (
+    HA_MCP_COMPONENT_VERSION,
+    HA_MCP_MASTER_SHA,
+    HA_MCP_RUNTIME_CONTRACT_ID,
+    HA_MCP_SERVER_VERSION,
+)
 
 
 class EspHomeMCPServer:
@@ -682,6 +688,10 @@ async def _async_overview(hass: HomeAssistant) -> dict[str, Any]:
         "mcp_domain": DOMAIN,
         "server_version": VERSION,
         "fastmcp_version": getattr(manager, "fastmcp_version", None),
+        "ha_mcp_runtime_contract": HA_MCP_RUNTIME_CONTRACT_ID,
+        "ha_mcp_master_sha": HA_MCP_MASTER_SHA,
+        "ha_mcp_server_version": HA_MCP_SERVER_VERSION,
+        "ha_mcp_component_version": HA_MCP_COMPONENT_VERSION,
         "config_entry_count": len(snapshot["config_entries"]),
         "device_count": len(snapshot["devices"]),
         "entity_count": len(snapshot["entities"]),

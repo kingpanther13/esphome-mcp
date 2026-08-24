@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -52,7 +53,13 @@ READY_POLL_S = 5
 DEVICE_BUILDER_CONFIG_TIMEOUT_S = 180
 FIRMWARE_JOB_TIMEOUT_S = 120
 PERSISTENT_NOTIFICATION_ID = "esphome_mcp_server_connect"
-FASTMCP_CANARY_PATH = Path(__file__).resolve().parents[3] / "fastmcp_canary.txt"
+HA_MCP_CONTRACT_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "custom_components"
+    / "esphome_mcp"
+    / "ha_mcp_runtime"
+    / "contract.py"
+)
 
 EXPECTED_ESP_TOOLS = {
     "esp_overview",
@@ -73,15 +80,22 @@ EXPECTED_ESP_TOOLS = {
 }
 
 
-def _fastmcp_canary_version() -> str:
-    """Return the exact FastMCP release this E2E run must resolve."""
-    active = [
-        line.strip()
-        for line in FASTMCP_CANARY_PATH.read_text().splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    assert len(active) == 1 and active[0].startswith("fastmcp=="), active
-    return active[0].partition("==")[2]
+def _contract_string(name: str) -> str:
+    """Return one generated string literal from the HA-MCP contract."""
+    match = re.search(
+        rf'^{re.escape(name)} = "([^"]+)"$',
+        HA_MCP_CONTRACT_PATH.read_text(),
+        re.MULTILINE,
+    )
+    assert match is not None
+    return match.group(1)
+
+
+def _fastmcp_contract_version() -> str:
+    """Return the FastMCP pin mirrored from the HA-MCP master snapshot."""
+    requirement = _contract_string("HA_MCP_FASTMCP_REQUIREMENT")
+    assert requirement.startswith("fastmcp==")
+    return requirement.partition("==")[2]
 
 
 E2E_DEVICE_NAME = "ESP MCP E2E"
@@ -726,7 +740,14 @@ class TestEmbeddedServerOnHaos:
 
         assert payload["success"] is True
         assert payload["mcp_domain"] == "esphome_mcp"
-        assert payload["fastmcp_version"] == _fastmcp_canary_version()
+        assert payload["fastmcp_version"] == _fastmcp_contract_version()
+        assert payload["ha_mcp_master_sha"] == _contract_string("HA_MCP_MASTER_SHA")
+        assert payload["ha_mcp_server_version"] == _contract_string(
+            "HA_MCP_SERVER_VERSION"
+        )
+        assert payload["ha_mcp_component_version"] == _contract_string(
+            "HA_MCP_COMPONENT_VERSION"
+        )
         assert "device_count" in payload
 
     def test_local_brand_icon_uses_home_assistant_authenticated_proxy(
