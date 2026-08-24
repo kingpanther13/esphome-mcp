@@ -46,6 +46,8 @@ SSH_HOST_PORT = int(os.environ.get("HAOS_BUILD_SSH_PORT", "12222"))
 OVMF_CODE_PATH = os.environ.get("HAOS_BUILD_OVMF", "/usr/share/OVMF/OVMF_CODE.fd")
 CORE_FIRST_BOOT_TIMEOUT = 600
 CORE_UPDATE_TIMEOUT = 900
+CORE_UPDATE_START_TIMEOUT = 300
+CORE_JOB_BUSY_MESSAGE = "Another job is running for job group home_assistant_core"
 # Core 2026.8 moved Supervisor-managed installs from guest port 8123 to 80.
 HA_GUEST_PORT = 80
 
@@ -596,6 +598,46 @@ def _wait_core_version(
     )
 
 
+def _request_core_update(ws: HAWebSocket, base_url: str, token: str) -> None:
+    """Start the Core update after any first-boot Core job releases its group."""
+    from websockets.exceptions import ConnectionClosed
+
+    deadline = time.monotonic() + CORE_UPDATE_START_TIMEOUT
+    while True:
+        try:
+            ws.supervisor_api(
+                "/core/update",
+                method="post",
+                data={"version": HA_CORE_VERSION, "backup": False},
+                timeout=CORE_UPDATE_TIMEOUT,
+            )
+            return
+        except ConnectionClosed:
+            LOG.info("WebSocket closed during Core version change (expected)")
+            return
+        except WSCommandError as err:
+            if err.code != "unknown_error" or CORE_JOB_BUSY_MESSAGE not in str(err):
+                raise
+            try:
+                if _core_version(base_url, token) == HA_CORE_VERSION:
+                    LOG.info("Existing Supervisor job installed Core %s", HA_CORE_VERSION)
+                    return
+            except (OSError, ValueError, RuntimeError):
+                pass
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(
+                    "Supervisor did not release the home_assistant_core job group "
+                    f"within {CORE_UPDATE_START_TIMEOUT:.0f}s"
+                ) from err
+            delay = min(10.0, remaining)
+            LOG.info(
+                "Supervisor Core job group is busy; retrying /core/update in %.0fs",
+                delay,
+            )
+            time.sleep(delay)
+
+
 def ensure_core_version(ws: HAWebSocket, base_url: str, token: str) -> None:
     """Install the exact Core target instead of trusting HAOS's floating channel."""
     current_version = _core_version(base_url, token)
@@ -603,22 +645,12 @@ def ensure_core_version(ws: HAWebSocket, base_url: str, token: str) -> None:
         return
 
     _wait_supervisor_ready(ws)
-    from websockets.exceptions import ConnectionClosed
-
     LOG.info(
         "Changing Home Assistant Core from %s to requested version %s",
         current_version,
         HA_CORE_VERSION,
     )
-    try:
-        ws.supervisor_api(
-            "/core/update",
-            method="post",
-            data={"version": HA_CORE_VERSION, "backup": False},
-            timeout=CORE_UPDATE_TIMEOUT,
-        )
-    except ConnectionClosed:
-        LOG.info("WebSocket closed during Core version change (expected)")
+    _request_core_update(ws, base_url, token)
 
     _wait_core_version(
         base_url,

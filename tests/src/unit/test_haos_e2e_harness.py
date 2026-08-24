@@ -271,6 +271,70 @@ def test_build_image_reuses_exact_core_target(monkeypatch) -> None:
     )
 
 
+def test_build_image_retries_core_update_while_first_boot_job_is_busy(
+    monkeypatch,
+) -> None:
+    """The exact Core request waits for Supervisor's first-boot Core job."""
+    build_image = _load_module("esphome_mcp_test_build_image_busy", BUILD_IMAGE_PATH)
+    events: list[tuple[object, ...]] = []
+
+    class FakeWebSocket:
+        attempts = 0
+
+        def supervisor_api(
+            self,
+            path: str,
+            *,
+            method: str,
+            data: dict[str, object],
+            timeout: float,
+        ) -> dict[str, object]:
+            events.append(("api", path, method, data, timeout))
+            self.attempts += 1
+            if self.attempts == 1:
+                raise build_image.WSCommandError(
+                    build_image.CORE_JOB_BUSY_MESSAGE,
+                    code="unknown_error",
+                )
+            return {}
+
+        def reconnect(self) -> None:
+            events.append(("reconnect",))
+
+    versions = iter(["2026.8.1", "2026.8.1"])
+    monkeypatch.setattr(
+        build_image,
+        "_core_version",
+        lambda _url, _token: next(versions),
+    )
+    monkeypatch.setattr(build_image, "_wait_supervisor_ready", lambda _ws: None)
+    monkeypatch.setattr(
+        build_image.time,
+        "sleep",
+        lambda delay: events.append(("sleep", delay)),
+    )
+    monkeypatch.setattr(
+        build_image,
+        "_wait_core_version",
+        lambda *_args, **_kwargs: events.append(("wait-core",)),
+    )
+
+    build_image.ensure_core_version(
+        FakeWebSocket(),
+        "http://127.0.0.1:18123",
+        "token",
+    )
+
+    assert [event[0] for event in events] == [
+        "api",
+        "sleep",
+        "api",
+        "wait-core",
+        "reconnect",
+    ]
+    assert events[1] == ("sleep", 10.0)
+
+
 def test_install_hacs_uses_supported_addon_and_restarts_core(monkeypatch) -> None:
     """The image bake installs HACS, restarts Core, and reconnects Supervisor."""
     build_image = _load_module("esphome_mcp_test_build_image", BUILD_IMAGE_PATH)
