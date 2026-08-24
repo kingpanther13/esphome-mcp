@@ -144,9 +144,7 @@ def test_none_mode_authorize_and_token_complete_without_login() -> None:
 
     assert authorize.status == 302
     assert parse_qs(redirected.query)["state"] == ["state-1"]
-    assert parse_qs(redirected.query)["iss"] == [
-        f"https://ha.example{OAUTH_BASE}"
-    ]
+    assert parse_qs(redirected.query)["iss"] == [f"https://ha.example{OAUTH_BASE}"]
     assert token.status == 200
     assert body["token_type"] == "Bearer"
     assert body["access_token"]

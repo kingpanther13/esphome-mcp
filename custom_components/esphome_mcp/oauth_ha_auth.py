@@ -293,9 +293,7 @@ def _translation_for(registered: list[str], client_id: str, redirect_uri: str) -
     return origin_client_id(redirect_uri)
 
 
-async def fetch_cimd_redirects(
-    session: aiohttp.ClientSession, client_id: str
-) -> list[str] | None:
+async def fetch_cimd_redirects(session: aiohttp.ClientSession, client_id: str) -> list[str] | None:
     """Fetch + validate a Client ID Metadata Document; return its redirect_uris.
 
     Returns None on ANY validation failure (the caller then passes the request
@@ -346,9 +344,7 @@ async def _lookup_cimd(
     now: float,
 ) -> list[str] | None:
     """Resolve and fetch under the caller's total deadline; cache the outcome."""
-    addresses = await _resolve_public_addresses(
-        parsed.hostname or "", parsed.port or 443
-    )
+    addresses = await _resolve_public_addresses(parsed.hostname or "", parsed.port or 443)
     for address in addresses:
         reached, result = await _fetch_pinned_cimd(session, client_id, parsed, address)
         if not reached:
@@ -787,8 +783,7 @@ async def translated_client_id_for_refresh(
         return RefreshDisposition.PASSTHROUGH
     client_origin = (parsed.scheme, parsed.netloc.lower())
     matched = [
-        (urlparse(uri).scheme, urlparse(uri).netloc.lower()) == client_origin
-        for uri in registered
+        (urlparse(uri).scheme, urlparse(uri).netloc.lower()) == client_origin for uri in registered
     ]
     if all(matched):
         return RefreshDisposition.PASSTHROUGH

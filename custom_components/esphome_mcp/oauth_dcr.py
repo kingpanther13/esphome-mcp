@@ -181,8 +181,7 @@ def _redirect_uris_error(value: Any) -> tuple[str, str] | None:
     ):
         return (
             "invalid_redirect_uri",
-            "redirect_uris must be https URLs or http loopback URLs "
-            "(RFC 8252) without fragments",
+            "redirect_uris must be https URLs or http loopback URLs (RFC 8252) without fragments",
         )
     return None
 
@@ -227,9 +226,7 @@ async def _read_capped_body(request: web.Request) -> bytes | None:
 
 def _dcr_error(error: str, description: str) -> web.Response:
     """RFC 7591 §3.2.2 registration error response."""
-    return web.json_response(
-        {"error": error, "error_description": description}, status=400
-    )
+    return web.json_response({"error": error, "error_description": description}, status=400)
 
 
 class DcrRegisterView(HomeAssistantView):

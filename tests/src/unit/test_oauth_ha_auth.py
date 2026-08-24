@@ -44,9 +44,7 @@ def test_redirect_matching_is_exact_except_for_loopback_ports() -> None:
         ["http://localhost/callback"],
         "http://localhost:43123/callback",
     )
-    assert origin_client_id("http://localhost:43123/callback") == (
-        "http://localhost:43123"
-    )
+    assert origin_client_id("http://localhost:43123/callback") == ("http://localhost:43123")
 
 
 def test_signed_dcr_client_translates_to_the_validated_redirect_origin() -> None:
@@ -88,13 +86,11 @@ def test_refresh_envelope_is_component_scoped_and_presenter_bound() -> None:
     )
 
     assert envelope.startswith("espmcp-rt-")
-    assert unwrap_refresh_token(
-        KEY, envelope, "espmcp-dcr-presented"
-    ) == ("core-refresh-token", "https://callback.example")
-    assert (
-        unwrap_refresh_token(KEY, envelope, "another-client")
-        is EnvelopeState.INVALID
+    assert unwrap_refresh_token(KEY, envelope, "espmcp-dcr-presented") == (
+        "core-refresh-token",
+        "https://callback.example",
     )
+    assert unwrap_refresh_token(KEY, envelope, "another-client") is EnvelopeState.INVALID
     assert unwrap_refresh_token(OTHER_KEY, envelope, None) is EnvelopeState.INVALID
 
 
@@ -135,17 +131,17 @@ def test_cimd_document_requires_exact_client_id_and_safe_redirects() -> None:
     valid = json.dumps(
         {
             "client_id": client_id,
+            "client_name": "OAuth test client",
             "redirect_uris": ["https://callback.example/oauth"],
         }
     ).encode()
     mismatch = json.dumps(
         {
             "client_id": "https://other.example/oauth/metadata.json",
+            "client_name": "OAuth test client",
             "redirect_uris": ["https://callback.example/oauth"],
         }
     ).encode()
 
-    assert oauth_ha_auth._parse_cimd(valid, client_id) == [
-        "https://callback.example/oauth"
-    ]
+    assert oauth_ha_auth._parse_cimd(valid, client_id) == ["https://callback.example/oauth"]
     assert oauth_ha_auth._parse_cimd(mismatch, client_id) is None

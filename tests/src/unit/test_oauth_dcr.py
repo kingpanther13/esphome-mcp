@@ -86,9 +86,7 @@ def test_register_mints_a_none_mode_public_client() -> None:
     assert response.status == 201
     assert body["token_endpoint_auth_method"] == "none"
     assert body["grant_types"] == ["authorization_code"]
-    assert client_redirect_uris(KEY, body["client_id"]) == [
-        "https://client.example/callback"
-    ]
+    assert client_redirect_uris(KEY, body["client_id"]) == ["https://client.example/callback"]
 
 
 def test_register_ha_auth_advertises_refresh() -> None:

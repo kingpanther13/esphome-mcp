@@ -766,9 +766,11 @@ class TestEmbeddedServerOnHaos:
         assert client_id.startswith("espmcp-dcr-")
 
         verifier = "v" * 43
-        challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(verifier.encode()).digest()
-        ).rstrip(b"=").decode()
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+            .rstrip(b"=")
+            .decode()
+        )
         authorize = requests.get(
             f"{oauth_base}/authorize",
             params={

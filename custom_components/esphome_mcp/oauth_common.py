@@ -112,11 +112,7 @@ class PKCECodeStore:
     def issue_code(self, redirect_uri: str, code_challenge: str) -> str | None:
         """Issue a code, or return None when the pending-code cap is reached."""
         now = time.time()
-        self._codes = {
-            code: entry
-            for code, entry in self._codes.items()
-            if entry["expires"] > now
-        }
+        self._codes = {code: entry for code, entry in self._codes.items() if entry["expires"] > now}
         if len(self._codes) >= MAX_PENDING_CODES:
             _LOGGER.warning(
                 "ESPHome MCP OAuth: pending-code store at cap (%d); refusing issuance",
@@ -143,9 +139,7 @@ class PKCECodeStore:
         if entry["redirect_uri"] != redirect_uri:
             return False
         derived = _b64url_encode(hashlib.sha256(code_verifier.encode()).digest())
-        return hmac.compare_digest(
-            derived.encode("ascii"), entry["code_challenge"].encode("ascii")
-        )
+        return hmac.compare_digest(derived.encode("ascii"), entry["code_challenge"].encode("ascii"))
 
 
 async def read_form(request: web.Request) -> MultiDictProxy[Any] | None:

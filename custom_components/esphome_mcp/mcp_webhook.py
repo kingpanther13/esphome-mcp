@@ -356,9 +356,7 @@ class _ProtectedResourceMetadataView(HomeAssistantView):
         webhook_id = _active_webhook_id(self._hass)
         if webhook_id is None:
             return _json_not_found()
-        return web.json_response(
-            _protected_resource_document(webhook_id, _build_base_url(request))
-        )
+        return web.json_response(_protected_resource_document(webhook_id, _build_base_url(request)))
 
 
 class _AuthorizationServerMetadataView(HomeAssistantView):
@@ -415,9 +413,7 @@ class _WellKnownProtectedResourceView(HomeAssistantView):
         active_id = _active_webhook_id(self._hass)
         if active_id is None or webhook_id != active_id:
             return _json_not_found()
-        return web.json_response(
-            _protected_resource_document(active_id, _build_base_url(request))
-        )
+        return web.json_response(_protected_resource_document(active_id, _build_base_url(request)))
 
 
 class _WellKnownAuthorizationServerMetadataView(_AuthorizationServerMetadataView):
@@ -459,9 +455,7 @@ def _metadata_views(hass: HomeAssistant) -> list[HomeAssistantView]:
             "esphome_mcp:oauth:wellknown-as-suffixed",
         ),
     ):
-        views.append(
-            _WellKnownAuthorizationServerMetadataView(hass, url=url, name=name)
-        )
+        views.append(_WellKnownAuthorizationServerMetadataView(hass, url=url, name=name))
     return views
 
 
@@ -502,9 +496,7 @@ def _build_unauthorized_response(request: web.Request) -> web.Response:
         status=401,
         text="Unauthorized",
         headers={
-            "WWW-Authenticate": (
-                f'Bearer realm="ESPHome MCP", resource_metadata="{metadata_url}"'
-            )
+            "WWW-Authenticate": (f'Bearer realm="ESPHome MCP", resource_metadata="{metadata_url}"')
         },
     )
 
@@ -522,9 +514,7 @@ async def _check_webhook_auth(
     # validates a bearer through HA core and emits the discovery challenge on
     # failure. Provider presence owns the mode-to-gate coupling.
     resource_server: ResourceServer | None = cfg.get("resource_server")
-    if resource_server is not None and not await resource_server.validate_request(
-        request
-    ):
+    if resource_server is not None and not await resource_server.validate_request(request):
         return _build_unauthorized_response(request)
     return None
 
@@ -575,9 +565,7 @@ async def _async_handle_webhook(
                 # buffering/breaking the stream (supervisor#6470).
                 resp_headers["Content-Type"] = "text/event-stream"
                 resp_headers["X-Accel-Buffering"] = "no"
-                response = web.StreamResponse(
-                    status=upstream_resp.status, headers=resp_headers
-                )
+                response = web.StreamResponse(status=upstream_resp.status, headers=resp_headers)
                 await response.prepare(request)
                 # Once prepare() has sent the 200 + headers, a mid-stream
                 # upstream failure can no longer become a 502 — returning a
@@ -605,9 +593,7 @@ async def _async_handle_webhook(
                 content_type = "application/json"
             resp_headers["Content-Type"] = content_type
             resp_body = await upstream_resp.read()
-            return web.Response(
-                status=upstream_resp.status, body=resp_body, headers=resp_headers
-            )
+            return web.Response(status=upstream_resp.status, body=resp_body, headers=resp_headers)
     except aiohttp.ClientError as err:
         _LOGGER.error("MCP webhook: upstream request failed: %s", err)
         return web.Response(status=502, text="MCP server unavailable")

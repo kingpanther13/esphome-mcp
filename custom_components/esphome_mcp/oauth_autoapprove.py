@@ -103,9 +103,7 @@ def _json_not_found() -> web.Response:
     return web.json_response({"error": "not_found"}, status=404)
 
 
-def _json_error(
-    error: str, status: int, description: str | None = None
-) -> web.Response:
+def _json_error(error: str, status: int, description: str | None = None) -> web.Response:
     """OAuth-style JSON error (RFC 6749 §5.2 shape) with no-store headers."""
     body: dict[str, str] = {"error": error}
     if description is not None:
@@ -195,9 +193,7 @@ def _validate_autoapprove_authorize(params: Any) -> web.Response | None:
     if params.get("code_challenge_method", "") != "S256":
         return _json_error("invalid_request", 400, "code_challenge_method must be S256")
     if not _PKCE_CHALLENGE_RE.fullmatch(params.get("code_challenge", "")):
-        return _json_error(
-            "invalid_request", 400, "invalid code_challenge (43-char base64url)"
-        )
+        return _json_error("invalid_request", 400, "invalid code_challenge (43-char base64url)")
     if not _is_valid_redirect_uri(params.get("redirect_uri", "")):
         return _json_error("invalid_request", 400, "invalid redirect_uri")
     return None
@@ -268,9 +264,7 @@ class AutoApproveAuthorizeView(HomeAssistantView):
             redirect_params["state"] = state
         return _redirect_with(redirect_uri, **redirect_params)
 
-    async def _ha_auth_authorize(
-        self, cfg: dict[str, Any], request: web.Request
-    ) -> web.Response:
+    async def _ha_auth_authorize(self, cfg: dict[str, Any], request: web.Request) -> web.Response:
         """302 the browser into core's /auth/authorize (ha_auth indirection).
 
         The user logs in on core's own page exactly as before; only the URL the
@@ -303,6 +297,7 @@ class AutoApproveAuthorizeView(HomeAssistantView):
         # vulnerability fix.
         target = yarl.URL("/auth/authorize").with_query(params)
         return web.Response(status=302, headers={"Location": str(target)})
+
 
 def _revoke_rewrite(dcr_key: bytes | None, form: MultiDict) -> bool:
     """Swap an envelope back for core's own token on a revocation (#2248).
@@ -361,9 +356,7 @@ def _envelope_identity(
 
     if dcr_key is None:
         return None
-    envelope = unwrap_refresh_token(
-        dcr_key, str(form.get("refresh_token", "")), client_id
-    )
+    envelope = unwrap_refresh_token(dcr_key, str(form.get("refresh_token", "")), client_id)
     if isinstance(envelope, tuple):
         core_refresh_token, forward_id = envelope
         form.popall("refresh_token", None)
@@ -520,9 +513,7 @@ async def _forward_to_core(
             base,
             type(err).__name__,
         )
-        return _unavailable(
-            "core did not answer the token request", revocation=revocation
-        )
+        return _unavailable("core did not answer the token request", revocation=revocation)
 
 
 class AutoApproveTokenView(HomeAssistantView):
@@ -576,9 +567,7 @@ class AutoApproveTokenView(HomeAssistantView):
             headers=_TOKEN_RESPONSE_HEADERS,
         )
 
-    async def _ha_auth_token(
-        self, cfg: dict[str, Any], request: web.Request
-    ) -> web.Response:
+    async def _ha_auth_token(self, cfg: dict[str, Any], request: web.Request) -> web.Response:
         """Route the token exchange to core: 307 by default, proxy if translating.
 
         Untranslated identities are 307-redirected to core's own /auth/token so
@@ -601,9 +590,7 @@ class AutoApproveTokenView(HomeAssistantView):
         # FileField on a multipart body, and those reach the outgoing
         # session.post(data=form) serializer, which raises TypeError — an
         # anonymous 500 (#2219 codex review). Repeated keys are preserved.
-        form: MultiDict = MultiDict(
-            (key, str(value)) for key, value in raw_form.items()
-        )
+        form: MultiDict = MultiDict((key, str(value)) for key, value in raw_form.items())
         dcr_key = cfg.get(CFG_DCR_SIGNING_KEY)
         client_id = str(form.get("client_id", ""))
         resolved = await self._ha_auth_forward_identity(cfg, form, client_id, dcr_key)
@@ -642,9 +629,7 @@ class AutoApproveTokenView(HomeAssistantView):
         # residual, noted in the PR.
         form.popall("client_id", None)
         form["client_id"] = forward_id
-        return await self._proxy_token_to_core(
-            cfg, form, forward_id, client_id, dcr_key
-        )
+        return await self._proxy_token_to_core(cfg, form, forward_id, client_id, dcr_key)
 
     async def _ha_auth_forward_identity(
         self,
@@ -778,9 +763,7 @@ class AutoApproveRevokeView(HomeAssistantView):
         # str()-coerced MultiDict for the same reason the token view builds
         # one: bytes/FileField values from a multipart body would raise a
         # TypeError inside the outgoing serializer (#2219).
-        form: MultiDict = MultiDict(
-            (key, str(value)) for key, value in raw_form.items()
-        )
+        form: MultiDict = MultiDict((key, str(value)) for key, value in raw_form.items())
         if not _revoke_rewrite(cfg.get(CFG_DCR_SIGNING_KEY), form):
             # No core token to recover from the body, so there is nothing
             # to rewrite: 307 the client into core's own /auth/revoke, which
