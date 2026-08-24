@@ -23,9 +23,9 @@ from custom_components.esphome_mcp.const import (  # noqa: E402
 )
 from custom_components.esphome_mcp.mcp_webhook import (  # noqa: E402
     ResourceServer,
+    _async_handle_webhook,
     _AuthorizationServerMetadataView,
     _ProtectedResourceMetadataView,
-    _async_handle_webhook,
 )
 from custom_components.esphome_mcp.oauth_autoapprove import (  # noqa: E402
     CFG_AUTOAPPROVE_PROVIDER,
@@ -48,6 +48,7 @@ class _Request:
         form: dict[str, str] | None = None,
         authorization: str | None = None,
         body: bytes = b"",
+        method: str = "POST",
     ) -> None:
         self.query = MultiDict(query or {})
         self._form = MultiDict(form or {})
@@ -56,6 +57,7 @@ class _Request:
             self.headers["Authorization"] = authorization
         self.scheme = "https"
         self._body = body
+        self.method = method
 
     async def post(self) -> MultiDict[str]:
         return self._form
