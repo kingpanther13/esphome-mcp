@@ -34,7 +34,11 @@ class _Content:
 
 
 def _request(body: Any) -> SimpleNamespace:
-    return SimpleNamespace(content=_Content(json.dumps(body).encode()))
+    return _raw_request(json.dumps(body).encode())
+
+
+def _raw_request(raw: bytes) -> SimpleNamespace:
+    return SimpleNamespace(content=_Content(raw))
 
 
 def _run(coro: Any) -> Any:
@@ -118,3 +122,39 @@ def test_register_rejects_unsafe_redirects_and_missing_live_key() -> None:
     assert missing.status == 404
     assert unsafe.status == 400
     assert json.loads(unsafe.text)["error"] == "invalid_redirect_uri"
+
+
+def test_register_body_cap_accepts_exact_boundary_and_rejects_next_byte() -> None:
+    raw = json.dumps(
+        {"redirect_uris": ["https://client.example/callback"]},
+        separators=(",", ":"),
+    ).encode()
+    exact = raw + b" " * (oauth_dcr.MAX_DCR_BODY_BYTES - len(raw))
+
+    accepted = _run(DcrRegisterView(_hass(key=KEY)).post(_raw_request(exact)))
+    oversized = _run(DcrRegisterView(_hass(key=KEY)).post(_raw_request(exact + b" ")))
+
+    assert accepted.status == 201
+    assert oversized.status == 400
+    assert json.loads(oversized.text)["error"] == "invalid_client_metadata"
+
+
+def test_register_rejects_redirect_count_and_length_over_caps() -> None:
+    too_many = [
+        f"https://client.example/callback/{index}"
+        for index in range(oauth_dcr.MAX_REDIRECT_URIS + 1)
+    ]
+    prefix = "https://client.example/"
+    too_long = prefix + "x" * (oauth_dcr.MAX_REDIRECT_URI_LEN - len(prefix) + 1)
+
+    count_response = _run(
+        DcrRegisterView(_hass(key=KEY)).post(_request({"redirect_uris": too_many}))
+    )
+    length_response = _run(
+        DcrRegisterView(_hass(key=KEY)).post(_request({"redirect_uris": [too_long]}))
+    )
+
+    assert count_response.status == 400
+    assert json.loads(count_response.text)["error"] == "invalid_redirect_uri"
+    assert length_response.status == 400
+    assert json.loads(length_response.text)["error"] == "invalid_redirect_uri"

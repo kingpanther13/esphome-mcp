@@ -526,7 +526,7 @@ async def _async_handle_webhook(
     domain_data = hass.data.get(DOMAIN)
     cfg = domain_data.get(DATA_WEBHOOK) if isinstance(domain_data, dict) else None
     if not isinstance(cfg, dict):
-        return web.Response(status=503, text="MCP server is not available")
+        return web.Response(status=503, text="ESPHome MCP server is not available")
 
     auth_response = await _check_webhook_auth(request, cfg)
     if auth_response is not None:
@@ -596,10 +596,10 @@ async def _async_handle_webhook(
             return web.Response(status=upstream_resp.status, body=resp_body, headers=resp_headers)
     except aiohttp.ClientError as err:
         _LOGGER.error("MCP webhook: upstream request failed: %s", err)
-        return web.Response(status=502, text="MCP server unavailable")
+        return web.Response(status=502, text="ESPHome MCP server unavailable")
     except Exception as err:
         _LOGGER.exception("MCP webhook: unexpected error: %s", err)
-        return web.Response(status=500, text="MCP server internal error")
+        return web.Response(status=500, text="ESPHome MCP server internal error")
 
 
 # ---------------------------------------------------------------------------

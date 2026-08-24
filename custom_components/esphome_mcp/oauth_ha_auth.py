@@ -584,6 +584,7 @@ def unwrap_refresh_token(
 # caps in oauth_dcr — MAX_REDIRECT_URI_LEN, MAX_DCR_BODY_BYTES — are the
 # precedent).
 MAX_REVOKE_ENVELOPE_LEN = 4096
+_revoke_rotation_warned = False
 
 
 def core_token_for_revocation(signing_key: bytes | None, token: str) -> str | None:
@@ -611,6 +612,8 @@ def core_token_for_revocation(signing_key: bytes | None, token: str) -> str | No
 
     Never raises: this runs on an anonymous view.
     """
+    global _revoke_rotation_warned
+
     if signing_key is None or not token.startswith(_REFRESH_ENVELOPE_PREFIX):
         return None
     verified = unwrap_refresh_token(signing_key, token, None)
@@ -636,11 +639,16 @@ def core_token_for_revocation(signing_key: bytes | None, token: str) -> str | No
     unverified_token = payload.get("t")
     if not isinstance(unverified_token, str):
         return None
-    _LOGGER.warning(
+    message = (
         "ha_auth revoke: the presented envelope failed verification — the "
         "DCR signing key may have rotated. Forwarding the revocation to core "
         "on the token's own authority (RFC 7009 authorizes the bearer)"
     )
+    if _revoke_rotation_warned:
+        _LOGGER.debug(message)
+    else:
+        _revoke_rotation_warned = True
+        _LOGGER.warning(message)
     return unverified_token
 
 

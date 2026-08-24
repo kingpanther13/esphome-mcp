@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+import aiohttp
 from multidict import MultiDict
 
 from ._oauth_stubs import install
@@ -24,6 +25,7 @@ from custom_components.esphome_mcp.mcp_webhook import (  # noqa: E402
     ResourceServer,
     _AuthorizationServerMetadataView,
     _ProtectedResourceMetadataView,
+    _async_handle_webhook,
 )
 from custom_components.esphome_mcp.oauth_autoapprove import (  # noqa: E402
     CFG_AUTOAPPROVE_PROVIDER,
@@ -45,6 +47,7 @@ class _Request:
         query: dict[str, str] | MultiDict[str] | None = None,
         form: dict[str, str] | None = None,
         authorization: str | None = None,
+        body: bytes = b"",
     ) -> None:
         self.query = MultiDict(query or {})
         self._form = MultiDict(form or {})
@@ -52,9 +55,26 @@ class _Request:
         if authorization is not None:
             self.headers["Authorization"] = authorization
         self.scheme = "https"
+        self._body = body
 
     async def post(self) -> MultiDict[str]:
         return self._form
+
+    async def read(self) -> bytes:
+        return self._body
+
+
+class _FailingRequestContext:
+    async def __aenter__(self) -> None:
+        raise aiohttp.ClientConnectionError("upstream unavailable")
+
+    async def __aexit__(self, *_args: Any) -> None:
+        return None
+
+
+class _FailingSession:
+    def request(self, **_kwargs: Any) -> _FailingRequestContext:
+        return _FailingRequestContext()
 
 
 def _run(coro: Any) -> Any:
@@ -225,3 +245,24 @@ def test_resource_server_requires_an_active_human_admin() -> None:
 
     hass.auth.async_validate_access_token = lambda _token: result(is_admin=False)
     assert not _run(provider.validate_request(_Request(authorization="Bearer valid")))
+
+
+def test_webhook_unavailability_responses_preserve_live_e2e_retry_prefix() -> None:
+    not_ready = _run(_async_handle_webhook(SimpleNamespace(data={}), "webhook", _Request()))
+    unavailable_hass = SimpleNamespace(
+        data={
+            DOMAIN: {
+                DATA_WEBHOOK: {
+                    "target_url": "http://127.0.0.1:9590/private",
+                    "session": _FailingSession(),
+                    "resource_server": None,
+                }
+            }
+        }
+    )
+    upstream_down = _run(_async_handle_webhook(unavailable_hass, "webhook", _Request()))
+
+    assert not_ready.status == 503
+    assert not_ready.text.startswith("ESPHome MCP server")
+    assert upstream_down.status == 502
+    assert upstream_down.text.startswith("ESPHome MCP server")

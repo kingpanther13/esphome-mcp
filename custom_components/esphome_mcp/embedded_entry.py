@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 from contextlib import suppress
 from typing import TYPE_CHECKING
@@ -27,6 +28,8 @@ from .const import (
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_server_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -90,9 +93,17 @@ def _prebind_oauth_views(hass: HomeAssistant, entry: ConfigEntry) -> None:
     from .oauth_autoapprove import bind_autoapprove_views
     from .oauth_dcr import bind_dcr_view
 
-    _register_metadata_views(hass)
-    bind_autoapprove_views(hass)
-    bind_dcr_view(hass)
+    try:
+        _register_metadata_views(hass)
+        bind_autoapprove_views(hass)
+        bind_dcr_view(hass)
+    except Exception:
+        if auth_mode == WEBHOOK_AUTH_HA:
+            raise
+        _LOGGER.exception(
+            "Failed to prebind none-mode OAuth routes; continuing setup as "
+            "a plain secret-URL proxy"
+        )
 
 
 def _ensure_secrets(hass: HomeAssistant, entry: ConfigEntry) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
 from ._oauth_stubs import install
@@ -124,6 +125,27 @@ def test_revocation_recovers_a_token_after_signing_key_rotation() -> None:
     )
 
     assert core_token_for_revocation(OTHER_KEY, envelope) == "core-refresh-token"
+
+
+def test_revocation_rotation_warning_is_rate_bounded(monkeypatch: Any, caplog: Any) -> None:
+    envelope = wrap_refresh_token(
+        KEY,
+        "core-refresh-token",
+        "https://callback.example",
+        "presented-client",
+    )
+    monkeypatch.setattr(oauth_ha_auth, "_revoke_rotation_warned", False)
+
+    with caplog.at_level(logging.DEBUG, logger=oauth_ha_auth.__name__):
+        assert core_token_for_revocation(OTHER_KEY, envelope) == "core-refresh-token"
+        assert core_token_for_revocation(OTHER_KEY, envelope) == "core-refresh-token"
+
+    records = [
+        record
+        for record in caplog.records
+        if "presented envelope failed verification" in record.getMessage()
+    ]
+    assert [record.levelno for record in records] == [logging.WARNING, logging.DEBUG]
 
 
 def test_cimd_document_requires_exact_client_id_and_safe_redirects() -> None:

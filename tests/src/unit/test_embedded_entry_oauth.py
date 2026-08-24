@@ -5,6 +5,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from ._oauth_stubs import install
 
 install()
@@ -17,6 +19,7 @@ from custom_components.esphome_mcp.const import (  # noqa: E402
     OAUTH_BASE,
     OPT_ENABLE_WEBHOOK,
     OPT_WEBHOOK_AUTH,
+    WEBHOOK_AUTH_HA,
     WEBHOOK_AUTH_NONE,
 )
 
@@ -95,3 +98,34 @@ def test_prebind_skips_local_only_mode() -> None:
     embedded_entry._prebind_oauth_views(hass, entry)
 
     assert hass.registered == []
+
+
+def test_prebind_none_mode_fails_open_when_route_registration_fails() -> None:
+    hass = _hass()
+    entry = SimpleNamespace(
+        data={},
+        options={OPT_ENABLE_WEBHOOK: True, OPT_WEBHOOK_AUTH: WEBHOOK_AUTH_NONE},
+    )
+
+    def reject_registration(_view: Any) -> None:
+        raise RuntimeError("route registration failed")
+
+    hass.http.register_view = reject_registration
+
+    embedded_entry._prebind_oauth_views(hass, entry)
+
+
+def test_prebind_ha_auth_fails_closed_when_route_registration_fails() -> None:
+    hass = _hass()
+    entry = SimpleNamespace(
+        data={},
+        options={OPT_ENABLE_WEBHOOK: True, OPT_WEBHOOK_AUTH: WEBHOOK_AUTH_HA},
+    )
+
+    def reject_registration(_view: Any) -> None:
+        raise RuntimeError("route registration failed")
+
+    hass.http.register_view = reject_registration
+
+    with pytest.raises(RuntimeError, match="route registration failed"):
+        embedded_entry._prebind_oauth_views(hass, entry)
