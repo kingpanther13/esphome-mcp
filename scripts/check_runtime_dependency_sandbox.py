@@ -1,4 +1,4 @@
-"""Protect shared in-process dependencies from unsafe runtime mutation."""
+"""Protect the generated HA-MCP runtime contract from unsafe live mutation."""
 
 from __future__ import annotations
 
@@ -6,22 +6,16 @@ import argparse
 import ast
 import re
 import sys
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
-CONST_PATH = COMPONENT / "const.py"
+CONTRACT_PATH = COMPONENT / "ha_mcp_runtime" / "contract.py"
 EMBEDDED_SERVER_PATH = COMPONENT / "embedded_server.py"
 
-_EXACT_FASTMCP_PIN = re.compile(r"fastmcp==(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)")
+_COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+_EXACT_FASTMCP_PIN = re.compile(r"fastmcp==\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?")
 _REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?")
-_REQUIREMENT_PARTS = re.compile(
-    r"^(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)"
-    r"(?:\[(?P<extras>[^]]+)\])?"
-    r"(?P<specifier>[^;]*)"
-    r"(?:;(?P<marker>.*))?$"
-)
 _MODULE_CACHE_MUTATORS = {
     "__delitem__",
     "__ior__",
@@ -32,9 +26,11 @@ _MODULE_CACHE_MUTATORS = {
     "setdefault",
     "update",
 }
+_MUTATION_ERROR = "forbidden runtime dependency mutation"
 
 
 def _constant_string(path: Path, name: str) -> str | None:
+    """Read one top-level string literal."""
     tree = ast.parse(path.read_text(), filename=str(path))
     for node in tree.body:
         if isinstance(node, ast.Assign):
@@ -53,9 +49,8 @@ def _constant_string(path: Path, name: str) -> str | None:
 
 
 def _constant_string_tuple(path: Path, name: str) -> tuple[str, ...] | None:
-    """Read a tuple/list of string constants, resolving earlier string names."""
+    """Read one top-level tuple/list containing only string literals."""
     tree = ast.parse(path.read_text(), filename=str(path))
-    strings: dict[str, str] = {}
     for node in tree.body:
         if isinstance(node, ast.Assign):
             targets = node.targets
@@ -65,92 +60,30 @@ def _constant_string_tuple(path: Path, name: str) -> tuple[str, ...] | None:
             value = node.value
         else:
             continue
-        target_names = [target.id for target in targets if isinstance(target, ast.Name)]
-        if isinstance(value, ast.Constant) and isinstance(value.value, str):
-            for target_name in target_names:
-                strings[target_name] = value.value
+        if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
             continue
-        if name not in target_names or not isinstance(value, (ast.Tuple, ast.List)):
-            continue
-        resolved: list[str] = []
-        for item in value.elts:
-            if isinstance(item, ast.Constant) and isinstance(item.value, str):
-                resolved.append(item.value)
-            elif isinstance(item, ast.Name) and item.id in strings:
-                resolved.append(strings[item.id])
-            else:
-                return None
-        return tuple(resolved)
+        if not isinstance(value, (ast.Tuple, ast.List)):
+            return None
+        if not all(
+            isinstance(item, ast.Constant) and isinstance(item.value, str) for item in value.elts
+        ):
+            return None
+        return tuple(item.value for item in value.elts)
     return None
 
 
-def _requirement_name(requirement: str) -> str | None:
-    """Return a dependency's canonical distribution name."""
-    if (match := _REQUIREMENT_NAME.match(requirement.strip())) is None:
+def _canonical_name(requirement: str) -> str | None:
+    """Return the canonical distribution name from a requirement string."""
+    match = _REQUIREMENT_NAME.match(requirement.strip())
+    if match is None:
         return None
-    return _canonical_requirement_identifier(match.group(1))
+    return re.sub(r"[-_.]+", "-", match.group(1)).lower()
 
 
-def _requirement_map(requirements: list[str] | tuple[str, ...]) -> dict[str, str]:
-    """Map canonical distribution names to their complete requirement strings."""
-    mapped: dict[str, str] = {}
-    for requirement in requirements:
-        if (name := _requirement_name(requirement)) is not None:
-            mapped[name] = requirement
-    return mapped
-
-
-def _canonical_requirement_identifier(identifier: str) -> str:
-    """Return the canonical spelling of a distribution name or extra."""
-    return re.sub(r"[-_.]+", "-", identifier).lower()
-
-
-def _remove_unquoted_whitespace(value: str) -> str | None:
-    """Remove requirement syntax whitespace while preserving quoted marker values."""
-    compact: list[str] = []
-    quote: str | None = None
-    escaped = False
-    for char in value:
-        if quote is not None:
-            compact.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == quote:
-                quote = None
-        elif char in {'"', "'"}:
-            quote = char
-            compact.append(char)
-        elif not char.isspace():
-            compact.append(char)
-    return None if quote is not None else "".join(compact)
-
-
-def _normalized_requirement(requirement: str) -> tuple[object, ...] | None:
-    """Normalize a static PEP 508 requirement without third-party imports."""
-    if (compact := _remove_unquoted_whitespace(requirement)) is None or (
-        match := _REQUIREMENT_PARTS.fullmatch(compact)
-    ) is None:
-        return None
-    name = _canonical_requirement_identifier(match.group("name"))
-    extras = tuple(
-        sorted(
-            _canonical_requirement_identifier(extra)
-            for extra in filter(None, (match.group("extras") or "").split(","))
-        )
-    )
-    specifiers = tuple(sorted(filter(None, match.group("specifier").split(","))))
-    return name, extras, specifiers, match.group("marker") or ""
-
-
-def _requirements_match(left: str, right: str) -> bool:
-    """Return whether two static requirement strings are semantically identical."""
-    normalized_left = _normalized_requirement(left)
-    return normalized_left is not None and normalized_left == _normalized_requirement(right)
-
-
-def _import_aliases(tree: ast.AST) -> tuple[set[str], set[str], set[str], set[str]]:
+def _import_aliases(
+    tree: ast.AST,
+) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Find direct and aliased handles to the process-global module cache."""
     sys_names: set[str] = set()
     module_cache_names: set[str] = set()
     importlib_names: set[str] = set()
@@ -189,7 +122,12 @@ def _import_aliases(tree: ast.AST) -> tuple[set[str], set[str], set[str], set[st
     return sys_names, module_cache_names, importlib_names, reload_names
 
 
-def _is_module_cache(node: ast.AST | None, sys_names: set[str], aliases: set[str]) -> bool:
+def _is_module_cache(
+    node: ast.AST | None,
+    sys_names: set[str],
+    aliases: set[str],
+) -> bool:
+    """Return whether an AST node refers to sys.modules."""
     if isinstance(node, ast.Name):
         return node.id in aliases
     return (
@@ -205,6 +143,7 @@ def _mutates_module_cache_target(
     sys_names: set[str],
     aliases: set[str],
 ) -> bool:
+    """Return whether an assignment target writes through sys.modules."""
     if isinstance(node, ast.Attribute):
         return _is_module_cache(node, sys_names, aliases)
     return isinstance(node, ast.Subscript) and _is_module_cache(node.value, sys_names, aliases)
@@ -238,29 +177,39 @@ def validate_runtime_source(path: Path) -> list[str]:
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if any(
-                _mutates_module_cache_target(target, sys_names, module_cache_names)
+                _mutates_module_cache_target(
+                    target,
+                    sys_names,
+                    module_cache_names,
+                )
                 for target in targets
             ):
                 violation = "assignment to sys.modules"
         elif isinstance(node, ast.AugAssign) and _is_module_cache(
-            node.target, sys_names, module_cache_names
+            node.target,
+            sys_names,
+            module_cache_names,
         ):
             violation = "in-place update of sys.modules"
         elif isinstance(node, ast.NamedExpr) and _mutates_module_cache_target(
-            node.target, sys_names, module_cache_names
+            node.target,
+            sys_names,
+            module_cache_names,
         ):
             violation = "assignment to sys.modules"
         elif isinstance(node, ast.Delete) and any(
-            _mutates_module_cache_target(target, sys_names, module_cache_names)
+            _mutates_module_cache_target(
+                target,
+                sys_names,
+                module_cache_names,
+            )
             for target in node.targets
         ):
             violation = "deletion from sys.modules"
 
         if violation is not None:
             relative = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-            errors.append(
-                f"{relative}:{node.lineno}: forbidden runtime dependency mutation: {violation}"
-            )
+            errors.append(f"{relative}:{node.lineno}: {_MUTATION_ERROR}: {violation}")
     return errors
 
 
@@ -272,42 +221,59 @@ def validate_runtime_tree(component: Path = COMPONENT) -> list[str]:
     return errors
 
 
-def validate_runtime_constants(const_path: Path = CONST_PATH) -> list[str]:
-    """Require safe, ordered shared specs validated against ha-mcp master."""
+def validate_runtime_contract(path: Path = CONTRACT_PATH) -> list[str]:
+    """Require one immutable snapshot with both server and component metadata."""
     errors: list[str] = []
-    pip_spec = _constant_string(const_path, "DEFAULT_PIP_SPEC")
-    if pip_spec is None or _EXACT_FASTMCP_PIN.fullmatch(pip_spec) is None:
-        errors.append("DEFAULT_PIP_SPEC must be an exact fastmcp==X.Y.Z pin")
-    compat_ref = _constant_string(const_path, "HA_MCP_COMPAT_REF")
-    if compat_ref != "master":
-        errors.append("HA_MCP_COMPAT_REF must be 'master'")
-    shared = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
-    if shared is None:
-        errors.append("SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings")
-        return errors
-    shared_by_name = _requirement_map(shared)
-    ha_owned = _constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS")
-    if ha_owned != ("websockets",):
-        errors.append("HA_OWNED_RUNTIME_REQUIREMENTS must contain only 'websockets'")
-    if len(shared_by_name) != len(shared):
-        errors.append("SHARED_RUNTIME_REQUIREMENTS must contain unique valid requirements")
-    if shared_by_name.get("fastmcp") != pip_spec:
-        errors.append("SHARED_RUNTIME_REQUIREMENTS must contain DEFAULT_PIP_SPEC")
-    if shared[-1:] != (pip_spec,):
-        errors.append("DEFAULT_PIP_SPEC must be last so shared constraints install first")
-    if "websockets" in shared_by_name:
-        errors.append("websockets is HA-owned and must not be installed by ESPHome MCP")
+    repository = _constant_string(path, "HA_MCP_REPOSITORY")
+    sha = _constant_string(path, "HA_MCP_MASTER_SHA")
+    server_version = _constant_string(path, "HA_MCP_SERVER_VERSION")
+    component_version = _constant_string(path, "HA_MCP_COMPONENT_VERSION")
+    fastmcp = _constant_string(path, "HA_MCP_FASTMCP_REQUIREMENT")
+    server_requirements = _constant_string_tuple(
+        path,
+        "HA_MCP_SERVER_REQUIREMENTS",
+    )
+    component_requirements = _constant_string_tuple(
+        path,
+        "HA_MCP_COMPONENT_REQUIREMENTS",
+    )
+
+    if repository != "homeassistant-ai/ha-mcp":
+        errors.append("HA_MCP_REPOSITORY must be homeassistant-ai/ha-mcp")
+    if sha is None or _COMMIT_RE.fullmatch(sha) is None:
+        errors.append("HA_MCP_MASTER_SHA must be one immutable 40-character SHA")
+    if not server_version:
+        errors.append("HA_MCP_SERVER_VERSION is missing")
+    if not component_version:
+        errors.append("HA_MCP_COMPONENT_VERSION is missing")
+    if not server_requirements:
+        errors.append("HA_MCP_SERVER_REQUIREMENTS must not be empty")
+    if component_requirements is None:
+        errors.append("HA_MCP_COMPONENT_REQUIREMENTS must be a string tuple")
+    if fastmcp is None or _EXACT_FASTMCP_PIN.fullmatch(fastmcp) is None:
+        errors.append("HA_MCP_FASTMCP_REQUIREMENT must be an exact FastMCP pin")
+    if server_requirements is not None and fastmcp not in server_requirements:
+        errors.append("HA_MCP_FASTMCP_REQUIREMENT must be present in HA_MCP_SERVER_REQUIREMENTS")
+    if server_requirements is not None:
+        names = [_canonical_name(requirement) for requirement in server_requirements]
+        if None in names:
+            errors.append("HA_MCP_SERVER_REQUIREMENTS contains an invalid requirement")
+        elif len(names) != len(set(names)):
+            errors.append("HA_MCP_SERVER_REQUIREMENTS contains duplicate distributions")
     return errors
 
 
 def validate_worker_import_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
-    """Require deadlock-safe preloading before the worker enters its server coroutine."""
+    """Require deadlock-safe preloading before the worker serves requests."""
     tree = ast.parse(path.read_text(), filename=str(path))
-    thread_main: ast.FunctionDef | None = None
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "_thread_main":
-            thread_main = node
-            break
+    thread_main = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "_thread_main"
+        ),
+        None,
+    )
     if thread_main is None:
         return ["EmbeddedServerManager._thread_main is missing"]
 
@@ -331,7 +297,7 @@ def validate_worker_import_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[s
 
 
 def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
-    """Require installs to use Home Assistant's process-locked public API."""
+    """Require installs to use HA's lock with the generated server tuple."""
     tree = ast.parse(path.read_text(), filename=str(path))
     direct_installs: list[ast.AST] = []
     process_calls: list[ast.Call] = []
@@ -341,9 +307,11 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
         ):
             direct_installs.append(node)
             continue
-        if not isinstance(node, ast.Call):
-            continue
-        if isinstance(node.func, ast.Name) and node.func.id == "async_process_requirements":
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "async_process_requirements"
+        ):
             process_calls.append(node)
 
     errors = [
@@ -353,109 +321,64 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
     if not process_calls:
         errors.append(
             "embedded dependency install must use HA async_process_requirements "
-            "with SHARED_RUNTIME_REQUIREMENTS"
+            "with HA_MCP_SERVER_REQUIREMENTS"
         )
         return errors
 
     for call in process_calls:
-        requirements_arg: ast.AST | None = call.args[2] if len(call.args) > 2 else None
-        if requirements_arg is None:
-            requirements_arg = next(
+        requirements_arg = (
+            call.args[2]
+            if len(call.args) > 2
+            else next(
                 (keyword.value for keyword in call.keywords if keyword.arg == "requirements"),
                 None,
             )
-        direct_shared = (
-            isinstance(requirements_arg, ast.Name)
-            and requirements_arg.id == "SHARED_RUNTIME_REQUIREMENTS"
         )
-        copied_shared = (
+        direct_contract = (
+            isinstance(requirements_arg, ast.Name)
+            and requirements_arg.id == "HA_MCP_SERVER_REQUIREMENTS"
+        )
+        copied_contract = (
             isinstance(requirements_arg, ast.Call)
             and isinstance(requirements_arg.func, ast.Name)
             and requirements_arg.func.id == "list"
             and len(requirements_arg.args) == 1
             and not requirements_arg.keywords
             and isinstance(requirements_arg.args[0], ast.Name)
-            and requirements_arg.args[0].id == "SHARED_RUNTIME_REQUIREMENTS"
+            and requirements_arg.args[0].id == "HA_MCP_SERVER_REQUIREMENTS"
         )
-        if not (direct_shared or copied_shared):
+        if not (direct_contract or copied_contract):
             errors.append(
-                f"HA requirements-manager call at line {call.lineno} must use exactly "
-                "SHARED_RUNTIME_REQUIREMENTS"
+                f"HA requirements-manager call at line {call.lineno} must use "
+                "exactly HA_MCP_SERVER_REQUIREMENTS"
             )
     return errors
 
 
-def validate_ha_mcp_shared_requirements(
-    ha_mcp_pyproject: Path,
-    const_path: Path = CONST_PATH,
-) -> list[str]:
-    """Require every ESPHome MCP shared spec to match ha-mcp master."""
-    project = tomllib.loads(ha_mcp_pyproject.read_text())
-    dependencies = [
-        dependency
-        for dependency in project.get("project", {}).get("dependencies", [])
-        if isinstance(dependency, str)
-    ]
-    upstream_by_name = _requirement_map(dependencies)
-    local = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
-    if local is None:
-        return ["SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings"]
-    ha_owned = set(_constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS") or ())
-    upstream_shared = {
-        name: spec for name, spec in upstream_by_name.items() if name not in ha_owned
-    }
-
-    errors: list[str] = []
-    local_by_name = _requirement_map(local)
-    for name, local_spec in local_by_name.items():
-        upstream_spec = upstream_shared.get(name)
-        if upstream_spec is None:
-            errors.append(f"ha-mcp is missing shared runtime dependency {name!r}")
-            continue
-        if _requirements_match(upstream_spec, local_spec):
-            continue
-        errors.append(
-            f"shared runtime dependency mismatch for {name}: "
-            f"ESPHome MCP uses {local_spec!r}, ha-mcp uses {upstream_spec!r}"
-        )
-    for name in sorted(upstream_shared.keys() - local_by_name.keys()):
-        errors.append(f"ESPHome MCP is missing ha-mcp runtime dependency {name!r}")
-    return errors
-
-
 def main(argv: list[str] | None = None) -> int:
+    """Run the static runtime sandbox."""
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--ha-mcp-pyproject",
-        type=Path,
-        help="Downloaded pyproject.toml for HA_MCP_COMPAT_REF.",
-    )
     parser.add_argument(
         "--print-ha-mcp-ref",
         action="store_true",
-        help="Print HA_MCP_COMPAT_REF for CI download steps.",
+        help="Print the immutable HA_MCP_MASTER_SHA.",
     )
     args = parser.parse_args(argv)
 
     if args.print_ha_mcp_ref:
-        compat_ref = _constant_string(CONST_PATH, "HA_MCP_COMPAT_REF")
-        if compat_ref is None:
-            print("ERROR: HA_MCP_COMPAT_REF is missing", file=sys.stderr)
+        ref = _constant_string(CONTRACT_PATH, "HA_MCP_MASTER_SHA")
+        if ref is None:
+            print("ERROR: HA_MCP_MASTER_SHA is missing", file=sys.stderr)
             return 1
-        print(compat_ref)
+        print(ref)
         return 0
 
     errors = [
         *validate_runtime_tree(),
-        *validate_runtime_constants(),
+        *validate_runtime_contract(),
         *validate_worker_import_contract(),
         *validate_install_contract(),
     ]
-    if args.ha_mcp_pyproject is not None:
-        try:
-            errors.extend(validate_ha_mcp_shared_requirements(args.ha_mcp_pyproject))
-        except (OSError, tomllib.TOMLDecodeError) as err:
-            errors.append(f"could not read ha-mcp pyproject: {err}")
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)

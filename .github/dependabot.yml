@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Code-embedded FastMCP and HAOS pins are handled by Renovate.
+  # The code-embedded HA-MCP master contract and HAOS pins are handled by Renovate.
   # Standard dependency runs start Thursday at 08:00 UTC (03:00 EST).
 
   - package-ecosystem: "github-actions"

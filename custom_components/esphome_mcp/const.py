@@ -1,35 +1,19 @@
 """Constants for the ESPHome MCP custom component."""
 
 DOMAIN = "esphome_mcp"
-VERSION = "0.1.8"
+VERSION = "0.1.9"
 
 DEFAULT_SERVER_PORT = 9590
 DEFAULT_BIND_HOST = "0.0.0.0"
 BIND_HOST_ALL = "0.0.0.0"
 BIND_HOST_LOOPBACK = "127.0.0.1"
 
-# Installed at runtime when the in-process server entry is enabled. Keeping this
-# out of manifest.json lets HAOS boot with the baked entry disabled, matching
-# ha-mcp's embedded server pattern. FastMCP is process-global inside HA Core, so
-# this pin must match the current ha-mcp master branch used by ha_mcp_tools.
-HA_MCP_COMPAT_REF = "master"
-DEFAULT_PIP_SPEC = "fastmcp==3.4.5"  # renovate: datasource=pypi depName=fastmcp
-
-# Shared in-process requirements must stay aligned with ha-mcp. Home Assistant
-# Core already owns websockets, so it is deliberately absent: FastMCP accepts
-# HA's shipped version and ESPHome MCP must never ask pip to touch it directly.
-HA_OWNED_RUNTIME_REQUIREMENTS = ("websockets",)
-SHARED_RUNTIME_REQUIREMENTS = (
-    "httpx[socks]==0.28.1",
-    "pydantic==2.13.4",
-    "python-dotenv==1.2.2",
-    "truststore==0.10.4",
-    "cryptography>=48.0.0,<51",
-    "pydantic-monty==0.0.18",
-    "tzdata>=2024.1",
-    "packaging>=24.0",
-    DEFAULT_PIP_SPEC,
-)
+# HA-MCP's public integration domain. ESPHome MCP only reads the installed
+# component metadata; it never mutates another integration's data.
+HA_MCP_DOMAIN = "ha_mcp_tools"
+HA_MCP_ENTRY_TYPE_KEY = "entry_type"
+HA_MCP_SERVER_ENTRY_TYPE = "server"
+HA_MCP_BRINGUP_TASK_KEY = "bringup_task"
 
 SERVER_CONFIG_SUBDIR = ".esphome_mcp"
 

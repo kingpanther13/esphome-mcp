@@ -178,6 +178,12 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     assert "printf '::notice title=HAOS image cache::" in workflow
     assert "/tmp/haos-build/haos-serial.log" in workflow
     assert "img=/tmp/haos-build/haos-test-image.qcow2" in workflow
+    cache_hash = workflow[
+        workflow.index("hash=$(git ls-tree") : workflow.index(
+            "| sha256sum", workflow.index("hash=$(git ls-tree")
+        )
+    ]
+    assert "custom_components/esphome_mcp" in cache_hash
 
     seed_config = (INITIAL_TEST_STATE / "configuration.yaml").read_text()
     assert "\nhttp:" not in seed_config
@@ -263,6 +269,70 @@ def test_build_image_reuses_exact_core_target(monkeypatch) -> None:
         "http://127.0.0.1:18123",
         "token",
     )
+
+
+def test_build_image_retries_core_update_while_first_boot_job_is_busy(
+    monkeypatch,
+) -> None:
+    """The exact Core request waits for Supervisor's first-boot Core job."""
+    build_image = _load_module("esphome_mcp_test_build_image_busy", BUILD_IMAGE_PATH)
+    events: list[tuple[object, ...]] = []
+
+    class FakeWebSocket:
+        attempts = 0
+
+        def supervisor_api(
+            self,
+            path: str,
+            *,
+            method: str,
+            data: dict[str, object],
+            timeout: float,
+        ) -> dict[str, object]:
+            events.append(("api", path, method, data, timeout))
+            self.attempts += 1
+            if self.attempts == 1:
+                raise build_image.WSCommandError(
+                    build_image.CORE_JOB_BUSY_MESSAGE,
+                    code="unknown_error",
+                )
+            return {}
+
+        def reconnect(self) -> None:
+            events.append(("reconnect",))
+
+    versions = iter(["2026.8.1", "2026.8.1"])
+    monkeypatch.setattr(
+        build_image,
+        "_core_version",
+        lambda _url, _token: next(versions),
+    )
+    monkeypatch.setattr(build_image, "_wait_supervisor_ready", lambda _ws: None)
+    monkeypatch.setattr(
+        build_image.time,
+        "sleep",
+        lambda delay: events.append(("sleep", delay)),
+    )
+    monkeypatch.setattr(
+        build_image,
+        "_wait_core_version",
+        lambda *_args, **_kwargs: events.append(("wait-core",)),
+    )
+
+    build_image.ensure_core_version(
+        FakeWebSocket(),
+        "http://127.0.0.1:18123",
+        "token",
+    )
+
+    assert [event[0] for event in events] == [
+        "api",
+        "sleep",
+        "api",
+        "wait-core",
+        "reconnect",
+    ]
+    assert events[1] == ("sleep", 10.0)
 
 
 def test_install_hacs_uses_supported_addon_and_restarts_core(monkeypatch) -> None:
@@ -505,3 +575,7 @@ def test_embedded_e2e_module_tracks_expected_webhook_and_tool_names() -> None:
     assert "MCPServerUnavailableError" in source
     assert 'assert "<your-home-assistant-url>" not in connect_url' in source
     assert 'assert "Home Assistant URL unavailable" not in connect_url' in source
+    assert 'assert payload["fastmcp_version"] == _fastmcp_contract_version()' in source
+    assert 'payload["ha_mcp_master_sha"] == _contract_string("HA_MCP_MASTER_SHA")' in source
+    assert 'payload["ha_mcp_server_version"] == _contract_string(' in source
+    assert 'payload["ha_mcp_component_version"] == _contract_string(' in source

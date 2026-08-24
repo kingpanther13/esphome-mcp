@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -52,6 +53,13 @@ READY_POLL_S = 5
 DEVICE_BUILDER_CONFIG_TIMEOUT_S = 180
 FIRMWARE_JOB_TIMEOUT_S = 120
 PERSISTENT_NOTIFICATION_ID = "esphome_mcp_server_connect"
+HA_MCP_CONTRACT_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "custom_components"
+    / "esphome_mcp"
+    / "ha_mcp_runtime"
+    / "contract.py"
+)
 
 EXPECTED_ESP_TOOLS = {
     "esp_overview",
@@ -70,6 +78,25 @@ EXPECTED_ESP_TOOLS = {
     "esp_get_firmware_job",
     "esp_follow_firmware_job",
 }
+
+
+def _contract_string(name: str) -> str:
+    """Return one generated string literal from the HA-MCP contract."""
+    match = re.search(
+        rf'^{re.escape(name)} = "([^"]+)"$',
+        HA_MCP_CONTRACT_PATH.read_text(),
+        re.MULTILINE,
+    )
+    assert match is not None
+    return match.group(1)
+
+
+def _fastmcp_contract_version() -> str:
+    """Return the FastMCP pin mirrored from the HA-MCP master snapshot."""
+    requirement = _contract_string("HA_MCP_FASTMCP_REQUIREMENT")
+    assert requirement.startswith("fastmcp==")
+    return requirement.partition("==")[2]
+
 
 E2E_DEVICE_NAME = "ESP MCP E2E"
 E2E_CONFIGURATION = "esp-mcp-e2e.yaml"
@@ -713,6 +740,10 @@ class TestEmbeddedServerOnHaos:
 
         assert payload["success"] is True
         assert payload["mcp_domain"] == "esphome_mcp"
+        assert payload["fastmcp_version"] == _fastmcp_contract_version()
+        assert payload["ha_mcp_master_sha"] == _contract_string("HA_MCP_MASTER_SHA")
+        assert payload["ha_mcp_server_version"] == _contract_string("HA_MCP_SERVER_VERSION")
+        assert payload["ha_mcp_component_version"] == _contract_string("HA_MCP_COMPONENT_VERSION")
         assert "device_count" in payload
 
     def test_local_brand_icon_uses_home_assistant_authenticated_proxy(

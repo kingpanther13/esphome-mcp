@@ -9,6 +9,17 @@ permissions:
   contents: read
 
 jobs:
+  renovate-config:
+    name: Renovate Config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Validate Renovate configuration
+        run: npx --yes --package renovate@44.41.0 renovate-config-validator renovate.json
+
   lint:
     name: Ruff
     runs-on: ubuntu-latest
@@ -38,13 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/check_runtime_dependency_sandbox.py
-          compat_ref="$(python scripts/check_runtime_dependency_sandbox.py --print-ha-mcp-ref)"
-          gh api \
-            -H "Accept: application/vnd.github.raw" \
-            "repos/homeassistant-ai/ha-mcp/contents/pyproject.toml?ref=${compat_ref}" \
-            > /tmp/ha-mcp-pyproject.toml
-          python scripts/check_runtime_dependency_sandbox.py \
-            --ha-mcp-pyproject /tmp/ha-mcp-pyproject.toml
+          python scripts/sync_ha_mcp_runtime_contract.py --contract-ref --check
 
   unit:
     name: Unit Tests
