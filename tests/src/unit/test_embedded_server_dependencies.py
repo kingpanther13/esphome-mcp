@@ -443,9 +443,7 @@ def test_enabled_ha_mcp_server_task_is_shielded_and_then_reused(
 
     async def scenario() -> None:
         bringup_task = asyncio.create_task(asyncio.sleep(0))
-        hass.data[module.HA_MCP_DOMAIN] = {
-            module.HA_MCP_BRINGUP_TASK_KEY: bringup_task
-        }
+        hass.data[module.HA_MCP_DOMAIN] = {module.HA_MCP_BRINGUP_TASK_KEY: bringup_task}
         await manager._async_ensure_package()
         assert not bringup_task.cancelled()
 
@@ -671,9 +669,7 @@ def test_module_lock_deadlock_is_retried_then_import_succeeds(monkeypatch: Any) 
         if name.endswith(".server"):
             server_attempts += 1
             if server_attempts == 1:
-                raise RuntimeError(
-                    "deadlock detected by _ModuleLock('fastmcp.server.server')"
-                )
+                raise RuntimeError("deadlock detected by _ModuleLock('fastmcp.server.server')")
         return ModuleType(name)
 
     monkeypatch.setattr(module.importlib, "import_module", import_module)

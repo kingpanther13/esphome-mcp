@@ -14,12 +14,8 @@ CONTRACT_PATH = COMPONENT / "ha_mcp_runtime" / "contract.py"
 EMBEDDED_SERVER_PATH = COMPONENT / "embedded_server.py"
 
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
-_EXACT_FASTMCP_PIN = re.compile(
-    r"fastmcp==\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
-)
-_REQUIREMENT_NAME = re.compile(
-    r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?"
-)
+_EXACT_FASTMCP_PIN = re.compile(r"fastmcp==\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?")
+_REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?")
 _MODULE_CACHE_MUTATORS = {
     "__delitem__",
     "__ior__",
@@ -45,10 +41,7 @@ def _constant_string(path: Path, name: str) -> str | None:
             value = node.value
         else:
             continue
-        if not any(
-            isinstance(target, ast.Name) and target.id == name
-            for target in targets
-        ):
+        if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
             continue
         if isinstance(value, ast.Constant) and isinstance(value.value, str):
             return value.value
@@ -67,16 +60,12 @@ def _constant_string_tuple(path: Path, name: str) -> tuple[str, ...] | None:
             value = node.value
         else:
             continue
-        if not any(
-            isinstance(target, ast.Name) and target.id == name
-            for target in targets
-        ):
+        if not any(isinstance(target, ast.Name) and target.id == name for target in targets):
             continue
         if not isinstance(value, (ast.Tuple, ast.List)):
             return None
         if not all(
-            isinstance(item, ast.Constant) and isinstance(item.value, str)
-            for item in value.elts
+            isinstance(item, ast.Constant) and isinstance(item.value, str) for item in value.elts
         ):
             return None
         return tuple(item.value for item in value.elts)
@@ -157,18 +146,13 @@ def _mutates_module_cache_target(
     """Return whether an assignment target writes through sys.modules."""
     if isinstance(node, ast.Attribute):
         return _is_module_cache(node, sys_names, aliases)
-    return (
-        isinstance(node, ast.Subscript)
-        and _is_module_cache(node.value, sys_names, aliases)
-    )
+    return isinstance(node, ast.Subscript) and _is_module_cache(node.value, sys_names, aliases)
 
 
 def validate_runtime_source(path: Path) -> list[str]:
     """Return sandbox violations in one runtime Python source file."""
     tree = ast.parse(path.read_text(), filename=str(path))
-    sys_names, module_cache_names, importlib_names, reload_names = _import_aliases(
-        tree
-    )
+    sys_names, module_cache_names, importlib_names, reload_names = _import_aliases(tree)
     errors: list[str] = []
 
     for node in ast.walk(tree):
@@ -187,10 +171,7 @@ def validate_runtime_source(path: Path) -> list[str]:
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id in importlib_names
             )
-            or (
-                isinstance(node.func, ast.Name)
-                and node.func.id in reload_names
-            )
+            or (isinstance(node.func, ast.Name) and node.func.id in reload_names)
         ):
             violation = "importlib.reload()"
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -228,9 +209,7 @@ def validate_runtime_source(path: Path) -> list[str]:
 
         if violation is not None:
             relative = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
-            errors.append(
-                f"{relative}:{node.lineno}: {_MUTATION_ERROR}: {violation}"
-            )
+            errors.append(f"{relative}:{node.lineno}: {_MUTATION_ERROR}: {violation}")
     return errors
 
 
@@ -274,18 +253,13 @@ def validate_runtime_contract(path: Path = CONTRACT_PATH) -> list[str]:
     if fastmcp is None or _EXACT_FASTMCP_PIN.fullmatch(fastmcp) is None:
         errors.append("HA_MCP_FASTMCP_REQUIREMENT must be an exact FastMCP pin")
     if server_requirements is not None and fastmcp not in server_requirements:
-        errors.append(
-            "HA_MCP_FASTMCP_REQUIREMENT must be present in "
-            "HA_MCP_SERVER_REQUIREMENTS"
-        )
+        errors.append("HA_MCP_FASTMCP_REQUIREMENT must be present in HA_MCP_SERVER_REQUIREMENTS")
     if server_requirements is not None:
         names = [_canonical_name(requirement) for requirement in server_requirements]
         if None in names:
             errors.append("HA_MCP_SERVER_REQUIREMENTS contains an invalid requirement")
         elif len(names) != len(set(names)):
-            errors.append(
-                "HA_MCP_SERVER_REQUIREMENTS contains duplicate distributions"
-            )
+            errors.append("HA_MCP_SERVER_REQUIREMENTS contains duplicate distributions")
     return errors
 
 
@@ -308,10 +282,7 @@ def validate_worker_import_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[s
     for node in ast.walk(thread_main):
         if not isinstance(node, ast.Call):
             continue
-        if (
-            isinstance(node.func, ast.Name)
-            and node.func.id == "_import_server_runtime_with_retry"
-        ):
+        if isinstance(node.func, ast.Name) and node.func.id == "_import_server_runtime_with_retry":
             retry_lines.append(node.lineno)
         elif isinstance(node.func, ast.Attribute) and node.func.attr == "_serve":
             serve_lines.append(node.lineno)
@@ -344,8 +315,7 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
             process_calls.append(node)
 
     errors = [
-        f"embedded dependency install at line {call.lineno} bypasses "
-        "HA's requirements manager"
+        f"embedded dependency install at line {call.lineno} bypasses HA's requirements manager"
         for call in direct_installs
     ]
     if not process_calls:
@@ -356,13 +326,13 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
         return errors
 
     for call in process_calls:
-        requirements_arg = call.args[2] if len(call.args) > 2 else next(
-            (
-                keyword.value
-                for keyword in call.keywords
-                if keyword.arg == "requirements"
-            ),
-            None,
+        requirements_arg = (
+            call.args[2]
+            if len(call.args) > 2
+            else next(
+                (keyword.value for keyword in call.keywords if keyword.arg == "requirements"),
+                None,
+            )
         )
         direct_contract = (
             isinstance(requirements_arg, ast.Name)

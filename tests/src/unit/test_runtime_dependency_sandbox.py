@@ -122,8 +122,7 @@ def test_contract_requires_exact_fastmcp_pin_inside_server_tuple(
 
     assert sandbox.validate_runtime_contract(contract) == [
         "HA_MCP_FASTMCP_REQUIREMENT must be an exact FastMCP pin",
-        "HA_MCP_FASTMCP_REQUIREMENT must be present in "
-        "HA_MCP_SERVER_REQUIREMENTS",
+        "HA_MCP_FASTMCP_REQUIREMENT must be present in HA_MCP_SERVER_REQUIREMENTS",
     ]
 
 
@@ -146,9 +145,7 @@ def test_worker_import_retry_cannot_be_bypassed(tmp_path: Path) -> None:
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
-        "class EmbeddedServerManager:\n"
-        "    def _thread_main(self):\n"
-        "        self._serve()\n"
+        "class EmbeddedServerManager:\n    def _thread_main(self):\n        self._serve()\n"
     )
 
     assert sandbox.validate_worker_import_contract(embedded_server) == [
@@ -173,9 +170,7 @@ def test_install_contract_rejects_direct_package_install(
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
-        "from functools import partial\n"
-        "async def install(hass):\n"
-        f"    {install_expression}\n"
+        f"from functools import partial\nasync def install(hass):\n    {install_expression}\n"
     )
 
     assert sandbox.validate_install_contract(embedded_server) == [
@@ -214,6 +209,5 @@ def test_install_contract_checks_every_requirements_manager_call(
     )
 
     assert sandbox.validate_install_contract(embedded_server) == [
-        "HA requirements-manager call at line 5 must use exactly "
-        "HA_MCP_SERVER_REQUIREMENTS"
+        "HA requirements-manager call at line 5 must use exactly HA_MCP_SERVER_REQUIREMENTS"
     ]

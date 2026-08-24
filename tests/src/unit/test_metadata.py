@@ -113,14 +113,11 @@ def test_runtime_contract_mirrors_both_sides_of_ha_mcp_master() -> None:
     assert parsed.name == "fastmcp"
     assert str(parsed.specifier) == "==3.4.7"
     assert runtime_contract.HA_MCP_FASTMCP_REQUIREMENT in requirements
-    assert runtime_contract.HA_MCP_COMPONENT_REQUIREMENTS == (
-        "ruamel.yaml>=0.18.0",
-    )
+    assert runtime_contract.HA_MCP_COMPONENT_REQUIREMENTS == ("ruamel.yaml>=0.18.0",)
     assert runtime_contract.HA_MCP_COMPONENT_VERSION == "2.0.1"
     assert len(runtime_contract.HA_MCP_MASTER_SHA) == 40
     assert not any(
-        Requirement(requirement).name.lower() == "websockets"
-        for requirement in requirements
+        Requirement(requirement).name.lower() == "websockets" for requirement in requirements
     )
     assert json.loads((ROOT / "hacs.json").read_text())["homeassistant"] == "2026.8.0"
 
@@ -395,9 +392,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     contract_manager = managers["HA-MCP master runtime contract"]
     assert contract_manager["datasourceTemplate"] == "git-refs"
     assert contract_manager["currentValueTemplate"] == "master"
-    assert contract_manager["packageNameTemplate"] == (
-        "https://github.com/homeassistant-ai/ha-mcp"
-    )
+    assert contract_manager["packageNameTemplate"] == ("https://github.com/homeassistant-ai/ha-mcp")
     contract_source = (COMPONENT / "ha_mcp_runtime" / "contract.py").read_text()
     contract_pattern = contract_manager["matchStrings"][0].replace(
         "(?<",
@@ -408,9 +403,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
         {"currentDigest": runtime_contract.HA_MCP_MASTER_SHA}
     ]
     contract_rule = next(
-        rule
-        for rule in renovate["packageRules"]
-        if rule["description"].startswith("HA-MCP master")
+        rule for rule in renovate["packageRules"] if rule["description"].startswith("HA-MCP master")
     )
     assert contract_rule["postUpgradeTasks"]["commands"] == [
         "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref"
@@ -426,8 +419,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     ):
         for pattern in renovate_manager["matchStrings"]:
             engine_matches.extend(
-                match.groupdict()
-                for match in re.finditer(pattern.replace("(?<", "(?P<"), source)
+                match.groupdict() for match in re.finditer(pattern.replace("(?<", "(?P<"), source)
             )
     assert engine_matches == [
         {"currentValue": "44.41.0"},

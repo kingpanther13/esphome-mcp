@@ -742,12 +742,8 @@ class TestEmbeddedServerOnHaos:
         assert payload["mcp_domain"] == "esphome_mcp"
         assert payload["fastmcp_version"] == _fastmcp_contract_version()
         assert payload["ha_mcp_master_sha"] == _contract_string("HA_MCP_MASTER_SHA")
-        assert payload["ha_mcp_server_version"] == _contract_string(
-            "HA_MCP_SERVER_VERSION"
-        )
-        assert payload["ha_mcp_component_version"] == _contract_string(
-            "HA_MCP_COMPONENT_VERSION"
-        )
+        assert payload["ha_mcp_server_version"] == _contract_string("HA_MCP_SERVER_VERSION")
+        assert payload["ha_mcp_component_version"] == _contract_string("HA_MCP_COMPONENT_VERSION")
         assert "device_count" in payload
 
     def test_local_brand_icon_uses_home_assistant_authenticated_proxy(

@@ -16,13 +16,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-CONTRACT_PATH = (
-    ROOT
-    / "custom_components"
-    / "esphome_mcp"
-    / "ha_mcp_runtime"
-    / "contract.py"
-)
+CONTRACT_PATH = ROOT / "custom_components" / "esphome_mcp" / "ha_mcp_runtime" / "contract.py"
 HA_MCP_REPOSITORY = "homeassistant-ai/ha-mcp"
 PYPROJECT_PATH = "pyproject.toml"
 MANIFEST_PATH = "custom_components/ha_mcp_tools/manifest.json"
@@ -34,11 +28,7 @@ _REQUIREMENT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*")
 def _github_headers(*, raw: bool = False) -> dict[str, str]:
     """Return authenticated GitHub API headers when a token is available."""
     headers = {
-        "Accept": (
-            "application/vnd.github.raw+json"
-            if raw
-            else "application/vnd.github+json"
-        ),
+        "Accept": ("application/vnd.github.raw+json" if raw else "application/vnd.github+json"),
         "User-Agent": "esphome-mcp-runtime-contract-sync",
         "X-GitHub-Api-Version": "2022-11-28",
     }
@@ -65,10 +55,7 @@ def _request(url: str, *, raw: bool = False) -> bytes:
 def _resolve_commit(ref: str) -> str:
     """Resolve a branch, tag, or commit to one immutable commit SHA."""
     encoded_ref = urllib.parse.quote(ref, safe="")
-    url = (
-        f"https://api.github.com/repos/{HA_MCP_REPOSITORY}/commits/"
-        f"{encoded_ref}"
-    )
+    url = f"https://api.github.com/repos/{HA_MCP_REPOSITORY}/commits/{encoded_ref}"
     payload = json.loads(_request(url))
     sha = payload.get("sha")
     if not isinstance(sha, str) or _COMMIT_RE.fullmatch(sha) is None:
@@ -79,10 +66,7 @@ def _resolve_commit(ref: str) -> str:
 def _read_source(path: str, sha: str) -> str:
     """Read one upstream file from the resolved commit."""
     encoded_path = "/".join(urllib.parse.quote(part, safe="") for part in path.split("/"))
-    url = (
-        f"https://api.github.com/repos/{HA_MCP_REPOSITORY}/contents/"
-        f"{encoded_path}?ref={sha}"
-    )
+    url = f"https://api.github.com/repos/{HA_MCP_REPOSITORY}/contents/{encoded_path}?ref={sha}"
     return _request(url, raw=True).decode()
 
 
@@ -94,9 +78,7 @@ def _string_constant(source: str, name: str, *, filename: str) -> str:
         target_names: list[str] = []
         if isinstance(node, ast.Assign):
             value = node.value
-            target_names = [
-                target.id for target in node.targets if isinstance(target, ast.Name)
-            ]
+            target_names = [target.id for target in node.targets if isinstance(target, ast.Name)]
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
             value = node.value
             target_names = [node.target.id]
@@ -132,6 +114,8 @@ def _string_list(value: Any, *, label: str) -> tuple[str, ...]:
 
 def _format_tuple(name: str, values: tuple[str, ...]) -> str:
     """Render one deterministic Python string tuple."""
+    if len(values) == 1:
+        return f"{name} = ({json.dumps(values[0])},)"
     lines = [f"{name} = ("]
     lines.extend(f"    {json.dumps(value)}," for value in values)
     lines.append(")")

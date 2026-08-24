@@ -294,9 +294,7 @@ class EmbeddedServerManager:
         """Wait read-only for an enabled HA-MCP server's package bring-up."""
         domain_data = self._hass.data.get(HA_MCP_DOMAIN, {})
         bringup_task = (
-            domain_data.get(HA_MCP_BRINGUP_TASK_KEY)
-            if isinstance(domain_data, dict)
-            else None
+            domain_data.get(HA_MCP_BRINGUP_TASK_KEY) if isinstance(domain_data, dict) else None
         )
         if bringup_task is None:
             raise EmbeddedServerError(
@@ -331,9 +329,7 @@ class EmbeddedServerManager:
         peer_server_enabled = await self._async_validate_ha_mcp_component()
         if peer_server_enabled:
             await self._async_wait_for_ha_mcp_install()
-        peer_requirements = await self._hass.async_add_executor_job(
-            _installed_ha_mcp_requirements
-        )
+        peer_requirements = await self._hass.async_add_executor_job(_installed_ha_mcp_requirements)
         if peer_server_enabled and not peer_requirements:
             raise EmbeddedServerError(
                 "HA-MCP finished package bring-up but no ha-mcp distribution "
@@ -345,9 +341,7 @@ class EmbeddedServerManager:
 
         installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
-        violations = await self._hass.async_add_executor_job(
-            _unsatisfied_runtime_requirements
-        )
+        violations = await self._hass.async_add_executor_job(_unsatisfied_runtime_requirements)
         shared_runtime_loaded = await self._hass.async_add_executor_job(_fastmcp_runtime_loaded)
         if shared_runtime_loaded:
             loaded_fingerprint = await self._hass.async_add_executor_job(
@@ -388,11 +382,7 @@ class EmbeddedServerManager:
             )
 
         if peer_server_enabled:
-            detail = (
-                "; ".join(violations)
-                if violations
-                else "runtime modules are missing"
-            )
+            detail = "; ".join(violations) if violations else "runtime modules are missing"
             raise EmbeddedServerError(
                 "HA-MCP owns the enabled shared runtime, but its dependency "
                 f"graph is not usable: {detail}. ESPHome MCP will not invoke "
@@ -416,9 +406,7 @@ class EmbeddedServerManager:
             ) from err
 
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
-        violations = await self._hass.async_add_executor_job(
-            _unsatisfied_runtime_requirements
-        )
+        violations = await self._hass.async_add_executor_job(_unsatisfied_runtime_requirements)
         if violations or not importable:
             detail = "; ".join(violations) if violations else "runtime modules are missing"
             raise EmbeddedServerError(
@@ -570,8 +558,7 @@ def _unsatisfied_runtime_requirements() -> tuple[str, ...]:
             parsed_version = Version(installed_version)
         except InvalidVersion:
             violations.append(
-                f"{name} has invalid version {installed_version!r} "
-                f"(required by {required_by})"
+                f"{name} has invalid version {installed_version!r} (required by {required_by})"
             )
             continue
         if requirement.specifier and not requirement.specifier.contains(
@@ -588,8 +575,7 @@ def _unsatisfied_runtime_requirements() -> tuple[str, ...]:
                 child = Requirement(child_raw)
             except InvalidRequirement:
                 violations.append(
-                    f"{name} {installed_version} declares invalid requirement "
-                    f"{child_raw!r}"
+                    f"{name} {installed_version} declares invalid requirement {child_raw!r}"
                 )
                 continue
             if child.marker is not None and not any(
