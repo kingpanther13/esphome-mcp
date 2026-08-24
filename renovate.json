@@ -12,18 +12,6 @@
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^custom_components/esphome_mcp/const\\.py$/"
-      ],
-      "matchStrings": [
-        "DEFAULT_PIP_SPEC\\s*=\\s*[\"']fastmcp==(?<currentValue>\\d+\\.\\d+\\.\\d+(?:(?:a|b|rc)\\d+)?)[\"']"
-      ],
-      "depNameTemplate": "fastmcp",
-      "datasourceTemplate": "pypi",
-      "versioningTemplate": "pep440"
-    },
-    {
-      "customType": "regex",
-      "managerFilePatterns": [
         "/^tests/haos_image_build/build_image\\.py$/"
       ],
       "matchStrings": [
@@ -49,20 +37,6 @@
     }
   ],
   "packageRules": [
-    {
-      "description": "FastMCP runtime pin validated against ha-mcp master",
-      "matchDatasources": [
-        "pypi"
-      ],
-      "matchPackageNames": [
-        "fastmcp"
-      ],
-      "labels": [
-        "dependencies",
-        "python",
-        "compatibility"
-      ]
-    },
     {
       "description": "Home Assistant OS image version used by HAOS E2E",
       "matchDatasources": [

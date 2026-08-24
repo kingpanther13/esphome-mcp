@@ -44,8 +44,8 @@ Use one process-wide FastMCP runtime with explicit ownership:
 5. Only a cold or unloaded standalone runtime may be installed or repaired,
    through Home Assistant's public `async_process_requirements` API.
 
-The local compatibility range deliberately admits HA-MCP's current 3.4.6 pin,
-its announced 3.4.7 update, and later compatible FastMCP 3.x releases. A future
+The local compatibility range deliberately admits HA-MCP's previous 3.4.6 pin,
+its current 3.4.7 pin, and later compatible FastMCP 3.x releases. A future
 FastMCP 4 adoption must be an explicit ESPHome MCP compatibility change.
 
 ## Runtime Flow

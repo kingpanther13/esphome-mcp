@@ -25,8 +25,8 @@ use, including Nabu Casa Remote UI.
   Builder tools. These tools require Supervisor.
 - The official ESPHome Device Builder add-on installed and running for the
   Device Builder tool set.
-- Network/package-install access on first start so Home Assistant can install
-  the embedded MCP server runtime dependency.
+- Network/package-install access on first standalone start so Home Assistant can
+  install the embedded MCP server runtime when HA-MCP is not already installed.
 
 The Home Assistant registry tools can still report ESPHome integration devices
 and entities anywhere this custom component can run, but the add-on and Device
@@ -49,7 +49,7 @@ Builder tools need Supervisor.
 
 This repository is release-backed for HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v0.1.8`, which is the version HACS displays. Do not install a
+`v0.1.9`, which is the version HACS displays. Do not install a
 seven-character commit version such as `99cdab0`. If HACS has cached an old
 commit-only entry, refresh the custom repository before installing.
 
@@ -142,10 +142,12 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
   server can perform privileged Home Assistant and Supervisor operations.
 - Add-on and Device Builder tools require Home Assistant Supervisor; they return
   structured errors when Supervisor or the ESPHome add-on is not available.
-- ESPHome MCP and ha-mcp share FastMCP inside the Home Assistant Core process.
-  CI validates this component's exact pin against the current ha-mcp `master`
-  branch. Keep both integrations current and restart Home Assistant after either
-  one changes that shared runtime.
+- ESPHome MCP and HA-MCP share FastMCP inside the Home Assistant Core process.
+  When HA-MCP is installed, ESPHome MCP adopts HA-MCP's declared FastMCP runtime
+  without invoking pip. Without HA-MCP, ESPHome MCP reuses or installs a
+  compatible FastMCP 3.x runtime. CI checks the current HA-MCP `master` pin
+  against that supported range. Keep both integrations current and restart Home
+  Assistant after an incompatible shared-runtime change.
 
 ## Testing
 

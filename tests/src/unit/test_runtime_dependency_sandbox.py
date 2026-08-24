@@ -80,7 +80,7 @@ def test_ha_mcp_supported_patch_pins_are_compatible(
     tmp_path: Path,
     version: str,
 ) -> None:
-    """Current and announced HA-MCP pins fit the standalone compatibility range."""
+    """Previous and current HA-MCP pins fit the standalone compatibility range."""
     sandbox = _load_sandbox()
     upstream = tmp_path / "pyproject.toml"
     _write_upstream_pyproject(upstream, f"fastmcp=={version}")
