@@ -11,13 +11,18 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     DATA_BRINGUP_TASK,
+    DATA_DCR_SIGNING_KEY,
     DATA_LAST_OPTIONS,
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
     DOMAIN,
+    OPT_ENABLE_WEBHOOK,
     OPT_REGENERATE_SECRETS,
     OPT_SECRET_PATH_OVERRIDE,
+    OPT_WEBHOOK_AUTH,
     OPT_WEBHOOK_ID_OVERRIDE,
+    WEBHOOK_AUTH_HA,
+    WEBHOOK_AUTH_NONE,
 )
 
 if TYPE_CHECKING:
@@ -29,6 +34,7 @@ async def async_setup_server_entry(hass: HomeAssistant, entry: ConfigEntry) -> b
     from .embedded_setup import async_bring_up_server
 
     _ensure_secrets(hass, entry)
+    _prebind_oauth_views(hass, entry)
 
     domain_data = hass.data.setdefault(DOMAIN, {})
     domain_data[DATA_LAST_OPTIONS] = dict(entry.options)
@@ -72,6 +78,23 @@ async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> Non
     await hass.config_entries.async_reload(entry.entry_id)
 
 
+def _prebind_oauth_views(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Bind OAuth routes before background server installation can race startup."""
+    if not bool(entry.options.get(OPT_ENABLE_WEBHOOK, True)):
+        return
+    auth_mode = str(entry.options.get(OPT_WEBHOOK_AUTH, WEBHOOK_AUTH_NONE))
+    if auth_mode not in (WEBHOOK_AUTH_NONE, WEBHOOK_AUTH_HA):
+        return
+
+    from .mcp_webhook import _register_metadata_views
+    from .oauth_autoapprove import bind_autoapprove_views
+    from .oauth_dcr import bind_dcr_view
+
+    _register_metadata_views(hass)
+    bind_autoapprove_views(hass)
+    bind_dcr_view(hass)
+
+
 def _ensure_secrets(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Generate and persist stable webhook and direct-access secrets."""
     data = dict(entry.data)
@@ -81,6 +104,7 @@ def _ensure_secrets(hass: HomeAssistant, entry: ConfigEntry) -> None:
     if options.get(OPT_REGENERATE_SECRETS):
         data[DATA_WEBHOOK_ID] = f"esp_mcp_{secrets.token_hex(16)}"
         data[DATA_SECRET_PATH] = f"/private_{secrets.token_urlsafe(16)}"
+        data[DATA_DCR_SIGNING_KEY] = secrets.token_bytes(32).hex()
         options[OPT_REGENERATE_SECRETS] = False
         options[OPT_WEBHOOK_ID_OVERRIDE] = ""
         options[OPT_SECRET_PATH_OVERRIDE] = ""
@@ -105,6 +129,9 @@ def _ensure_secrets(hass: HomeAssistant, entry: ConfigEntry) -> None:
         changed = True
     if not data.get(DATA_SECRET_PATH):
         data[DATA_SECRET_PATH] = f"/private_{secrets.token_urlsafe(16)}"
+        changed = True
+    if not data.get(DATA_DCR_SIGNING_KEY):
+        data[DATA_DCR_SIGNING_KEY] = secrets.token_bytes(32).hex()
         changed = True
     if changed:
         hass.config_entries.async_update_entry(entry, data=data)

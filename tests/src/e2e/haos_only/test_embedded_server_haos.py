@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -11,7 +13,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 import requests
@@ -729,6 +731,78 @@ class TestEmbeddedServerOnHaos:
 
         assert EXPECTED_ESP_TOOLS <= names
         assert all(str(name).startswith("esp_") for name in names)
+
+    def test_none_mode_oauth_discovery_dcr_and_pkce_flow(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        """The live component completes the zero-login compatibility flow."""
+        base_url, _session_id, _configuration = embedded_server
+        oauth_base = f"{base_url}/api/esphome_mcp/oauth"
+        redirect_uri = "https://client.example/callback"
+
+        metadata = requests.get(
+            f"{oauth_base}/authorization-server",
+            timeout=60,
+        )
+        assert metadata.status_code == 200, metadata.text[:1000]
+        document = metadata.json()
+        assert document["issuer"] == oauth_base
+        assert document["authorization_endpoint"] == f"{oauth_base}/authorize"
+        assert document["token_endpoint"] == f"{oauth_base}/token"
+        assert document["registration_endpoint"] == f"{oauth_base}/register"
+        assert document["grant_types_supported"] == ["authorization_code"]
+
+        registration = requests.post(
+            f"{oauth_base}/register",
+            json={
+                "redirect_uris": [redirect_uri],
+                "client_name": "ESPHome MCP HAOS E2E",
+            },
+            timeout=60,
+        )
+        assert registration.status_code == 201, registration.text[:1000]
+        client_id = registration.json()["client_id"]
+        assert client_id.startswith("espmcp-dcr-")
+
+        verifier = "v" * 43
+        challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        authorize = requests.get(
+            f"{oauth_base}/authorize",
+            params={
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "state": "haos-e2e",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            },
+            allow_redirects=False,
+            timeout=60,
+        )
+        assert authorize.status_code == 302, authorize.text[:1000]
+        redirected = urlparse(authorize.headers["Location"])
+        redirect_query = parse_qs(redirected.query)
+        assert redirect_query["state"] == ["haos-e2e"]
+        assert redirect_query["iss"] == [oauth_base]
+
+        token = requests.post(
+            f"{oauth_base}/token",
+            data={
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "code": redirect_query["code"][0],
+                "code_verifier": verifier,
+            },
+            timeout=60,
+        )
+        assert token.status_code == 200, token.text[:1000]
+        assert token.json()["token_type"] == "Bearer"
+        assert token.json()["access_token"]
+        assert token.headers["Cache-Control"] == "no-store"
 
     def test_overview_tool_runs_inside_haos(
         self,

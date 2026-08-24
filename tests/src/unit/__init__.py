@@ -1,0 +1,1 @@
+"""ESPHome MCP unit tests."""

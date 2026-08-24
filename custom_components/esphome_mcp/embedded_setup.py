@@ -15,6 +15,7 @@ from homeassistant.helpers import issue_registry as ir
 
 from .const import (
     BIND_HOST_ALL,
+    DATA_DCR_SIGNING_KEY,
     DATA_MANAGER,
     DATA_SECRET_PATH,
     DATA_WEBHOOK_ID,
@@ -62,6 +63,7 @@ async def async_bring_up_server(hass: HomeAssistant, entry: ConfigEntry) -> None
                 port=manager.port,
                 secret_path=secret_path,
                 auth_mode=auth_mode,
+                dcr_signing_key=str(entry.data[DATA_DCR_SIGNING_KEY]),
             )
         else:
             _LOGGER.info("ESPHome MCP webhook access disabled; direct access only")
