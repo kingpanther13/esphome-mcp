@@ -118,12 +118,8 @@ def test_supported_range_accepts_current_and_announced_ha_mcp_pins(monkeypatch: 
 
     assert module._version_satisfies_requirement("3.4.6", module.STANDALONE_FASTMCP_SPEC)
     assert module._version_satisfies_requirement("3.4.7", module.STANDALONE_FASTMCP_SPEC)
-    assert not module._version_satisfies_requirement(
-        "3.4.4", module.STANDALONE_FASTMCP_SPEC
-    )
-    assert not module._version_satisfies_requirement(
-        "4.0.0", module.STANDALONE_FASTMCP_SPEC
-    )
+    assert not module._version_satisfies_requirement("3.4.4", module.STANDALONE_FASTMCP_SPEC)
+    assert not module._version_satisfies_requirement("4.0.0", module.STANDALONE_FASTMCP_SPEC)
 
 
 def test_enabled_peer_task_is_awaited_and_adopted_without_install(monkeypatch: Any) -> None:
