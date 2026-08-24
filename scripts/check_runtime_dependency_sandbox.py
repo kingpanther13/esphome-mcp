@@ -14,7 +14,13 @@ COMPONENT = ROOT / "custom_components" / "esphome_mcp"
 CONST_PATH = COMPONENT / "const.py"
 EMBEDDED_SERVER_PATH = COMPONENT / "embedded_server.py"
 
-_EXACT_FASTMCP_PIN = re.compile(r"fastmcp==(\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?)")
+_VERSION = r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?"
+_EXACT_FASTMCP_PIN = re.compile(rf"fastmcp==(?P<version>{_VERSION})")
+_BOUNDED_FASTMCP_RANGE = re.compile(rf"fastmcp>=(?P<lower>{_VERSION}),<(?P<upper_major>\d+)")
+_VERSION_PARTS = re.compile(
+    r"(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)"
+    r"(?:(?P<pre>a|b|rc)(?P<pre_number>\d+))?"
+)
 _REQUIREMENT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^]]+\])?")
 _REQUIREMENT_PARTS = re.compile(
     r"^(?P<name>[A-Za-z0-9][A-Za-z0-9_.-]*)"
@@ -103,6 +109,45 @@ def _requirement_map(requirements: list[str] | tuple[str, ...]) -> dict[str, str
 def _canonical_requirement_identifier(identifier: str) -> str:
     """Return the canonical spelling of a distribution name or extra."""
     return re.sub(r"[-_.]+", "-", identifier).lower()
+
+
+def _version_key(version: str) -> tuple[int, int, int, int, int] | None:
+    """Return a comparison key for the version syntax accepted by this checker."""
+    if (match := _VERSION_PARTS.fullmatch(version)) is None:
+        return None
+    pre = match.group("pre")
+    pre_rank = {"a": 0, "b": 1, "rc": 2, None: 3}[pre]
+    return (
+        int(match.group("major")),
+        int(match.group("minor")),
+        int(match.group("patch")),
+        pre_rank,
+        int(match.group("pre_number") or 0),
+    )
+
+
+def _fastmcp_range_bounds(spec: str | None) -> tuple[str, int] | None:
+    """Return the lower version and exclusive upper major for a static range."""
+    if spec is None or (match := _BOUNDED_FASTMCP_RANGE.fullmatch(spec)) is None:
+        return None
+    lower = match.group("lower")
+    upper_major = int(match.group("upper_major"))
+    lower_key = _version_key(lower)
+    if lower_key is None or upper_major <= lower_key[0]:
+        return None
+    return lower, upper_major
+
+
+def _version_in_fastmcp_range(version: str, spec: str) -> bool:
+    """Return whether one exact version falls inside the supported FastMCP range."""
+    bounds = _fastmcp_range_bounds(spec)
+    version_key = _version_key(version)
+    if bounds is None or version_key is None:
+        return False
+    lower, upper_major = bounds
+    lower_key = _version_key(lower)
+    assert lower_key is not None
+    return version_key >= lower_key and version_key[0] < upper_major
 
 
 def _remove_unquoted_whitespace(value: str) -> str | None:
@@ -273,30 +318,17 @@ def validate_runtime_tree(component: Path = COMPONENT) -> list[str]:
 
 
 def validate_runtime_constants(const_path: Path = CONST_PATH) -> list[str]:
-    """Require safe, ordered shared specs validated against ha-mcp master."""
+    """Require one bounded standalone FastMCP spec and HA-MCP master tracking."""
     errors: list[str] = []
-    pip_spec = _constant_string(const_path, "DEFAULT_PIP_SPEC")
-    if pip_spec is None or _EXACT_FASTMCP_PIN.fullmatch(pip_spec) is None:
-        errors.append("DEFAULT_PIP_SPEC must be an exact fastmcp==X.Y.Z pin")
+    pip_spec = _constant_string(const_path, "STANDALONE_FASTMCP_SPEC")
+    if _fastmcp_range_bounds(pip_spec) is None:
+        errors.append("STANDALONE_FASTMCP_SPEC must be bounded as fastmcp>=X.Y.Z,<N")
     compat_ref = _constant_string(const_path, "HA_MCP_COMPAT_REF")
     if compat_ref != "master":
         errors.append("HA_MCP_COMPAT_REF must be 'master'")
-    shared = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
-    if shared is None:
-        errors.append("SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings")
-        return errors
-    shared_by_name = _requirement_map(shared)
-    ha_owned = _constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS")
-    if ha_owned != ("websockets",):
-        errors.append("HA_OWNED_RUNTIME_REQUIREMENTS must contain only 'websockets'")
-    if len(shared_by_name) != len(shared):
-        errors.append("SHARED_RUNTIME_REQUIREMENTS must contain unique valid requirements")
-    if shared_by_name.get("fastmcp") != pip_spec:
-        errors.append("SHARED_RUNTIME_REQUIREMENTS must contain DEFAULT_PIP_SPEC")
-    if shared[-1:] != (pip_spec,):
-        errors.append("DEFAULT_PIP_SPEC must be last so shared constraints install first")
-    if "websockets" in shared_by_name:
-        errors.append("websockets is HA-owned and must not be installed by ESPHome MCP")
+    standalone = _constant_string_tuple(const_path, "STANDALONE_RUNTIME_REQUIREMENTS")
+    if standalone != (pip_spec,):
+        errors.append("STANDALONE_RUNTIME_REQUIREMENTS must contain only STANDALONE_FASTMCP_SPEC")
     return errors
 
 
@@ -353,7 +385,7 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
     if not process_calls:
         errors.append(
             "embedded dependency install must use HA async_process_requirements "
-            "with SHARED_RUNTIME_REQUIREMENTS"
+            "with STANDALONE_RUNTIME_REQUIREMENTS"
         )
         return errors
 
@@ -366,7 +398,7 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
             )
         direct_shared = (
             isinstance(requirements_arg, ast.Name)
-            and requirements_arg.id == "SHARED_RUNTIME_REQUIREMENTS"
+            and requirements_arg.id == "STANDALONE_RUNTIME_REQUIREMENTS"
         )
         copied_shared = (
             isinstance(requirements_arg, ast.Call)
@@ -375,21 +407,21 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
             and len(requirements_arg.args) == 1
             and not requirements_arg.keywords
             and isinstance(requirements_arg.args[0], ast.Name)
-            and requirements_arg.args[0].id == "SHARED_RUNTIME_REQUIREMENTS"
+            and requirements_arg.args[0].id == "STANDALONE_RUNTIME_REQUIREMENTS"
         )
         if not (direct_shared or copied_shared):
             errors.append(
                 f"HA requirements-manager call at line {call.lineno} must use exactly "
-                "SHARED_RUNTIME_REQUIREMENTS"
+                "STANDALONE_RUNTIME_REQUIREMENTS"
             )
     return errors
 
 
-def validate_ha_mcp_shared_requirements(
+def validate_ha_mcp_fastmcp_compatibility(
     ha_mcp_pyproject: Path,
     const_path: Path = CONST_PATH,
 ) -> list[str]:
-    """Require every ESPHome MCP shared spec to match ha-mcp master."""
+    """Require HA-MCP's exact FastMCP pin to fit the supported local range."""
     project = tomllib.loads(ha_mcp_pyproject.read_text())
     dependencies = [
         dependency
@@ -397,30 +429,23 @@ def validate_ha_mcp_shared_requirements(
         if isinstance(dependency, str)
     ]
     upstream_by_name = _requirement_map(dependencies)
-    local = _constant_string_tuple(const_path, "SHARED_RUNTIME_REQUIREMENTS")
-    if local is None:
-        return ["SHARED_RUNTIME_REQUIREMENTS must be a static tuple of strings"]
-    ha_owned = set(_constant_string_tuple(const_path, "HA_OWNED_RUNTIME_REQUIREMENTS") or ())
-    upstream_shared = {
-        name: spec for name, spec in upstream_by_name.items() if name not in ha_owned
-    }
+    upstream_spec = upstream_by_name.get("fastmcp")
+    if upstream_spec is None:
+        return ["ha-mcp does not declare a FastMCP runtime dependency"]
+    if (match := _EXACT_FASTMCP_PIN.fullmatch(upstream_spec)) is None:
+        return [
+            "ha-mcp FastMCP requirement must be an exact pin for compatibility "
+            f"validation: {upstream_spec!r}"
+        ]
 
-    errors: list[str] = []
-    local_by_name = _requirement_map(local)
-    for name, local_spec in local_by_name.items():
-        upstream_spec = upstream_shared.get(name)
-        if upstream_spec is None:
-            errors.append(f"ha-mcp is missing shared runtime dependency {name!r}")
-            continue
-        if _requirements_match(upstream_spec, local_spec):
-            continue
-        errors.append(
-            f"shared runtime dependency mismatch for {name}: "
-            f"ESPHome MCP uses {local_spec!r}, ha-mcp uses {upstream_spec!r}"
-        )
-    for name in sorted(upstream_shared.keys() - local_by_name.keys()):
-        errors.append(f"ESPHome MCP is missing ha-mcp runtime dependency {name!r}")
-    return errors
+    local_spec = _constant_string(const_path, "STANDALONE_FASTMCP_SPEC")
+    if _fastmcp_range_bounds(local_spec) is None:
+        return ["STANDALONE_FASTMCP_SPEC must be bounded as fastmcp>=X.Y.Z,<N"]
+    assert local_spec is not None
+    version = match.group("version")
+    if _version_in_fastmcp_range(version, local_spec):
+        return []
+    return [f"ha-mcp FastMCP pin {version} is outside ESPHome MCP supported range {local_spec}"]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -453,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
     ]
     if args.ha_mcp_pyproject is not None:
         try:
-            errors.extend(validate_ha_mcp_shared_requirements(args.ha_mcp_pyproject))
+            errors.extend(validate_ha_mcp_fastmcp_compatibility(args.ha_mcp_pyproject))
         except (OSError, tomllib.TOMLDecodeError) as err:
             errors.append(f"could not read ha-mcp pyproject: {err}")
     if errors:
