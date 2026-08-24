@@ -33,6 +33,14 @@ runtime_contract = util.module_from_spec(RUNTIME_CONTRACT_SPEC)
 RUNTIME_CONTRACT_SPEC.loader.exec_module(runtime_contract)
 
 
+def _build_image_version(constant: str) -> str:
+    """Read a Renovate-managed version constant from the HAOS image builder."""
+    source = (ROOT / "tests" / "haos_image_build" / "build_image.py").read_text()
+    match = re.search(rf'^{constant} = "([^\"]+)"$', source, re.MULTILINE)
+    assert match is not None
+    return match.group(1)
+
+
 def test_manifest_is_hacs_ready() -> None:
     """Manifest has the expected custom-component identity."""
     manifest = json.loads((COMPONENT / "manifest.json").read_text())
@@ -56,13 +64,9 @@ def test_manifest_is_hacs_ready() -> None:
 def test_hacs_metadata_exists() -> None:
     """HACS metadata is present at the repository root only."""
     root_hacs = json.loads((ROOT / "hacs.json").read_text())
-    build_image = (ROOT / "tests" / "haos_image_build" / "build_image.py").read_text()
-    core_version_match = re.search(r'^HA_CORE_VERSION = "([^\"]+)"$', build_image, re.MULTILINE)
 
     assert root_hacs["name"] == "ESPHome MCP"
-    assert root_hacs["homeassistant"] == "2026.8.0"
-    assert core_version_match is not None
-    assert root_hacs["homeassistant"] == core_version_match.group(1)
+    assert root_hacs["homeassistant"] == _build_image_version("HA_CORE_VERSION")
     assert root_hacs["render_readme"] is True
     assert "hide_default_branch" not in root_hacs
     assert "zip_release" not in root_hacs
@@ -119,7 +123,6 @@ def test_runtime_contract_mirrors_both_sides_of_ha_mcp_master() -> None:
     assert not any(
         Requirement(requirement).name.lower() == "websockets" for requirement in requirements
     )
-    assert json.loads((ROOT / "hacs.json").read_text())["homeassistant"] == "2026.8.0"
 
 
 def test_restart_repair_is_declared_for_shared_dependency_conflicts() -> None:
@@ -211,7 +214,8 @@ def test_readme_has_hacs_facing_usage_information() -> None:
     assert "## Safety Notes" in readme
     assert "latest published **ESPHome MCP** release" in readme
     assert "seven-character commit version" in readme
-    assert "Home Assistant `2026.8.0` or newer" in readme
+    core_version = _build_image_version("HA_CORE_VERSION")
+    assert f"Home Assistant `{core_version}` or newer" in readme
 
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
@@ -372,7 +376,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             "github-releases",
             "/^tests/haos_image_build/build_image\\.py$/",
             build_image,
-            "18.2",
+            "HAOS_VERSION",
         ),
     }
     assert managers.keys() == expected.keys() | {
@@ -380,14 +384,16 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
         "HA-MCP master runtime contract",
         "renovate",
     }
-    for dep_name, (datasource, file_pattern, source, current_value) in expected.items():
+    for dep_name, (datasource, file_pattern, source, version_constant) in expected.items():
         manager = managers[dep_name]
         assert manager["datasourceTemplate"] == datasource
         assert manager["managerFilePatterns"] == [file_pattern]
         assert len(manager["matchStrings"]) == 1
         pattern = manager["matchStrings"][0].replace("(?<", "(?P<")
         matches = list(re.finditer(pattern, source))
-        assert [match.groupdict() for match in matches] == [{"currentValue": current_value}]
+        assert [match.groupdict() for match in matches] == [
+            {"currentValue": _build_image_version(version_constant)}
+        ]
 
     contract_manager = managers["HA-MCP master runtime contract"]
     assert contract_manager["datasourceTemplate"] == "git-refs"
@@ -434,13 +440,16 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
         "/^README\\.md$/",
     ]
     assert len(core_manager["matchStrings"]) == 3
+    core_versions = []
     for pattern, source in zip(
         core_manager["matchStrings"],
         (build_image, hacs, readme),
         strict=True,
     ):
         matches = list(re.finditer(pattern.replace("(?<", "(?P<"), source))
-        assert [match.groupdict() for match in matches] == [{"currentValue": "2026.8.0"}]
+        assert len(matches) == 1
+        core_versions.append(matches[0].group("currentValue"))
+    assert core_versions == [_build_image_version("HA_CORE_VERSION")] * 3
 
     pr_workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     assert "name: FastMCP Standalone Canary" not in pr_workflow

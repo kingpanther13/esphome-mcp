@@ -135,8 +135,6 @@ def test_build_image_installs_esphome_and_hacs_before_bake() -> None:
     source = BUILD_IMAGE_PATH.read_text()
     workflow = E2E_COMPONENT_WORKFLOW.read_text()
 
-    assert build_image.HAOS_VERSION == "18.2"
-    assert build_image.HA_CORE_VERSION == "2026.8.0"
     assert build_image.CORE_FIRST_BOOT_TIMEOUT == 600
     assert build_image.CORE_UPDATE_TIMEOUT == 900
     assert build_image.HA_GUEST_PORT == 80
@@ -213,7 +211,8 @@ def test_build_image_installs_exact_core_target_before_addons(monkeypatch) -> No
         def reconnect(self) -> None:
             events.append(("reconnect",))
 
-    versions = iter(["2026.8.1"])
+    monkeypatch.setattr(build_image, "HA_CORE_VERSION", "2099.12.31")
+    versions = iter(["2099.12.30"])
     monkeypatch.setattr(build_image, "_core_version", lambda _url, _token: next(versions))
     monkeypatch.setattr(
         build_image,
@@ -240,10 +239,10 @@ def test_build_image_installs_exact_core_target_before_addons(monkeypatch) -> No
             "api",
             "/core/update",
             "post",
-            {"version": "2026.8.0", "backup": False},
+            {"version": "2099.12.31", "backup": False},
             900,
         ),
-        ("wait-core", "http://127.0.0.1:18123", "token", "2026.8.0", 900),
+        ("wait-core", "http://127.0.0.1:18123", "token", "2099.12.31", 900),
         ("reconnect",),
     ]
 
