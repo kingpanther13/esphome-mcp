@@ -238,7 +238,11 @@ def test_missing_contract_installs_exact_server_requirements(monkeypatch: Any) -
     )
     monkeypatch.setattr(module, "_server_dependencies_importable", lambda: installed)
     monkeypatch.setattr(module, "_fastmcp_runtime_loaded", lambda: False)
-    monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: "3.4.7" if installed else None)
+    monkeypatch.setattr(
+        module,
+        "_installed_fastmcp_version",
+        lambda: "3.4.7" if installed else None,
+    )
     manager = module.EmbeddedServerManager(
         _FakeHass(),
         SimpleNamespace(data={}, options={}),

@@ -30,6 +30,7 @@ _MODULE_CACHE_MUTATORS = {
     "setdefault",
     "update",
 }
+_MUTATION_ERROR = "forbidden runtime dependency mutation"
 
 
 def _constant_string(path: Path, name: str) -> str | None:
@@ -228,8 +229,7 @@ def validate_runtime_source(path: Path) -> list[str]:
         if violation is not None:
             relative = path.relative_to(ROOT) if path.is_relative_to(ROOT) else path
             errors.append(
-                f"{relative}:{node.lineno}: forbidden runtime dependency "
-                f"mutation: {violation}"
+                f"{relative}:{node.lineno}: {_MUTATION_ERROR}: {violation}"
             )
     return errors
 
