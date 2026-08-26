@@ -38,5 +38,5 @@ jobs:
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
           RENOVATE_ALLOWED_COMMANDS: >-
-            ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$"]
+            ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$", "^python scripts/bump_component_version\\.py origin/master$"]
           RENOVATE_REPOSITORIES: ${{ github.repository }}

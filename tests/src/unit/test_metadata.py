@@ -412,7 +412,14 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
         rule for rule in renovate["packageRules"] if rule["description"].startswith("HA-MCP master")
     )
     assert contract_rule["postUpgradeTasks"]["commands"] == [
-        "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref"
+        "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref",
+        "python scripts/bump_component_version.py origin/master",
+    ]
+    assert contract_rule["postUpgradeTasks"]["fileFilters"] == [
+        "custom_components/esphome_mcp/ha_mcp_runtime/contract.py",
+        "custom_components/esphome_mcp/manifest.json",
+        "custom_components/esphome_mcp/const.py",
+        "pyproject.toml",
     ]
 
     renovate_manager = managers["renovate"]

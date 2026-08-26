@@ -78,12 +78,19 @@
         "ha-mcp",
         "e2e"
       ],
+      "prBodyNotes": [
+        "## Release notes\n\n- Updated ESPHome MCP's embedded runtime contract to the latest HA-MCP `master` snapshot."
+      ],
       "postUpgradeTasks": {
         "commands": [
-          "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref"
+          "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref",
+          "python scripts/bump_component_version.py origin/master"
         ],
         "fileFilters": [
-          "custom_components/esphome_mcp/ha_mcp_runtime/contract.py"
+          "custom_components/esphome_mcp/ha_mcp_runtime/contract.py",
+          "custom_components/esphome_mcp/manifest.json",
+          "custom_components/esphome_mcp/const.py",
+          "pyproject.toml"
         ],
         "executionMode": "update",
         "installTools": {
