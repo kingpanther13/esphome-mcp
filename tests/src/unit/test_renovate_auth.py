@@ -13,7 +13,7 @@ DEPENDABOT_CONFIG = ROOT / ".github" / "dependabot.yml"
 
 def test_renovate_uses_a_short_lived_github_app_token() -> None:
     """Renovate updates must trigger CI without exposing a long-lived user token."""
-    workflow = yaml.load(RENOVATE_WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+    workflow = yaml.safe_load(RENOVATE_WORKFLOW.read_text())
     job = workflow["jobs"]["renovate"]
     steps = job["steps"]
     token_steps = [step for step in steps if step.get("id") == "renovate_app_token"]
@@ -29,7 +29,16 @@ def test_renovate_uses_a_short_lived_github_app_token() -> None:
         "private-key": "${{ secrets.RENOVATE_APP_PRIVATE_KEY }}",
         "owner": "${{ github.repository_owner }}",
         "repositories": "${{ github.event.repository.name }}",
+        "permission-administration": "read",
+        "permission-checks": "write",
+        "permission-contents": "write",
+        "permission-issues": "write",
+        "permission-pull-requests": "write",
+        "permission-statuses": "write",
+        "permission-workflows": "write",
     }
+    checkout_step = next(step for step in steps if step.get("name") == "Checkout")
+    assert checkout_step["with"]["persist-credentials"] is False
     assert renovate_step["with"]["token"] == ("${{ steps.renovate_app_token.outputs.token }}")
     assert "secrets.GITHUB_TOKEN" not in RENOVATE_WORKFLOW.read_text()
 

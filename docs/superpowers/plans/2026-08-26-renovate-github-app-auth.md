@@ -34,11 +34,11 @@
 
 - [ ] **Step 1: Write the failing workflow test**
 
-Create a test that loads `.github/workflows/renovate.yml` with `yaml.BaseLoader` and asserts these behavioral invariants:
+Create a test that safely loads `.github/workflows/renovate.yml` and asserts these behavioral invariants:
 
 ```python
 def test_renovate_uses_a_short_lived_github_app_token() -> None:
-    workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+    workflow = yaml.safe_load(WORKFLOW.read_text())
     job = workflow["jobs"]["renovate"]
     steps = job["steps"]
     token_step = next(step for step in steps if step.get("id") == "renovate_app_token")
@@ -51,6 +51,13 @@ def test_renovate_uses_a_short_lived_github_app_token() -> None:
         "private-key": "${{ secrets.RENOVATE_APP_PRIVATE_KEY }}",
         "owner": "${{ github.repository_owner }}",
         "repositories": "${{ github.event.repository.name }}",
+        "permission-administration": "read",
+        "permission-checks": "write",
+        "permission-contents": "write",
+        "permission-issues": "write",
+        "permission-pull-requests": "write",
+        "permission-statuses": "write",
+        "permission-workflows": "write",
     }
     assert renovate_step["with"]["token"] == (
         "${{ steps.renovate_app_token.outputs.token }}"
@@ -87,9 +94,21 @@ steps:
       private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
       owner: ${{ github.repository_owner }}
       repositories: ${{ github.event.repository.name }}
+      permission-administration: read
+      permission-checks: write
+      permission-contents: write
+      permission-issues: write
+      permission-pull-requests: write
+      permission-statuses: write
+      permission-workflows: write
+
+  - name: Checkout
+    uses: actions/checkout@v7
+    with:
+      persist-credentials: false
 ```
 
-Set the Renovate action input to:
+The explicit App-token permissions match the documented Renovate GitHub App permission set granted during registration. Set the Renovate action input to:
 
 ```yaml
 token: ${{ steps.renovate_app_token.outputs.token }}
@@ -215,7 +234,7 @@ Tick Renovate's rebase/retry marker if needed and dispatch `renovate.yml` from u
 
 - [ ] **Step 3: Verify App-authored update and automatic CI**
 
-Read back PR #39's new head, actor, file set, and workflow runs. Acceptance requires queued, in-progress, or successful runs; any `action_required` conclusion fails the test.
+Read back PR #39's new head, actor, file set, and workflow runs. Acceptance requires runs to be queued, in progress, or successful; any `action_required` conclusion fails the test.
 
 - [ ] **Step 4: Verify Dependabot remains independent**
 

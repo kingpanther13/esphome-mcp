@@ -54,9 +54,13 @@ logs.
 ## Workflow permissions
 
 The repository default workflow permission returns to read-only. The Renovate
-workflow also declares only `contents: read` for its built-in `GITHUB_TOKEN`,
-which is used by checkout. All Renovate writes use the dedicated installation
-token.
+workflow declares only `contents: read` for its built-in `GITHUB_TOKEN`, and
+checkout does not persist that credential. All Renovate writes use the dedicated
+installation token. The token request explicitly limits that token to
+Administration read plus Checks, Commit statuses, Contents, Issues, Pull
+requests, and Workflows write. Metadata read remains implicit. These match the
+App permissions above, so adding future permissions to the installation cannot
+silently expand the token used by this workflow.
 
 The repository setting allowing GitHub Actions to create and approve pull
 requests may remain enabled, but it is not part of this solution and does not
