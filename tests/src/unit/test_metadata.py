@@ -56,9 +56,10 @@ def test_manifest_is_hacs_ready() -> None:
         str(requirement).lower().startswith("fastmcp")
         for requirement in manifest.get("requirements", [])
     )
-    assert manifest["version"] == "1.0.0"
-    assert 'version = "1.0.0"' in pyproject
-    assert 'VERSION = "1.0.0"' in const
+    component_version = str(manifest["version"])
+    assert re.fullmatch(r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?", component_version) is not None
+    assert f'version = "{component_version}"' in pyproject
+    assert f'VERSION = "{component_version}"' in const
 
 
 def test_hacs_metadata_exists() -> None:
@@ -220,7 +221,9 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
 def test_release_metadata_validation_accepts_manifest_version() -> None:
     """Release publishing must use a real version tag, not a short commit."""
-    assert validate_release_metadata("v1.0.0") == []
+    manifest = json.loads((COMPONENT / "manifest.json").read_text())
+
+    assert validate_release_metadata(f"v{manifest['version']}") == []
 
 
 @pytest.mark.parametrize("version", ["99cdab0", "v0.1.0rc", "v0.1.7"])
