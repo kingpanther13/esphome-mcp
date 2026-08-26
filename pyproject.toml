@@ -10,6 +10,7 @@ dependencies = []
 [project.optional-dependencies]
 dev = [
     "aiohttp>=3.9",
+    "PyYAML>=6.0",
     "pytest>=8.4",
     "pytest-timeout>=2.4",
     "requests>=2.32",

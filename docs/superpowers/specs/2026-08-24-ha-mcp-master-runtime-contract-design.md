@@ -72,9 +72,12 @@ PR and release CI run three independent gates:
 - unit plus HAOS embedded E2E assertions of the resolved FastMCP version and
   reported HA-MCP server/component snapshot.
 
-The repository retains GitHub's `first_time_contributors` Actions approval
-policy. A bot's first dependency PR may require approval; after one of that
-bot's PRs is merged, subsequent PRs should no longer be first-time.
+Renovate authenticates as a dedicated, repository-scoped GitHub App. Its
+short-lived installation token allows pull-request updates to start CI
+normally. The workflow's built-in `GITHUB_TOKEN` remains read-only; using it
+for Renovate writes would put downstream runs into GitHub's approval-required
+recursion-protection state. Dependabot keeps its separate GitHub App identity
+and never receives the Renovate credentials.
 
 ## HA-MCP component fixes
 
