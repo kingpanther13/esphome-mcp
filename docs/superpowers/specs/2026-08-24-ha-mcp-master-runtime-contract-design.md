@@ -60,9 +60,10 @@ When master advances, Renovate updates the SHA and runs
 That regenerates the server and component metadata atomically in one PR, then
 `scripts/bump_component_version.py origin/master` patch-bumps all three
 ESPHome release-version sources. The bump is idempotent against the base
-branch, so Renovate retries do not create additional releases. The old direct
-FastMCP canary manager is removed, so FastMCP cannot update outside the HA-MCP
-snapshot.
+branch, so Renovate retries do not create additional releases. The matching
+package rule also adds the required user-facing release-note section to the
+generated PR body. The old direct FastMCP canary manager is removed, so FastMCP
+cannot update outside the HA-MCP snapshot.
 
 PR and release CI run three independent gates:
 
