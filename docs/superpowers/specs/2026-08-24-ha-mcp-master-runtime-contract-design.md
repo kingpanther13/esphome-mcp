@@ -57,9 +57,12 @@ Thursday schedule.
 
 When master advances, Renovate updates the SHA and runs
 `scripts/sync_ha_mcp_runtime_contract.py --contract-ref` before committing.
-That regenerates the server and component metadata atomically in one PR. The
-old direct FastMCP canary manager is removed, so FastMCP cannot update outside
-the HA-MCP snapshot.
+That regenerates the server and component metadata atomically in one PR, then
+`scripts/bump_component_version.py origin/master` patch-bumps all three
+ESPHome release-version sources. The bump is idempotent against the base
+branch, so Renovate retries do not create additional releases. The old direct
+FastMCP canary manager is removed, so FastMCP cannot update outside the HA-MCP
+snapshot.
 
 PR and release CI run three independent gates:
 
