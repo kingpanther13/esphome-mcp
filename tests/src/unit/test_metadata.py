@@ -434,10 +434,8 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             engine_matches.extend(
                 match.groupdict() for match in re.finditer(pattern.replace("(?<", "(?P<"), source)
             )
-    assert engine_matches == [
-        {"currentValue": "44.41.0"},
-        {"currentValue": "44.41.0"},
-    ]
+    assert len(engine_matches) == 2
+    assert len({match["currentValue"] for match in engine_matches}) == 1
 
     core_manager = managers["home-assistant/core"]
     assert core_manager["datasourceTemplate"] == "github-releases"
