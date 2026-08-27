@@ -9,7 +9,6 @@ from importlib import util
 from pathlib import Path
 
 import pytest
-import yaml
 from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -282,15 +281,18 @@ def test_release_workflow_creates_a_github_release() -> None:
 
 
 def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
-    """Release-facing component diffs must bump the HACS-visible version."""
+    """Release-facing component diffs must patch-bump the HACS-visible version."""
     workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     script = (ROOT / "scripts" / "check_version_bump.py").read_text()
+    scope = (ROOT / "scripts" / "release_scope.py").read_text()
 
     assert "fetch-depth: 0" in workflow
     assert "python scripts/check_version_bump.py" in workflow
     assert "github.base_ref || 'master'" in workflow
-    assert "custom_components/esphome_mcp/" in script
+    assert "component_facing_changes" in script
+    assert "custom_components/esphome_mcp/" in scope
     assert "manifest version did not increase" in script
+    assert "only cuts patch releases" in script
 
 
 def test_pr_template_and_validation_supply_release_notes() -> None:
@@ -363,12 +365,14 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert renovate["enabledManagers"] == ["custom.regex"]
     assert "schedule" not in renovate
 
-    # automerge drives the rest: rebaseWhen=auto resolves to behind-base-branch,
-    # which the ruleset's strict status-check policy needs, and platformAutomerge
-    # (on by default) hands the PR to GitHub's own auto-merge queue. The strategy
-    # is pinned because the derived default follows repository merge settings.
+    # automerge drives the rest -- the top-level description in renovate.json
+    # records the full rationale, verified against Renovate 44.48.0. The two
+    # absences are deliberate defaults the description relies on.
     assert renovate["automerge"] is True
     assert renovate["automergeStrategy"] == "squash"
+    assert "rebaseWhen" not in renovate
+    assert "platformAutomerge" not in renovate
+    assert "matchUpdateTypes" not in json.dumps(renovate)
     assert len(renovate["customManagers"]) == 4
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "home-assistant/core" in json.dumps(renovate)
@@ -376,7 +380,6 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "https://github.com/homeassistant-ai/ha-mcp" in json.dumps(renovate)
     assert "aioesphomeapi" in dependabot
     assert "esphome" in dependabot
-    assert 'cron: "0 * * * *"' in renovate_workflow
     assert "configurationFile:" not in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
     assert "RENOVATE_ALLOWED_COMMANDS" in renovate_workflow
@@ -473,31 +476,18 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "renovate-config-validator renovate.json" in pr_workflow
 
 
-def test_dependabot_auto_merge_is_enabled_for_low_risk_updates() -> None:
-    """Dependabot queues security and semver minor/patch bumps behind required checks."""
+def test_dependabot_auto_merge_workflow_is_replaced_by_the_groom_job() -> None:
+    """Auto-merge for Dependabot PRs lives in renovate.yml's app-token groom job.
+
+    A Dependabot-triggered workflow cannot read the app secrets, and a
+    GITHUB_TOKEN-enabled auto-merge lands without starting the push run that
+    keeps the other update branches moving -- so no per-PR workflow exists.
+    """
     workflows_dir = ROOT / ".github" / "workflows"
-    enabled = workflows_dir / "dependabot-auto-merge.yml"
 
-    assert enabled.is_file()
+    assert not (workflows_dir / "dependabot-auto-merge.yml").exists()
     assert not (workflows_dir / "dependabot-auto-merge.yml.disabled").exists()
-
-    workflow = yaml.safe_load(enabled.read_text())
-    job = workflow["jobs"]["dependabot"]
-
-    assert job["if"] == "github.actor == 'dependabot[bot]'"
-    # A Dependabot-triggered run gets a read-only token unless the workflow
-    # grants more, so the merge call depends on these being declared.
-    assert workflow["permissions"] == {"contents": "write", "pull-requests": "write"}
-
-    merge_step = next(step for step in job["steps"] if "gh pr merge" in step.get("run", ""))
-    assert merge_step["run"].strip() == 'gh pr merge --auto --squash "$PR_URL"'
-    assert "version-update:semver-major" not in merge_step["if"]
-    for update_type in (
-        "security-update",
-        "version-update:semver-minor",
-        "version-update:semver-patch",
-    ):
-        assert update_type in merge_step["if"]
+    assert "gh pr merge --auto --squash" in (workflows_dir / "renovate.yml").read_text()
 
 
 def test_hacs_release_archive_contains_component_payload() -> None:

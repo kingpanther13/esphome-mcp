@@ -8,6 +8,7 @@
     "custom.regex"
   ],
   "ignorePaths": [],
+  "description": "automerge deliberately covers every managed update, majors included; only conflicts and red required checks block a merge. automergeStrategy is pinned because its derived default follows repository merge settings. rebaseWhen and platformAutomerge stay at defaults: with automerge on, rebaseWhen=auto resolves to behind-base-branch (verified against Renovate 44.48.0), which the ruleset's strict status-check policy requires.",
   "automerge": true,
   "automergeStrategy": "squash",
   "customManagers": [
