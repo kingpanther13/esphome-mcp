@@ -7,7 +7,7 @@ Only dependency metadata is mirrored; no HA-MCP server or tool code is bundled.
 
 HA_MCP_REPOSITORY = "homeassistant-ai/ha-mcp"
 # renovate: datasource=git-refs packageName=https://github.com/homeassistant-ai/ha-mcp branch=master
-HA_MCP_MASTER_SHA = "cd856446a93be06c9ce9545a3a509069949bba3e"
+HA_MCP_MASTER_SHA = "f2fc5f92bbf948286960614bd5a5c533a87a39c0"
 HA_MCP_SERVER_VERSION = "8.3.0"
 HA_MCP_COMPONENT_VERSION = "2.0.1"
 
