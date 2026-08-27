@@ -376,7 +376,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "https://github.com/homeassistant-ai/ha-mcp" in json.dumps(renovate)
     assert "aioesphomeapi" in dependabot
     assert "esphome" in dependabot
-    assert 'cron: "0 9 * * *"' in renovate_workflow
+    assert 'cron: "0 * * * *"' in renovate_workflow
     assert "configurationFile:" not in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
     assert "RENOVATE_ALLOWED_COMMANDS" in renovate_workflow

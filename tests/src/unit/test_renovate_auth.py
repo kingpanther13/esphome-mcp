@@ -43,6 +43,21 @@ def test_renovate_uses_a_short_lived_github_app_token() -> None:
     assert "secrets.GITHUB_TOKEN" not in RENOVATE_WORKFLOW.read_text()
 
 
+def test_renovate_rebases_behind_branches_promptly() -> None:
+    """A merge into master must wake Renovate rather than leaving branches parked."""
+    workflow = yaml.safe_load(RENOVATE_WORKFLOW.read_text())
+    # PyYAML resolves the bare `on:` key to the boolean True.
+    triggers = workflow[True]
+
+    assert triggers["push"]["branches"] == ["master"]
+    assert triggers["schedule"] == [{"cron": "0 * * * *"}]
+    assert "workflow_dispatch" in triggers
+
+    # Overlapping push and schedule runs would race rebasing the same branches,
+    # and cancelling one mid-rebase can leave a branch half-written.
+    assert workflow["concurrency"] == {"group": "renovate", "cancel-in-progress": False}
+
+
 def test_dependabot_does_not_receive_renovate_credentials() -> None:
     """Dependabot keeps its native GitHub App identity and credential boundary."""
     dependabot = DEPENDABOT_CONFIG.read_text()

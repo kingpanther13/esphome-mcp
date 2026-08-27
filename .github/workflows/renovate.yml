@@ -1,9 +1,17 @@
 name: Renovate
 
 on:
+  push:
+    # A merge into master is what leaves the other update branches behind, and
+    # the ruleset requires them to be up to date. Reacting to the merge rebases
+    # them within seconds instead of parking them until the next scheduled run.
+    branches:
+      - master
   schedule:
-    # Follow HA-MCP master daily; Dependabot keeps its separate Thursday run.
-    - cron: "0 9 * * *"
+    # Picks up new upstream versions, and covers the case a push cannot: a
+    # Dependabot auto-merge lands via GITHUB_TOKEN, which by design starts no
+    # further workflow runs. Dependabot keeps its separate Thursday run.
+    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       logLevel:
@@ -16,6 +24,13 @@ on:
           - info
           - warn
           - error
+
+# Two triggers now overlap, and concurrent Renovate runs would race each other
+# rebasing the same branches. Queue instead of cancelling: interrupting a run
+# mid-rebase can leave a branch half-written.
+concurrency:
+  group: renovate
+  cancel-in-progress: false
 
 jobs:
   renovate:
