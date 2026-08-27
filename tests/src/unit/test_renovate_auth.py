@@ -58,6 +58,24 @@ def test_renovate_rebases_behind_branches_promptly() -> None:
     assert workflow["concurrency"] == {"group": "renovate", "cancel-in-progress": False}
 
 
+def test_behind_dependabot_branches_are_updated_with_the_app_token() -> None:
+    """Dependabot never rebases clean-but-behind PRs, and GITHUB_TOKEN pushes
+    would not re-trigger the required PR checks, so the update must run with
+    the app identity."""
+    workflow = yaml.safe_load(RENOVATE_WORKFLOW.read_text())
+    job = workflow["jobs"]["dependabot-update-branch"]
+
+    token_step = next(step for step in job["steps"] if step.get("id") == "renovate_app_token")
+    assert token_step["uses"] == "actions/create-github-app-token@v3"
+    assert token_step["with"]["permission-contents"] == "write"
+    assert token_step["with"]["permission-pull-requests"] == "write"
+
+    update_step = next(step for step in job["steps"] if "update-branch" in step.get("run", ""))
+    assert update_step["env"]["GH_TOKEN"] == "${{ steps.renovate_app_token.outputs.token }}"
+    assert 'select(.user.login == "dependabot[bot]")' in update_step["run"]
+    assert "secrets.GITHUB_TOKEN" not in yaml.dump(job)
+
+
 def test_dependabot_does_not_receive_renovate_credentials() -> None:
     """Dependabot keeps its native GitHub App identity and credential boundary."""
     dependabot = DEPENDABOT_CONFIG.read_text()
