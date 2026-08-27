@@ -9,6 +9,7 @@ from importlib import util
 from pathlib import Path
 
 import pytest
+import yaml
 from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -361,6 +362,13 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
     assert "schedule" not in renovate
+
+    # automerge drives the rest: rebaseWhen=auto resolves to behind-base-branch,
+    # which the ruleset's strict status-check policy needs, and platformAutomerge
+    # (on by default) hands the PR to GitHub's own auto-merge queue. The strategy
+    # is pinned because the derived default follows repository merge settings.
+    assert renovate["automerge"] is True
+    assert renovate["automergeStrategy"] == "squash"
     assert len(renovate["customManagers"]) == 4
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "home-assistant/core" in json.dumps(renovate)
@@ -465,15 +473,31 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "renovate-config-validator renovate.json" in pr_workflow
 
 
-def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:
-    """Auto-merge parity is documented without enabling unattended merges."""
+def test_dependabot_auto_merge_is_enabled_for_low_risk_updates() -> None:
+    """Dependabot queues security and semver minor/patch bumps behind required checks."""
     workflows_dir = ROOT / ".github" / "workflows"
-    disabled = workflows_dir / "dependabot-auto-merge.yml.disabled"
+    enabled = workflows_dir / "dependabot-auto-merge.yml"
 
-    assert disabled.is_file()
-    assert not (workflows_dir / "dependabot-auto-merge.yml").exists()
-    assert "Disabled intentionally." in disabled.read_text()
-    assert "gh pr merge --auto --squash" in disabled.read_text()
+    assert enabled.is_file()
+    assert not (workflows_dir / "dependabot-auto-merge.yml.disabled").exists()
+
+    workflow = yaml.safe_load(enabled.read_text())
+    job = workflow["jobs"]["dependabot"]
+
+    assert job["if"] == "github.actor == 'dependabot[bot]'"
+    # A Dependabot-triggered run gets a read-only token unless the workflow
+    # grants more, so the merge call depends on these being declared.
+    assert workflow["permissions"] == {"contents": "write", "pull-requests": "write"}
+
+    merge_step = next(step for step in job["steps"] if "gh pr merge" in step.get("run", ""))
+    assert merge_step["run"].strip() == 'gh pr merge --auto --squash "$PR_URL"'
+    assert "version-update:semver-major" not in merge_step["if"]
+    for update_type in (
+        "security-update",
+        "version-update:semver-minor",
+        "version-update:semver-patch",
+    ):
+        assert update_type in merge_step["if"]
 
 
 def test_hacs_release_archive_contains_component_payload() -> None:

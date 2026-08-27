@@ -1,8 +1,6 @@
-# Disabled intentionally.
-#
-# HA-MCP enables auto-merge for selected Dependabot updates. ESPHome MCP keeps
-# the scaffold here for parity, but this repository requires explicit current
-# approval before any pull request is merged.
+# Security updates and semver minor/patch bumps queue for auto-merge; majors
+# still wait for a human. The default-branch ruleset's required status checks
+# stay the gate, so nothing lands until the full E2E suite is green.
 name: Dependabot auto-merge
 
 on: pull_request

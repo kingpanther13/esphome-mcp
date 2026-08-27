@@ -8,6 +8,8 @@
     "custom.regex"
   ],
   "ignorePaths": [],
+  "automerge": true,
+  "automergeStrategy": "squash",
   "customManagers": [
     {
       "customType": "regex",
