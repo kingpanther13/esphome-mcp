@@ -1,9 +1,16 @@
 name: Renovate
 
 on:
+  push:
+    # A push to master is what leaves the open update branches behind, and the
+    # ruleset requires them to be up to date. Reacting to the push refreshes
+    # them on the next run instead of parking them for up to an hour.
+    branches:
+      - master
   schedule:
-    # Follow HA-MCP master daily; Dependabot keeps its separate Thursday run.
-    - cron: "0 9 * * *"
+    # Hourly for upstream discovery, and as the backstop for pending runs the
+    # concurrency groups drop. Dependabot keeps its separate Thursday run.
+    - cron: "0 * * * *"
   workflow_dispatch:
     inputs:
       logLevel:
@@ -21,6 +28,14 @@ jobs:
   renovate:
     name: Renovate
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Never cancel an in-flight run: interrupting a rebase can leave a branch
+    # half-written. GitHub keeps at most one pending run per group and a newer
+    # trigger replaces it, which is fine -- the newest run works against the
+    # newest master, and the hourly schedule is the backstop.
+    concurrency:
+      group: renovate
+      cancel-in-progress: false
     permissions:
       contents: read
     steps:
@@ -55,3 +70,87 @@ jobs:
           RENOVATE_ALLOWED_COMMANDS: >-
             ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$", "^python scripts/bump_component_version\\.py origin/master$"]
           RENOVATE_REPOSITORIES: ${{ github.repository }}
+
+  # Renovate only tends its own branches, and Dependabot rebases its PRs only
+  # to resolve conflicts -- never for being merely behind, and not at all after
+  # 30 days -- so under the ruleset's up-to-date requirement a clean-but-behind
+  # Dependabot PR would otherwise wait on its auto-merge forever. This job
+  # enables auto-merge on every open Dependabot PR and merges master into the
+  # behind ones. Everything runs as the app: a GITHUB_TOKEN push would not
+  # re-trigger the required PR checks, and a GITHUB_TOKEN-enabled auto-merge
+  # would land without starting this workflow's own push run. The merge commit
+  # carries "[dependabot skip]" so Dependabot keeps force-pushing over it when
+  # a newer version or a conflict needs its rebase.
+  dependabot-groom:
+    name: Groom Dependabot PRs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: dependabot-groom
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Generate Renovate App token
+        id: renovate_app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.RENOVATE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RENOVATE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          token: ${{ steps.renovate_app_token.outputs.token }}
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Enable auto-merge and update behind branches
+        env:
+          GH_TOKEN: ${{ steps.renovate_app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          APP_SLUG: ${{ steps.renovate_app_token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+
+          bot="${APP_SLUG}[bot]"
+          bot_id="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "$bot"
+          git config user.email "${bot_id}+${bot}@users.noreply.github.com"
+
+          # Listed into a file, not piped: a while loop on the right of a pipe
+          # runs in a subshell, and this loop must be able to fail the job.
+          gh api "repos/$GH_REPO/pulls?state=open&per_page=100" --paginate \
+            --jq '.[] | select(.user.login == "dependabot[bot]")
+                  | [.number, (.auto_merge != null), .head.ref] | @tsv' \
+            > "$RUNNER_TEMP/prs.tsv"
+          echo "Found $(wc -l < "$RUNNER_TEMP/prs.tsv") open Dependabot PR(s)."
+
+          while IFS="$(printf '\t')" read -r pr automerge_on branch; do
+            if [ "$automerge_on" = "false" ]; then
+              gh pr merge --auto --squash --repo "$GH_REPO" "$pr"
+              echo "auto-merge enabled on #$pr"
+            fi
+            git fetch --no-tags origin \
+              "+refs/heads/master:refs/remotes/origin/master" \
+              "+refs/heads/$branch:refs/remotes/origin/$branch" \
+              || { echo "skipped #$pr: branch is gone"; continue; }
+            if git merge-base --is-ancestor \
+                refs/remotes/origin/master "refs/remotes/origin/$branch"; then
+              echo "#$pr is up to date"
+              continue
+            fi
+            git checkout -q -B groom "refs/remotes/origin/$branch"
+            if git merge -q -m "Merge master into $branch [dependabot skip]" \
+                refs/remotes/origin/master; then
+              git push origin "groom:refs/heads/$branch"
+              echo "updated #$pr"
+            else
+              git merge --abort
+              echo "#$pr is conflicted; leaving it for Dependabot to rebase"
+            fi
+          done < "$RUNNER_TEMP/prs.tsv"

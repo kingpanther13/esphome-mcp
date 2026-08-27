@@ -11,6 +11,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_scope import component_facing_changes  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = Path("pyproject.toml")
 MANIFEST_PATH = Path("custom_components/esphome_mcp/manifest.json")
@@ -113,6 +116,13 @@ def bump_component_version(base_ref: str = "origin/master") -> str:
         )
 
     current_version = versions[0]
+    if not component_facing_changes(base_ref, root=ROOT):
+        print(
+            f"No component-facing changes against {base_ref}; leaving "
+            f"ESPHome MCP version {current_version} unchanged so no release is cut."
+        )
+        return current_version
+
     current_key = _version_key(current_version)
     base_key = _version_key(base_version)
     if current_key < base_key:

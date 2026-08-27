@@ -9,22 +9,16 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release_scope import component_facing_changes  # noqa: E402
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = "custom_components/esphome_mcp/manifest.json"
-RELEASE_FACING_PREFIXES = ("custom_components/esphome_mcp/",)
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$")
 
 
 def _git(args: list[str]) -> str:
     return subprocess.check_output(["git", *args], cwd=ROOT, text=True).strip()
-
-
-def _changed_release_files(base_ref: str) -> list[str]:
-    try:
-        changed = _git(["diff", "--name-only", f"{base_ref}...HEAD"])
-    except subprocess.CalledProcessError:
-        changed = _git(["diff", "--name-only", f"{base_ref}..HEAD"])
-    return [path for path in changed.splitlines() if path.startswith(RELEASE_FACING_PREFIXES)]
 
 
 def _manifest_version_from_worktree() -> str:
@@ -52,17 +46,24 @@ def _version_key(version: str) -> tuple[int, int, int, int, int]:
 
 
 def validate_version_bump(base_ref: str) -> list[str]:
-    """Return errors for release-facing diffs that do not bump the version."""
-    changed_files = _changed_release_files(base_ref)
+    """Return errors for release-facing diffs that do not patch-bump the version."""
+    changed_files = component_facing_changes(base_ref, root=ROOT)
     if not changed_files:
         return []
 
     current_version = _manifest_version_from_worktree()
     base_version = _manifest_version_from_ref(base_ref)
-    if _version_key(current_version) <= _version_key(base_version):
+    current_key = _version_key(current_version)
+    base_key = _version_key(base_version)
+    if current_key <= base_key:
         return [
             "custom_components/esphome_mcp changed but manifest version did not increase "
             f"over {base_ref}: {current_version!r} <= {base_version!r}"
+        ]
+    if current_key[:2] != base_key[:2]:
+        return [
+            "this repository only cuts patch releases: "
+            f"{base_version!r} -> {current_version!r} changes the major or minor version"
         ]
     return []
 

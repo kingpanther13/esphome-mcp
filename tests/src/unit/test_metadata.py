@@ -281,15 +281,18 @@ def test_release_workflow_creates_a_github_release() -> None:
 
 
 def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
-    """Release-facing component diffs must bump the HACS-visible version."""
+    """Release-facing component diffs must patch-bump the HACS-visible version."""
     workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     script = (ROOT / "scripts" / "check_version_bump.py").read_text()
+    scope = (ROOT / "scripts" / "release_scope.py").read_text()
 
     assert "fetch-depth: 0" in workflow
     assert "python scripts/check_version_bump.py" in workflow
     assert "github.base_ref || 'master'" in workflow
-    assert "custom_components/esphome_mcp/" in script
+    assert "component_facing_changes" in script
+    assert "custom_components/esphome_mcp/" in scope
     assert "manifest version did not increase" in script
+    assert "only cuts patch releases" in script
 
 
 def test_pr_template_and_validation_supply_release_notes() -> None:
@@ -361,6 +364,15 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
     assert "schedule" not in renovate
+
+    # automerge drives the rest -- the top-level description in renovate.json
+    # records the full rationale, verified against Renovate 44.48.0. The two
+    # absences are deliberate defaults the description relies on.
+    assert renovate["automerge"] is True
+    assert renovate["automergeStrategy"] == "squash"
+    assert "rebaseWhen" not in renovate
+    assert "platformAutomerge" not in renovate
+    assert "matchUpdateTypes" not in json.dumps(renovate)
     assert len(renovate["customManagers"]) == 4
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "home-assistant/core" in json.dumps(renovate)
@@ -368,7 +380,6 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "https://github.com/homeassistant-ai/ha-mcp" in json.dumps(renovate)
     assert "aioesphomeapi" in dependabot
     assert "esphome" in dependabot
-    assert 'cron: "0 9 * * *"' in renovate_workflow
     assert "configurationFile:" not in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
     assert "RENOVATE_ALLOWED_COMMANDS" in renovate_workflow
@@ -465,15 +476,18 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "renovate-config-validator renovate.json" in pr_workflow
 
 
-def test_dependabot_auto_merge_is_preserved_only_as_disabled_scaffold() -> None:
-    """Auto-merge parity is documented without enabling unattended merges."""
-    workflows_dir = ROOT / ".github" / "workflows"
-    disabled = workflows_dir / "dependabot-auto-merge.yml.disabled"
+def test_dependabot_auto_merge_workflow_is_replaced_by_the_groom_job() -> None:
+    """Auto-merge for Dependabot PRs lives in renovate.yml's app-token groom job.
 
-    assert disabled.is_file()
+    A Dependabot-triggered workflow cannot read the app secrets, and a
+    GITHUB_TOKEN-enabled auto-merge lands without starting the push run that
+    keeps the other update branches moving -- so no per-PR workflow exists.
+    """
+    workflows_dir = ROOT / ".github" / "workflows"
+
     assert not (workflows_dir / "dependabot-auto-merge.yml").exists()
-    assert "Disabled intentionally." in disabled.read_text()
-    assert "gh pr merge --auto --squash" in disabled.read_text()
+    assert not (workflows_dir / "dependabot-auto-merge.yml.disabled").exists()
+    assert "gh pr merge --auto --squash" in (workflows_dir / "renovate.yml").read_text()
 
 
 def test_hacs_release_archive_contains_component_payload() -> None:
