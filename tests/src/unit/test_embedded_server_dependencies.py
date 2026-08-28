@@ -164,13 +164,18 @@ def _configure_runtime(
     )
 
 
-def test_contract_is_one_master_snapshot_for_server_and_component(monkeypatch: Any) -> None:
-    """The dependency-only package records both halves of one immutable commit."""
+def test_embedded_server_consumes_the_generated_runtime_contract(monkeypatch: Any) -> None:
+    """The embedded server consumes both halves of the generated contract."""
     module = _load_embedded_server(monkeypatch)
+    contract = importlib.import_module(
+        "custom_components.esphome_mcp.ha_mcp_runtime.contract"
+    )
 
     assert len(module.HA_MCP_MASTER_SHA) == 40
-    assert module.HA_MCP_COMPONENT_VERSION == "2.0.1"
-    assert module.HA_MCP_FASTMCP_REQUIREMENT == "fastmcp==3.4.7"
+    assert module.HA_MCP_MASTER_SHA == contract.HA_MCP_MASTER_SHA
+    assert module.HA_MCP_COMPONENT_VERSION == contract.HA_MCP_COMPONENT_VERSION
+    assert module.HA_MCP_FASTMCP_REQUIREMENT == contract.HA_MCP_FASTMCP_REQUIREMENT
+    assert module.HA_MCP_SERVER_REQUIREMENTS == contract.HA_MCP_SERVER_REQUIREMENTS
     assert module.HA_MCP_FASTMCP_REQUIREMENT in module.HA_MCP_SERVER_REQUIREMENTS
     assert not any(
         requirement.lower().startswith("websockets")
@@ -324,14 +329,15 @@ def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch:
         monkeypatch,
         async_process_requirements=async_process_requirements,
     )
-    old_requirements = tuple(
-        "fastmcp==3.4.6" if requirement.startswith("fastmcp==") else requirement
+    mismatched_fastmcp = "fastmcp==0.0.0"
+    other_requirements = tuple(
+        mismatched_fastmcp if requirement.startswith("fastmcp==") else requirement
         for requirement in module.HA_MCP_SERVER_REQUIREMENTS
     )
     _configure_runtime(
         monkeypatch,
         module,
-        peer_requirements={"ha-mcp": old_requirements},
+        peer_requirements={"ha-mcp": other_requirements},
     )
     manager = module.EmbeddedServerManager(
         _FakeHass(),
@@ -343,8 +349,8 @@ def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch:
 
     assert exc.value.kind == "package"
     assert "does not match HA-MCP master" in str(exc.value)
-    assert "fastmcp==3.4.7" in str(exc.value)
-    assert "fastmcp==3.4.6" in str(exc.value)
+    assert module.HA_MCP_FASTMCP_REQUIREMENT in str(exc.value)
+    assert mismatched_fastmcp in str(exc.value)
     assert process_calls == []
 
 
@@ -365,7 +371,8 @@ def test_both_ha_mcp_distributions_fail_closed(monkeypatch: Any) -> None:
 
 def test_configured_ha_mcp_component_must_match_snapshot(monkeypatch: Any) -> None:
     """Server dependency lockstep also checks the installed component version."""
-    module = _load_embedded_server(monkeypatch, integration_version="2.0.0")
+    mismatched_version = "0.0.0"
+    module = _load_embedded_server(monkeypatch, integration_version=mismatched_version)
     _configure_runtime(monkeypatch, module)
     manager = module.EmbeddedServerManager(
         _FakeHass([_peer_entry()]),
@@ -376,7 +383,7 @@ def test_configured_ha_mcp_component_must_match_snapshot(monkeypatch: Any) -> No
         _run(manager._async_ensure_package())
 
     assert exc.value.kind == "package"
-    assert "custom component is version 2.0.0" in str(exc.value)
+    assert f"custom component is version {mismatched_version}" in str(exc.value)
     assert module.HA_MCP_COMPONENT_VERSION in str(exc.value)
 
 

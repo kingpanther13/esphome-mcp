@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
+from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
@@ -111,16 +112,29 @@ def test_server_defaults_are_scaffolded() -> None:
     assert 'name="esp_follow_firmware_job"' in server
 
 
-def test_runtime_contract_mirrors_both_sides_of_ha_mcp_master() -> None:
-    """One immutable master snapshot owns server and component metadata."""
+def test_runtime_contract_has_stable_shared_runtime_invariants() -> None:
+    """Generated snapshots preserve the stable shared-runtime invariants."""
     requirements = runtime_contract.HA_MCP_SERVER_REQUIREMENTS
     parsed = Requirement(runtime_contract.HA_MCP_FASTMCP_REQUIREMENT)
+    fastmcp_specifiers = list(parsed.specifier)
+
     assert parsed.name == "fastmcp"
-    assert str(parsed.specifier) == "==3.4.7"
+    assert len(fastmcp_specifiers) == 1
+    assert fastmcp_specifiers[0].operator == "=="
     assert runtime_contract.HA_MCP_FASTMCP_REQUIREMENT in requirements
-    assert runtime_contract.HA_MCP_COMPONENT_REQUIREMENTS == ("ruamel.yaml>=0.18.0",)
-    assert runtime_contract.HA_MCP_COMPONENT_VERSION == "2.0.1"
-    assert len(runtime_contract.HA_MCP_MASTER_SHA) == 40
+    assert all(
+        Requirement(requirement).name
+        for requirement in (
+            *requirements,
+            *runtime_contract.HA_MCP_COMPONENT_REQUIREMENTS,
+        )
+    )
+    assert Version(runtime_contract.HA_MCP_SERVER_VERSION)
+    assert Version(runtime_contract.HA_MCP_COMPONENT_VERSION)
+    assert re.fullmatch(r"[0-9a-f]{40}", runtime_contract.HA_MCP_MASTER_SHA)
+    assert runtime_contract.HA_MCP_RUNTIME_CONTRACT_ID == (
+        f"{runtime_contract.HA_MCP_REPOSITORY}@{runtime_contract.HA_MCP_MASTER_SHA}"
+    )
     assert not any(
         Requirement(requirement).name.lower() == "websockets" for requirement in requirements
     )
