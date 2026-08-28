@@ -167,9 +167,7 @@ def _configure_runtime(
 def test_embedded_server_consumes_the_generated_runtime_contract(monkeypatch: Any) -> None:
     """The embedded server consumes both halves of the generated contract."""
     module = _load_embedded_server(monkeypatch)
-    contract = importlib.import_module(
-        "custom_components.esphome_mcp.ha_mcp_runtime.contract"
-    )
+    contract = importlib.import_module("custom_components.esphome_mcp.ha_mcp_runtime.contract")
 
     assert len(module.HA_MCP_MASTER_SHA) == 40
     assert module.HA_MCP_MASTER_SHA == contract.HA_MCP_MASTER_SHA
