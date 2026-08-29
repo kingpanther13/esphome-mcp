@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "24"
       - name: Validate Renovate configuration
-        run: npx --yes --package renovate@44.51.1 renovate-config-validator renovate.json
+        run: npx --yes --package renovate@44.51.2 renovate-config-validator renovate.json
 
   lint:
     name: Ruff
