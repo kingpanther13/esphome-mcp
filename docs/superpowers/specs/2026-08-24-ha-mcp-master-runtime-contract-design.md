@@ -52,8 +52,9 @@ generation.
 
 Dependabot continues to own GitHub Actions and declared Python development/test
 dependencies. Renovate alone owns the HA-MCP master SHA through its `git-refs`
-datasource. Renovate checks that moving ref hourly and after every push to master;
-Dependabot keeps its weekly Thursday schedule.
+datasource. Renovate admits new branches during the 5 AM and 5 PM Eastern
+hours and on manual dispatch. Every push to master still wakes Renovate to
+rebase existing branches; Dependabot keeps its weekly Thursday schedule.
 
 When master advances, Renovate updates the SHA and runs
 `scripts/sync_ha_mcp_runtime_contract.py --contract-ref` before committing.

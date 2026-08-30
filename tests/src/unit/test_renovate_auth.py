@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
 RENOVATE_WORKFLOW = ROOT / ".github" / "workflows" / "renovate.yml"
+RENOVATE_CONFIG = ROOT / "renovate.json"
 DEPENDABOT_CONFIG = ROOT / ".github" / "dependabot.yml"
 
 
@@ -43,15 +45,28 @@ def test_renovate_uses_a_short_lived_github_app_token() -> None:
     assert "secrets.GITHUB_TOKEN" not in RENOVATE_WORKFLOW.read_text()
 
 
-def test_renovate_reacts_to_master_moving() -> None:
-    """A push to master must wake Renovate rather than leaving branches parked."""
+def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
+    """Pushes update existing PRs while new updates wait for Eastern windows."""
     workflow = yaml.safe_load(RENOVATE_WORKFLOW.read_text())
+    renovate = json.loads(RENOVATE_CONFIG.read_text())
     # PyYAML resolves the bare `on:` key to the boolean True.
     triggers = workflow[True]
 
     assert triggers["push"]["branches"] == ["master"]
-    assert triggers["schedule"] == [{"cron": "0 * * * *"}]
+    assert triggers["schedule"] == [{"cron": "17 5,17 * * *", "timezone": "America/New_York"}]
     assert "workflow_dispatch" in triggers
+    assert renovate["timezone"] == "America/New_York"
+    assert renovate["schedule"] == ["* 5,17 * * *"]
+    assert renovate["updateNotScheduled"] is True
+
+    renovate_step = next(
+        step
+        for step in workflow["jobs"]["renovate"]["steps"]
+        if step.get("name") == "Self-hosted Renovate"
+    )
+    assert renovate_step["env"]["RENOVATE_FORCE"] == (
+        "${{ github.event_name == 'workflow_dispatch' && '{\"schedule\":null}' || '{}' }}"
+    )
 
     # Per-job groups so a hung groom cannot starve Renovate runs, never
     # cancelling in-flight work, with a bounded runtime on both jobs.
