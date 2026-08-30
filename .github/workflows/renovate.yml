@@ -4,13 +4,14 @@ on:
   push:
     # A push to master is what leaves the open update branches behind, and the
     # ruleset requires them to be up to date. Reacting to the push refreshes
-    # them on the next run instead of parking them for up to an hour.
+    # them immediately instead of parking them until the next discovery window.
     branches:
       - master
   schedule:
-    # Hourly for upstream discovery, and as the backstop for pending runs the
-    # concurrency groups drop. Dependabot keeps its separate Thursday run.
-    - cron: "0 * * * *"
+    # Twice daily for upstream discovery. Existing branches still refresh on
+    # every push, and Dependabot keeps its separate Thursday run.
+    - cron: "17 5,17 * * *"
+      timezone: "America/New_York"
   workflow_dispatch:
     inputs:
       logLevel:
@@ -32,7 +33,7 @@ jobs:
     # Never cancel an in-flight run: interrupting a rebase can leave a branch
     # half-written. GitHub keeps at most one pending run per group and a newer
     # trigger replaces it, which is fine -- the newest run works against the
-    # newest master, and the hourly schedule is the backstop.
+    # newest master, and the twice-daily schedule is the backstop.
     concurrency:
       group: renovate
       cancel-in-progress: false
@@ -67,6 +68,10 @@ jobs:
           token: ${{ steps.renovate_app_token.outputs.token }}
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
+          # Manual runs bypass the new-branch windows; push runs outside them
+          # still rebase and otherwise maintain existing Renovate branches.
+          RENOVATE_FORCE: >-
+            ${{ github.event_name == 'workflow_dispatch' && '{"schedule":null}' || '{}' }}
           RENOVATE_ALLOWED_COMMANDS: >-
             ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$", "^python scripts/bump_component_version\\.py origin/master$"]
           RENOVATE_REPOSITORIES: ${{ github.repository }}

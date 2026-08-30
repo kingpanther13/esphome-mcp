@@ -377,7 +377,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('day: "thursday"') == 3
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
-    assert "schedule" not in renovate
+    assert renovate["schedule"] == ["* 5,17 * * *"]
 
     # automerge drives the rest -- the top-level description in renovate.json
     # records the full rationale, verified against Renovate 44.48.0. The two

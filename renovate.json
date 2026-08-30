@@ -3,12 +3,16 @@
   "extends": [
     "config:recommended"
   ],
-  "timezone": "UTC",
+  "timezone": "America/New_York",
+  "schedule": [
+    "* 5,17 * * *"
+  ],
+  "updateNotScheduled": true,
   "enabledManagers": [
     "custom.regex"
   ],
   "ignorePaths": [],
-  "description": "automerge deliberately covers every managed update, majors included; only conflicts and red required checks block a merge. automergeStrategy is pinned because its derived default follows repository merge settings. rebaseWhen and platformAutomerge stay at defaults: with automerge on, rebaseWhen=auto resolves to behind-base-branch (verified against Renovate 44.48.0), which the ruleset's strict status-check policy requires.",
+  "description": "new branches are limited to the 5 AM and 5 PM Eastern windows while updateNotScheduled keeps push-triggered rebases active. automerge deliberately covers every managed update, majors included; only conflicts and red required checks block a merge. automergeStrategy is pinned because its derived default follows repository merge settings. rebaseWhen and platformAutomerge stay at defaults: with automerge on, rebaseWhen=auto resolves to behind-base-branch (verified against Renovate 44.48.0), which the ruleset's strict status-check policy requires.",
   "automerge": true,
   "automergeStrategy": "squash",
   "customManagers": [
