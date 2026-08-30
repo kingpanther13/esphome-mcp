@@ -53,9 +53,7 @@ def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
     triggers = workflow[True]
 
     assert triggers["push"]["branches"] == ["master"]
-    assert triggers["schedule"] == [
-        {"cron": "17 5,17 * * *", "timezone": "America/New_York"}
-    ]
+    assert triggers["schedule"] == [{"cron": "17 5,17 * * *", "timezone": "America/New_York"}]
     assert "workflow_dispatch" in triggers
     assert renovate["timezone"] == "America/New_York"
     assert renovate["schedule"] == ["* 5,17 * * *"]
@@ -67,8 +65,7 @@ def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
         if step.get("name") == "Self-hosted Renovate"
     )
     assert renovate_step["env"]["RENOVATE_FORCE"] == (
-        "${{ github.event_name == 'workflow_dispatch' "
-        "&& '{\"schedule\":null}' || '{}' }}"
+        "${{ github.event_name == 'workflow_dispatch' && '{\"schedule\":null}' || '{}' }}"
     )
 
     # Per-job groups so a hung groom cannot starve Renovate runs, never
