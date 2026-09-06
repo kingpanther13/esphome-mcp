@@ -6,7 +6,8 @@ Wake ESPHome MCP's existing Renovate automation shortly after every commit to
 `homeassistant-ai/ha-mcp` that touches `custom_components/ha_mcp_tools/**`.
 This includes consecutive development snapshots such as
 `v2.1.4-dev.374`, `v2.1.4-dev.375`, and `v2.1.4-dev.376`; the public component
-version does not need to change.
+version does not need to change. Multiple commits between polls are coalesced
+into an update to the newest master snapshot.
 
 ## Repository boundary
 
@@ -46,8 +47,10 @@ watcher dispatches `.github/workflows/renovate.yml` on `master` with an
 new-branch schedule, as manual dispatches already do, but limits Renovate's
 package-file discovery to
 `custom_components/esphome_mcp/ha_mcp_runtime/contract.py`. The HA-MCP package
-rule then performs the existing atomic contract regeneration and ESPHome patch
-version bump.
+rule then performs the existing atomic contract regeneration and, when the
+runtime metadata changes, the ESPHome patch version bump. A SHA-only update
+keeps the existing no-release behavior. CI, auto-merge, publication, and user
+installation still take time after detection.
 
 The repository-wide `prHourlyLimit` remains at Renovate's default of two. An
 HA-MCP-scoped dispatch does not discover or open unrelated dependency pull
