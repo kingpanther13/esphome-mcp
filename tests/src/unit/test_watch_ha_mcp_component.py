@@ -361,3 +361,14 @@ def test_unchanged_component_version_still_dispatches_for_the_next_dev_commit(
 
     assert module.main(["--contract", str(contract)]) == 0
     assert any(method == "POST" for method, _path, _body in api_server.requests)
+
+
+def test_live_pr_smoke_check_can_read_pending_updates_but_cannot_dispatch() -> None:
+    """The stale-pin smoke path needs PR reads and must remain check-only."""
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "pr.yml").read_text())
+    unit = workflow["jobs"]["unit"]
+    assert unit["permissions"] == {"contents": "read", "pull-requests": "read"}
+    check = next(
+        step for step in unit["steps"] if step.get("name") == "Check HA-MCP watcher (read only)"
+    )
+    assert check["run"] == "python scripts/watch_ha_mcp_component.py --check-only"
