@@ -68,10 +68,11 @@ jobs:
           token: ${{ steps.renovate_app_token.outputs.token }}
         env:
           LOG_LEVEL: ${{ inputs.logLevel || 'info' }}
-          # Manual runs bypass the new-branch windows; push runs outside them
-          # still rebase and otherwise maintain existing Renovate branches.
+          # Scheduled and manual runs bypass the new-branch windows so delayed
+          # cron delivery still discovers updates. Push runs outside them only
+          # maintain existing Renovate branches through updateNotScheduled.
           RENOVATE_FORCE: >-
-            ${{ github.event_name == 'workflow_dispatch' && '{"schedule":null}' || '{}' }}
+            ${{ github.event_name != 'push' && '{"schedule":null}' || '{}' }}
           RENOVATE_ALLOWED_COMMANDS: >-
             ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$", "^python scripts/bump_component_version\\.py origin/master$"]
           RENOVATE_REPOSITORIES: ${{ github.repository }}

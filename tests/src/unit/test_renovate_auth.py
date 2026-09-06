@@ -46,7 +46,7 @@ def test_renovate_uses_a_short_lived_github_app_token() -> None:
 
 
 def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
-    """Pushes update existing PRs while new updates wait for Eastern windows."""
+    """Scheduled discovery bypasses delivery delays while pushes stay throttled."""
     workflow = yaml.safe_load(RENOVATE_WORKFLOW.read_text())
     renovate = json.loads(RENOVATE_CONFIG.read_text())
     # PyYAML resolves the bare `on:` key to the boolean True.
@@ -65,7 +65,7 @@ def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
         if step.get("name") == "Self-hosted Renovate"
     )
     assert renovate_step["env"]["RENOVATE_FORCE"] == (
-        "${{ github.event_name == 'workflow_dispatch' && '{\"schedule\":null}' || '{}' }}"
+        "${{ github.event_name != 'push' && '{\"schedule\":null}' || '{}' }}"
     )
 
     # Per-job groups so a hung groom cannot starve Renovate runs, never
