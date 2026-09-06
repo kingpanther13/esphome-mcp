@@ -1,0 +1,35 @@
+name: Watch HA-MCP Component
+
+on:
+  schedule:
+    # GitHub may delay scheduled jobs; twice-daily Renovate is the backstop.
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ha-mcp-component-watcher
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    if: github.repository == 'kingpanther13/esphome-mcp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Check HA-MCP component
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/watch_ha_mcp_component.py

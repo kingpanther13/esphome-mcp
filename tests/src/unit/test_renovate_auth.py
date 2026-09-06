@@ -55,6 +55,13 @@ def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
     assert triggers["push"]["branches"] == ["master"]
     assert triggers["schedule"] == [{"cron": "17 5,17 * * *", "timezone": "America/New_York"}]
     assert "workflow_dispatch" in triggers
+    assert triggers["workflow_dispatch"]["inputs"]["scope"] == {
+        "description": "Dependency scope",
+        "required": False,
+        "default": "all",
+        "type": "choice",
+        "options": ["all", "ha-mcp"],
+    }
     assert renovate["timezone"] == "America/New_York"
     assert renovate["schedule"] == ["* 5,17 * * *"]
     assert renovate["updateNotScheduled"] is True
@@ -67,6 +74,16 @@ def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
     assert renovate_step["env"]["RENOVATE_FORCE"] == (
         "${{ github.event_name != 'push' && '{\"schedule\":null}' || '{}' }}"
     )
+
+    assert renovate_step["env"]["RENOVATE_INCLUDE_PATHS"] == (
+        "${{ inputs.scope == 'ha-mcp' "
+        "&& '[\"custom_components/esphome_mcp/ha_mcp_runtime/contract.py\"]' || '[]' }}"
+    )
+    # A partial scan must not prune unrelated dependency branches.
+    assert renovate_step["env"]["RENOVATE_PRUNE_STALE_BRANCHES"] == (
+        "${{ inputs.scope == 'ha-mcp' && 'false' || 'true' }}"
+    )
+    assert workflow["jobs"]["dependabot-groom"]["if"] == "${{ inputs.scope != 'ha-mcp' }}"
 
     # Per-job groups so a hung groom cannot starve Renovate runs, never
     # cancelling in-flight work, with a bounded runtime on both jobs.
