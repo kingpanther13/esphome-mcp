@@ -14,6 +14,14 @@ on:
       timezone: "America/New_York"
   workflow_dispatch:
     inputs:
+      scope:
+        description: "Dependency scope"
+        required: false
+        default: "all"
+        type: choice
+        options:
+          - all
+          - ha-mcp
       logLevel:
         description: "Log level"
         required: false
@@ -73,6 +81,11 @@ jobs:
           # maintain existing Renovate branches through updateNotScheduled.
           RENOVATE_FORCE: >-
             ${{ github.event_name != 'push' && '{"schedule":null}' || '{}' }}
+          # Preserve other update branches omitted from this partial scan.
+          RENOVATE_INCLUDE_PATHS: >-
+            ${{ inputs.scope == 'ha-mcp' && '["custom_components/esphome_mcp/ha_mcp_runtime/contract.py"]' || '[]' }}
+          RENOVATE_PRUNE_STALE_BRANCHES: >-
+            ${{ inputs.scope == 'ha-mcp' && 'false' || 'true' }}
           RENOVATE_ALLOWED_COMMANDS: >-
             ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$", "^python scripts/bump_component_version\\.py origin/master$"]
           RENOVATE_REPOSITORIES: ${{ github.repository }}
@@ -88,6 +101,7 @@ jobs:
   # carries "[dependabot skip]" so Dependabot keeps force-pushing over it when
   # a newer version or a conflict needs its rebase.
   dependabot-groom:
+    if: ${{ inputs.scope != 'ha-mcp' }}
     name: Groom Dependabot PRs
     runs-on: ubuntu-latest
     timeout-minutes: 10

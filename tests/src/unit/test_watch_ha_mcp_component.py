@@ -137,10 +137,7 @@ def _branch_contract_path() -> str:
 
 
 def _dispatch_path() -> str:
-    return (
-        "/repos/kingpanther13/esphome-mcp/actions/"
-        "workflows/renovate.yml/dispatches"
-    )
+    return "/repos/kingpanther13/esphome-mcp/actions/workflows/renovate.yml/dispatches"
 
 
 def _base_routes(server: _ApiServer, *, master_status: str) -> None:
@@ -263,9 +260,7 @@ def test_watcher_workflow_runs_on_github_with_least_privilege() -> None:
     triggers = workflow[True]
     job = workflow["jobs"]["watch"]
 
-    assert triggers["schedule"] == [
-        {"cron": "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"}
-    ]
+    assert triggers["schedule"] == [{"cron": "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"}]
     assert "workflow_dispatch" in triggers
     assert workflow["permissions"] == {
         "actions": "write",
@@ -291,3 +286,78 @@ def test_watcher_workflow_runs_on_github_with_least_privilege() -> None:
         "GITHUB_REPOSITORY": "${{ github.repository }}",
     }
 
+
+def test_check_only_reports_stale_snapshot_without_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    api_server: _ApiServer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The PR's live API smoke check must never send a dispatch."""
+    module = _load_watcher()
+    contract = _write_contract(tmp_path)
+    _configure_environment(monkeypatch, api_server)
+    _base_routes(api_server, master_status="behind")
+    api_server.routes[("GET", _open_pr_path())] = (200, [])
+
+    assert module.main(["--contract", str(contract), "--check-only"]) == 0
+    assert "check-only mode skips dispatch" in capsys.readouterr().out
+    assert all(method == "GET" for method, _path, _body in api_server.requests)
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "status", "payload"),
+    [
+        (_latest_component_path(), 200, []),
+        (_latest_component_path(), 200, [{"sha": "invalid"}]),
+        (_latest_component_path(), 403, {"message": "rate limited"}),
+        (_latest_component_path(), 500, {"message": "unavailable"}),
+        (
+            f"/repos/homeassistant-ai/ha-mcp/compare/{UPSTREAM_SHA}...{MASTER_SHA}",
+            200,
+            {"status": "unknown"},
+        ),
+        (_open_pr_path(), 200, {"message": "invalid response"}),
+        (_dispatch_path(), 403, {"message": "permission denied"}),
+    ],
+)
+def test_api_errors_fail_visibly_without_reporting_a_successful_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    api_server: _ApiServer,
+    capsys: pytest.CaptureFixture[str],
+    endpoint: str,
+    status: int,
+    payload: Any,
+) -> None:
+    """An API error must not silently mark an upstream update as covered."""
+    module = _load_watcher()
+    contract = _write_contract(tmp_path)
+    _configure_environment(monkeypatch, api_server)
+    _base_routes(api_server, master_status="behind")
+    api_server.routes[("GET", _open_pr_path())] = (200, [])
+    method = "POST" if endpoint == _dispatch_path() else "GET"
+    api_server.routes[(method, endpoint)] = (status, payload)
+
+    assert module.main(["--contract", str(contract)]) == 1
+    output = capsys.readouterr()
+    assert "ERROR:" in output.err
+    assert "Dispatched HA-MCP-only" not in output.out
+
+
+def test_unchanged_component_version_still_dispatches_for_the_next_dev_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    api_server: _ApiServer,
+) -> None:
+    """Version-string comparison would miss successive 2.1.4 development snapshots."""
+    module = _load_watcher()
+    contract = _write_contract(tmp_path)
+    contract.write_text(contract.read_text() + 'HA_MCP_COMPONENT_VERSION = "2.1.4"\n')
+    _configure_environment(monkeypatch, api_server)
+    _base_routes(api_server, master_status="behind")
+    api_server.routes[("GET", _open_pr_path())] = (200, [])
+    api_server.routes[("POST", _dispatch_path())] = (204, None)
+
+    assert module.main(["--contract", str(contract)]) == 0
+    assert any(method == "POST" for method, _path, _body in api_server.requests)

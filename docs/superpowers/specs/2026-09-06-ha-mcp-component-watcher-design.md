@@ -51,7 +51,8 @@ version bump.
 
 The repository-wide `prHourlyLimit` remains at Renovate's default of two. An
 HA-MCP-scoped dispatch does not discover or open unrelated dependency pull
-requests, and it skips the unrelated Dependabot grooming job.
+requests, disables stale-branch pruning to preserve branches omitted from the
+partial scan, and skips the unrelated Dependabot grooming job.
 
 ## Credentials and permissions
 
@@ -69,5 +70,5 @@ GET and POST requests. They cover a stale merged snapshot, a current merged
 snapshot, an open Renovate branch that already contains the component commit,
 and a newer component commit arriving after the open branch. Workflow-shape
 tests pin the five-minute cadence, least-privilege permissions, scoped dispatch
-input, HA-MCP-only Renovate include path, and the Dependabot-job exclusion.
-
+input, HA-MCP-only Renovate include path, and the Dependabot-job exclusion. PR CI also runs the watcher with
+`--check-only` against GitHub to verify real token access without dispatching.

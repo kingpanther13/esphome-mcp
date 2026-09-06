@@ -63,6 +63,11 @@ jobs:
         run: python -m pip install -e ".[dev]"
       - name: Run unit tests
         run: pytest tests/src/unit
+      - name: Check HA-MCP watcher (read only)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python scripts/watch_ha_mcp_component.py --check-only
 
   release-metadata:
     name: Release Metadata
