@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
 
       - name: Self-hosted Renovate
-        uses: renovatebot/github-action@v46.2.5
+        uses: renovatebot/github-action@v46.2.6
         with:
           renovate-version: "44.74.0"
           token: ${{ steps.renovate_app_token.outputs.token }}
