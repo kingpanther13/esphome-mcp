@@ -167,7 +167,7 @@ def _render_contract(
     if vendor_version is not None:
         runtime = f"ha-mcp @ https://github.com/{HA_MCP_REPOSITORY}/archive/{sha}.zip"
         runtime_metadata = (
-            f"HA_MCP_RUNTIME_REQUIREMENT = (\n    {json.dumps(runtime)}\n)\n"
+            f"HA_MCP_RUNTIME_REQUIREMENT = {json.dumps(runtime)}\n"
             f"HA_MCP_FASTMCP_VERSION = {json.dumps(vendor_version)}\n"
             'HA_MCP_FASTMCP_MODULE = "ha_mcp._vendor.fastmcp"\n'
             f"{_format_tuple('HA_MCP_VENDOR_HASHES', vendor_hashes)}\n"

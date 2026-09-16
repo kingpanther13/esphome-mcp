@@ -57,9 +57,7 @@ HA_MCP_COMPONENT_REQUIREMENTS = (
     "voluptuous-openapi>=0.4.1",
 )
 
-HA_MCP_RUNTIME_REQUIREMENT = (
-    "ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/3fa8fbdcf041d4a474049787b3578fd1f9fffd90.zip"
-)
+HA_MCP_RUNTIME_REQUIREMENT = "ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/3fa8fbdcf041d4a474049787b3578fd1f9fffd90.zip"
 HA_MCP_FASTMCP_VERSION = "4.0.3"
 HA_MCP_FASTMCP_MODULE = "ha_mcp._vendor.fastmcp"
 HA_MCP_VENDOR_HASHES = (

@@ -141,7 +141,7 @@ def test_generator_reads_vendored_runtime_from_same_snapshot(
     monkeypatch.setattr(module, "_read_source", read_source)
     rendered = module._generate("master")
     assert 'HA_MCP_FASTMCP_VERSION = "4.0.3"' in rendered
-    assert f'ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/{SHA}.zip' in rendered
+    assert f"ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/{SHA}.zip" in rendered
     assert 'HA_MCP_FASTMCP_MODULE = "ha_mcp._vendor.fastmcp"' in rendered
     assert all(sha == SHA for _, sha in requested)
     assert {path for path, _ in requested} == set(sources)

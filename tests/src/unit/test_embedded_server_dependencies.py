@@ -583,7 +583,8 @@ def test_dependency_probe_does_not_import_runtime_packages(monkeypatch: Any) -> 
     """Import checks do not cache FastMCP modules before installation."""
     module = _load_embedded_server(monkeypatch)
     monkeypatch.setattr(
-        module, "_installed_fastmcp_origin",
+        module,
+        "_installed_fastmcp_origin",
         lambda: "/deps/ha_mcp/_vendor/fastmcp/__init__.py",
     )
     original_import = builtins.__import__
@@ -756,3 +757,46 @@ def test_vendored_runtime_detects_changed_bundle(monkeypatch: Any, tmp_path: Pat
     assert module._vendored_runtime_violations()
     manifest.unlink()
     assert module._vendored_runtime_violations()
+
+
+@pytest.mark.parametrize("loaded", [False, True])
+def test_standalone_can_upgrade_only_its_own_unloaded_runtime(
+    monkeypatch: Any, loaded: bool
+) -> None:
+    """An ESPHome-installed snapshot can advance after restart, never while loaded."""
+    import json
+
+    installs = []
+    installed = False
+    old_url = "https://github.com/homeassistant-ai/ha-mcp/archive/" + "a" * 40 + ".zip"
+
+    async def install(_hass: Any, _label: str, requirements: list[str], **_kw: Any) -> None:
+        nonlocal installed
+        installs.append(requirements)
+        installed = True
+
+    module = _load_embedded_server(monkeypatch, async_process_requirements=install)
+    _configure_runtime(monkeypatch, module, loaded=loaded)
+    monkeypatch.setattr(
+        module,
+        "_installed_ha_mcp_requirements",
+        lambda: {"ha-mcp": module.HA_MCP_SERVER_REQUIREMENTS if installed else ("old-dep==1",)},
+    )
+    monkeypatch.setattr(
+        module.metadata,
+        "distribution",
+        lambda _name: SimpleNamespace(read_text=lambda _file: json.dumps({"url": old_url})),
+    )
+    entry = SimpleNamespace(data={"owned_runtime_url": old_url}, options={})
+    manager = module.EmbeddedServerManager(_FakeHass(), entry)
+    if loaded:
+        with pytest.raises(module.EmbeddedServerError) as exc:
+            _run(manager._async_ensure_package())
+        assert exc.value.kind == "restart"
+        assert installs == []
+    else:
+        _run(manager._async_ensure_package())
+        assert installs == [[module.HA_MCP_RUNTIME_REQUIREMENT]]
+        assert entry.data["owned_runtime_url"] == module.Requirement(
+            module.HA_MCP_RUNTIME_REQUIREMENT
+        ).url
