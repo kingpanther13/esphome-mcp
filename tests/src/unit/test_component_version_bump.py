@@ -202,18 +202,18 @@ def test_check_requires_a_bump_only_for_component_facing_changes(tmp_path: Path)
     assert "did not increase" in errors[0]
 
 
-def test_check_rejects_anything_but_a_patch_bump(tmp_path: Path) -> None:
-    """Only patch releases are ever cut from this repository."""
+def test_check_accepts_minor_and_patch_bumps_but_rejects_major_bumps(tmp_path: Path) -> None:
+    """Intentional minor releases are allowed alongside automated patch releases."""
     module = _load_check_script()
     _initialize_release_repo(tmp_path, "1.2.3")
     module.ROOT = tmp_path
     _touch_component(tmp_path)
 
-    for bad in ("1.3.0", "2.0.0"):
-        _write_versions(tmp_path, bad)
-        errors = module.validate_version_bump("HEAD")
-        assert len(errors) == 1
-        assert "only cuts patch releases" in errors[0]
+    _write_versions(tmp_path, "2.0.0")
+    errors = module.validate_version_bump("HEAD")
+    assert len(errors) == 1
+    assert "does not cut major releases" in errors[0]
 
-    _write_versions(tmp_path, "1.2.4")
-    assert module.validate_version_bump("HEAD") == []
+    for version in ("1.2.4", "1.3.0"):
+        _write_versions(tmp_path, version)
+        assert module.validate_version_bump("HEAD") == []

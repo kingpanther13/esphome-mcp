@@ -113,7 +113,7 @@ def _install_dependency_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setitem(sys.modules, "custom_components", custom_components_mod)
     monkeypatch.setitem(sys.modules, "custom_components.esphome_mcp", package_mod)
-    monkeypatch.setitem(sys.modules, "fastmcp", fastmcp_mod)
+    monkeypatch.setitem(sys.modules, "ha_mcp._vendor.fastmcp", fastmcp_mod)
     monkeypatch.setitem(sys.modules, "pydantic", pydantic_mod)
     monkeypatch.setitem(sys.modules, "homeassistant", ha_mod)
     monkeypatch.setitem(sys.modules, "homeassistant.core", core_mod)

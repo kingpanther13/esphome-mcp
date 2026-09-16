@@ -115,13 +115,14 @@ def test_server_defaults_are_scaffolded() -> None:
 def test_runtime_contract_has_stable_shared_runtime_invariants() -> None:
     """Generated snapshots preserve the stable shared-runtime invariants."""
     requirements = runtime_contract.HA_MCP_SERVER_REQUIREMENTS
-    parsed = Requirement(runtime_contract.HA_MCP_FASTMCP_REQUIREMENT)
-    fastmcp_specifiers = list(parsed.specifier)
-
-    assert parsed.name == "fastmcp"
-    assert len(fastmcp_specifiers) == 1
-    assert fastmcp_specifiers[0].operator == "=="
-    assert runtime_contract.HA_MCP_FASTMCP_REQUIREMENT in requirements
+    parsed = Requirement(runtime_contract.HA_MCP_RUNTIME_REQUIREMENT)
+    assert parsed.name == "ha-mcp"
+    assert parsed.url == (
+        "https://github.com/homeassistant-ai/ha-mcp/archive/"
+        f"{runtime_contract.HA_MCP_MASTER_SHA}.zip"
+    )
+    assert Version(runtime_contract.HA_MCP_FASTMCP_VERSION)
+    assert runtime_contract.HA_MCP_FASTMCP_MODULE == "ha_mcp._vendor.fastmcp"
     assert all(
         Requirement(requirement).name
         for requirement in (
@@ -295,7 +296,7 @@ def test_release_workflow_creates_a_github_release() -> None:
 
 
 def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
-    """Release-facing component diffs must patch-bump the HACS-visible version."""
+    """Release-facing component diffs must increase the HACS-visible version."""
     workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     script = (ROOT / "scripts" / "check_version_bump.py").read_text()
     scope = (ROOT / "scripts" / "release_scope.py").read_text()
@@ -306,7 +307,6 @@ def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
     assert "component_facing_changes" in script
     assert "custom_components/esphome_mcp/" in scope
     assert "manifest version did not increase" in script
-    assert "only cuts patch releases" in script
 
 
 def test_pr_template_and_validation_supply_release_notes() -> None:

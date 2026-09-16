@@ -7,14 +7,42 @@ Only dependency metadata is mirrored; no HA-MCP server or tool code is bundled.
 
 HA_MCP_REPOSITORY = "homeassistant-ai/ha-mcp"
 # renovate: datasource=git-refs packageName=https://github.com/homeassistant-ai/ha-mcp branch=master
-HA_MCP_MASTER_SHA = "a977fcaf9d70b08465add7bc9cc6c842426a9d1e"
-HA_MCP_SERVER_VERSION = "8.4.3"
-HA_MCP_COMPONENT_VERSION = "2.1.4"
+HA_MCP_MASTER_SHA = "3fa8fbdcf041d4a474049787b3578fd1f9fffd90"
+HA_MCP_SERVER_VERSION = "8.5.0"
+HA_MCP_COMPONENT_VERSION = "2.2.0"
 
 HA_MCP_SERVER_REQUIREMENTS = (
-    "fastmcp==3.4.7",
+    "anyio>=4.10; python_version >= '3.14'",
+    "anyio>=4.9; python_version < '3.14'",
+    "authlib>=1.6.11",
+    "cyclopts>=4.0.0",
+    "exceptiongroup>=1.2.2",
+    "griffelib>=2.0.0",
+    "httpx2>=2.5.0",
+    "joserfc>=1.5.0",
+    "jsonref>=1.1.0",
+    "jsonschema>=4.20.0",
+    "jsonschema-path>=0.3.4",
+    "openapi-pydantic>=0.5.1",
+    "opentelemetry-api>=1.28.0",
+    "platformdirs>=4.0.0",
+    "py-key-value-aio[filetree,keyring,memory]>=0.4.4,<0.5.0",
+    "pydantic-settings>=2.0.0",
+    "pyjwt[crypto]>=2.10.1",
+    "pyperclip>=1.9.0",
+    "python-multipart>=0.0.26",
+    "pywin32>=311; sys_platform == 'win32'",
+    "pyyaml>=6.0,<7.0",
+    "rich>=13.9.4",
+    "sse-starlette>=3.0.0",
+    "starlette>=1.0.1",
+    "typing-extensions>=4.13.0",
+    "typing-inspection>=0.4.1",
+    "uncalled-for>=0.4.0",
+    "uvicorn>=0.35; sys_platform != 'emscripten'",
+    "watchfiles>=1.0.0",
     "httpx[socks]>=0.28.1,<0.29",
-    "pydantic>=2.13.4,<3",
+    "pydantic[email]>=2.13.4,<3",
     "python-dotenv==1.2.3",
     "truststore==0.10.4",
     "cryptography>=48.0.0,<51",
@@ -24,9 +52,18 @@ HA_MCP_SERVER_REQUIREMENTS = (
 )
 
 HA_MCP_COMPONENT_REQUIREMENTS = (
+    "mcp>=1.24.0",
     "ruamel.yaml>=0.18.0",
     "voluptuous-openapi>=0.4.1",
 )
 
-HA_MCP_FASTMCP_REQUIREMENT = "fastmcp==3.4.7"
+HA_MCP_RUNTIME_REQUIREMENT = "ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/3fa8fbdcf041d4a474049787b3578fd1f9fffd90.zip"
+HA_MCP_FASTMCP_VERSION = "4.0.3"
+HA_MCP_FASTMCP_MODULE = "ha_mcp._vendor.fastmcp"
+HA_MCP_VENDOR_HASHES = (
+    "fastmcp:d613f2da25bc7722409c628b9497b1c64081bf4b2442a58dbd5c29044a8fa51e",
+    "mcp:c8e38234f7229be7a87538024a2cdf0da468ee315209483957691c1f5f94c71d",
+    "mcp_types:42a439d7950078c0d2c6bd44d07b698ca3bad60451a4c64ad09783aa1b5d1374",
+    "websockets:399fe1b89cd65ef6046e57e7b5adb8c57c31fba044da6789d43a1e508aefa2b3",
+)
 HA_MCP_RUNTIME_CONTRACT_ID = f"{HA_MCP_REPOSITORY}@{HA_MCP_MASTER_SHA}"

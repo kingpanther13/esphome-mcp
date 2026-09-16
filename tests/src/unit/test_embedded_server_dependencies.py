@@ -136,6 +136,7 @@ def _configure_runtime(
 ) -> None:
     """Stub package state without importing or modifying real dependencies."""
     default_origin = "/config/deps/fastmcp/__init__.py"
+    monkeypatch.setattr(module, "_vendored_runtime_violations", lambda: ())
     monkeypatch.setattr(module, "_installed_fastmcp_version", lambda: version)
     monkeypatch.setattr(
         module,
@@ -172,9 +173,9 @@ def test_embedded_server_consumes_the_generated_runtime_contract(monkeypatch: An
     assert len(module.HA_MCP_MASTER_SHA) == 40
     assert module.HA_MCP_MASTER_SHA == contract.HA_MCP_MASTER_SHA
     assert module.HA_MCP_COMPONENT_VERSION == contract.HA_MCP_COMPONENT_VERSION
-    assert module.HA_MCP_FASTMCP_REQUIREMENT == contract.HA_MCP_FASTMCP_REQUIREMENT
+    assert module.HA_MCP_RUNTIME_REQUIREMENT == contract.HA_MCP_RUNTIME_REQUIREMENT
     assert module.HA_MCP_SERVER_REQUIREMENTS == contract.HA_MCP_SERVER_REQUIREMENTS
-    assert module.HA_MCP_FASTMCP_REQUIREMENT in module.HA_MCP_SERVER_REQUIREMENTS
+    assert module.HA_MCP_RUNTIME_REQUIREMENT.startswith("ha-mcp @ https://github.com/")
     assert not any(
         requirement.lower().startswith("websockets")
         for requirement in module.HA_MCP_SERVER_REQUIREMENTS
@@ -208,12 +209,12 @@ def test_satisfied_contract_is_reused_without_install(monkeypatch: Any) -> None:
     assert process_calls == []
     assert manager.fastmcp_version == "3.4.7"
     assert hass.config_entries.updated == {
-        module.DATA_LAST_PIP_SPEC: module.HA_MCP_FASTMCP_REQUIREMENT
+        module.DATA_LAST_PIP_SPEC: module.HA_MCP_RUNTIME_REQUIREMENT
     }
 
 
 def test_missing_contract_installs_exact_server_requirements(monkeypatch: Any) -> None:
-    """Standalone startup installs the generated server dependency tuple only."""
+    """Standalone startup installs the immutable package that owns the runtime."""
     process_calls: list[tuple[str, list[str]]] = []
     installed = False
 
@@ -256,7 +257,7 @@ def test_missing_contract_installs_exact_server_requirements(monkeypatch: Any) -
     assert process_calls == [
         (
             f"ESPHome MCP server ({module.HA_MCP_RUNTIME_CONTRACT_ID})",
-            list(module.HA_MCP_SERVER_REQUIREMENTS),
+            [module.HA_MCP_RUNTIME_REQUIREMENT],
         )
     ]
     assert manager.fastmcp_version == "3.4.7"
@@ -327,11 +328,9 @@ def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch:
         monkeypatch,
         async_process_requirements=async_process_requirements,
     )
-    mismatched_fastmcp = "fastmcp==0.0.0"
-    other_requirements = tuple(
-        mismatched_fastmcp if requirement.startswith("fastmcp==") else requirement
-        for requirement in module.HA_MCP_SERVER_REQUIREMENTS
-    )
+    mismatched_fastmcp = "unexpected-runtime-package==0.0.0"
+    original = module.HA_MCP_SERVER_REQUIREMENTS[0]
+    other_requirements = (mismatched_fastmcp, *module.HA_MCP_SERVER_REQUIREMENTS[1:])
     _configure_runtime(
         monkeypatch,
         module,
@@ -347,7 +346,7 @@ def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch:
 
     assert exc.value.kind == "package"
     assert "does not match HA-MCP master" in str(exc.value)
-    assert module.HA_MCP_FASTMCP_REQUIREMENT in str(exc.value)
+    assert str(module.Requirement(original)) in str(exc.value)
     assert mismatched_fastmcp in str(exc.value)
     assert process_calls == []
 
@@ -516,6 +515,7 @@ def test_loaded_runtime_is_never_replaced_for_contract_violation(monkeypatch: An
 def test_runtime_graph_audit_follows_requested_extras(monkeypatch: Any) -> None:
     """The httpx[socks] contract also validates its extra-only dependency."""
     module = _load_embedded_server(monkeypatch)
+    monkeypatch.setattr(module, "_vendored_runtime_violations", lambda: ())
     monkeypatch.setattr(
         module,
         "HA_MCP_SERVER_REQUIREMENTS",
@@ -547,7 +547,7 @@ def test_loaded_fastmcp_fingerprint_reads_cached_module(monkeypatch: Any) -> Non
     fastmcp_module = ModuleType("fastmcp")
     fastmcp_module.__version__ = "3.4.7"
     fastmcp_module.__file__ = "/config/deps/fastmcp/__init__.py"
-    monkeypatch.setitem(sys.modules, "fastmcp", fastmcp_module)
+    monkeypatch.setitem(sys.modules, module.HA_MCP_FASTMCP_MODULE, fastmcp_module)
 
     assert module._loaded_fastmcp_fingerprint() == (
         "3.4.7",
@@ -555,31 +555,42 @@ def test_loaded_fastmcp_fingerprint_reads_cached_module(monkeypatch: Any) -> Non
     )
 
 
-def test_installed_fastmcp_origin_comes_from_owning_distribution(monkeypatch: Any) -> None:
-    """Package provenance follows the distribution that owns the import tree."""
+def test_installed_fastmcp_origin_comes_from_owning_distribution(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    """Package provenance follows HA-MCP rather than a public FastMCP wheel."""
     module = _load_embedded_server(monkeypatch)
+    relative = Path("ha_mcp/_vendor/fastmcp/__init__.py")
+    origin = tmp_path / relative
+    origin.parent.mkdir(parents=True)
+    origin.write_text('__version__ = "4.0.3"\n')
     distribution = SimpleNamespace(
-        files=(Path("fastmcp/__init__.py"),),
-        locate_file=lambda installed_file: Path("/config/deps") / installed_file,
+        files=(relative,),
+        locate_file=lambda installed_file: tmp_path / installed_file,
     )
 
     def get_distribution(name: str) -> Any:
-        if name == "fastmcp-slim":
+        if name == "ha-mcp":
             return distribution
         raise module.metadata.PackageNotFoundError(name)
 
     monkeypatch.setattr(module.metadata, "distribution", get_distribution)
-
-    assert module._installed_fastmcp_origin() == "/config/deps/fastmcp/__init__.py"
+    assert module._installed_fastmcp_origin() == str(origin)
+    assert module._installed_fastmcp_version() == "4.0.3"
 
 
 def test_dependency_probe_does_not_import_runtime_packages(monkeypatch: Any) -> None:
     """Import checks do not cache FastMCP modules before installation."""
     module = _load_embedded_server(monkeypatch)
+    monkeypatch.setattr(
+        module,
+        "_installed_fastmcp_origin",
+        lambda: "/deps/ha_mcp/_vendor/fastmcp/__init__.py",
+    )
     original_import = builtins.__import__
 
     def guarded_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "fastmcp" or name.startswith("fastmcp.") or name == "uvicorn":
+        if name == "ha_mcp" or name.startswith("ha_mcp.") or name == "uvicorn":
             raise AssertionError(f"{name} was imported during dependency probing")
         return original_import(name, *args, **kwargs)
 
@@ -710,3 +721,109 @@ def test_repeated_module_lock_deadlocks_require_restart(monkeypatch: Any) -> Non
     assert exc.value.kind == "restart"
     assert "repeatedly collided" in str(exc.value)
     assert sleeps == [0.1, 0.2]
+
+
+def test_vendored_runtime_probe_ignores_shared_fastmcp(monkeypatch: Any) -> None:
+    """Home Assistant's public MCP libraries do not own our private runtime."""
+    module = _load_embedded_server(monkeypatch)
+    monkeypatch.setitem(sys.modules, "fastmcp", ModuleType("fastmcp"))
+    monkeypatch.setitem(sys.modules, "mcp", ModuleType("mcp"))
+    for name in tuple(sys.modules):
+        if name == "ha_mcp" or name.startswith("ha_mcp."):
+            monkeypatch.delitem(sys.modules, name)
+    assert module._fastmcp_runtime_loaded() is False
+    monkeypatch.setitem(sys.modules, "ha_mcp._vendor.mcp", ModuleType("ha_mcp._vendor.mcp"))
+    assert module._fastmcp_runtime_loaded() is True
+
+
+def test_vendored_runtime_detects_changed_bundle(monkeypatch: Any, tmp_path: Path) -> None:
+    """Equal package versions cannot hide a different vendored snapshot."""
+    import hashlib
+
+    module = _load_embedded_server(monkeypatch)
+    vendor = tmp_path / "ha_mcp" / "_vendor"
+    fastmcp = vendor / "fastmcp"
+    fastmcp.mkdir(parents=True)
+    origin = fastmcp / "__init__.py"
+    origin.write_text('__version__ = "4.0.3"\n')
+    manifest = fastmcp / "MANIFEST.sha256"
+    manifest.write_text("expected bundle\n")
+    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    monkeypatch.setattr(module, "_installed_fastmcp_origin", lambda: str(origin))
+    monkeypatch.setattr(module, "HA_MCP_VENDOR_HASHES", (f"fastmcp:{digest}",))
+    monkeypatch.setattr(module, "HA_MCP_FASTMCP_VERSION", "4.0.3")
+    assert module._vendored_runtime_violations() == ()
+    manifest.write_text("other bundle\n")
+    assert module._vendored_runtime_violations()
+    manifest.unlink()
+    assert module._vendored_runtime_violations()
+
+
+@pytest.mark.parametrize("loaded", [False, True])
+@pytest.mark.parametrize("source_matches", [False, True])
+def test_standalone_can_upgrade_only_its_own_unloaded_runtime(
+    monkeypatch: Any, loaded: bool, source_matches: bool
+) -> None:
+    """An ESPHome-installed snapshot can advance after restart, never while loaded."""
+    import json
+
+    installs = []
+    installed = False
+    old_url = "https://github.com/homeassistant-ai/ha-mcp/archive/" + "a" * 40 + ".zip"
+
+    async def install(_hass: Any, _label: str, requirements: list[str], **_kw: Any) -> None:
+        nonlocal installed
+        installs.append(requirements)
+        installed = True
+
+    module = _load_embedded_server(monkeypatch, async_process_requirements=install)
+    _configure_runtime(monkeypatch, module, loaded=loaded)
+    monkeypatch.setattr(
+        module,
+        "_installed_ha_mcp_requirements",
+        lambda: {"ha-mcp": module.HA_MCP_SERVER_REQUIREMENTS if installed else ("old-dep==1",)},
+    )
+    monkeypatch.setattr(
+        module.metadata,
+        "distribution",
+        lambda _name: SimpleNamespace(read_text=lambda _file: json.dumps({"url": old_url})),
+    )
+    entry = SimpleNamespace(
+        data={"owned_runtime_url": old_url if source_matches else old_url + "?other"}, options={}
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), entry)
+    if loaded or not source_matches:
+        with pytest.raises(module.EmbeddedServerError) as exc:
+            _run(manager._async_ensure_package())
+        assert exc.value.kind == ("restart" if source_matches else "package")
+        assert installs == []
+    else:
+        _run(manager._async_ensure_package())
+        assert installs == [[module.HA_MCP_RUNTIME_REQUIREMENT]]
+        assert (
+            entry.data["owned_runtime_url"]
+            == module.Requirement(module.HA_MCP_RUNTIME_REQUIREMENT).url
+        )
+
+
+@pytest.mark.parametrize("distribution", ["ha-mcp", "ha-mcp-dev"])
+def test_external_runtime_dependency_repair_never_installs_another_distribution(
+    monkeypatch: Any, distribution: str
+) -> None:
+    """A missing peer dependency must not install stable HA-MCP over a dev runtime."""
+    installs = []
+
+    async def install(_hass: Any, _label: str, requirements: list[str], **_kw: Any) -> None:
+        installs.append(requirements)
+
+    module = _load_embedded_server(monkeypatch, async_process_requirements=install)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        peer_requirements={distribution: module.HA_MCP_SERVER_REQUIREMENTS},
+        violations=("httpx is missing",),
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+    with pytest.raises(module.EmbeddedServerError):
+        _run(manager._async_ensure_package())
+    assert installs == []

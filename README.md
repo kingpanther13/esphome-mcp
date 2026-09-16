@@ -148,19 +148,19 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
   server can perform privileged Home Assistant and Supervisor operations.
 - Add-on and Device Builder tools require Home Assistant Supervisor; they return
   structured errors when Supervisor or the ESPHome add-on is not available.
-- ESPHome MCP and HA-MCP share FastMCP and its dependency graph inside the Home
-  Assistant Core process. ESPHome MCP ships a small dependency-only Python
-  package generated from one immutable HA-MCP `master` commit. It mirrors that
-  commit's server requirements plus the HA-MCP custom-component version and
-  manifest requirements; it does not bundle HA-MCP's server or tools. Renovate
-  advances the master SHA and regenerates all of that metadata in one dependency
-  PR, while CI verifies the generated file against the pinned upstream commit.
-  When HA-MCP is absent, ESPHome MCP reuses or installs the exact mirrored server
-  requirements. When HA-MCP is installed, its declared requirements—and the
-  configured HA-MCP component version—must match the same snapshot. A mismatch
-  fails only ESPHome MCP without invoking pip. If shared FastMCP code is already
-  loaded, a version, origin, or dependency mismatch requests a Home Assistant
-  restart instead of replacing packages in the live process.
+- ESPHome MCP uses HA-MCP's private, vendored FastMCP/MCP runtime rather than
+  installing public FastMCP or MCP packages over Home Assistant's copies.
+  Its generated contract mirrors one immutable HA-MCP `master` commit, including
+  server requirements, component metadata, and vendored package fingerprints.
+  Renovate advances that snapshot and CI verifies it against upstream.
+  When HA-MCP is absent, ESPHome MCP installs the pinned HA-MCP package through
+  Home Assistant's requirements manager to obtain the runtime; it does not start
+  an HA-MCP server. When HA-MCP is present, its requirements and vendored runtime
+  must match, as must the version of any configured HA-MCP component. An enabled
+  HA-MCP server owns package installation: ESPHome waits for its setup and never
+  invokes pip in that path. A loaded runtime mismatch requires updating the
+  matching packages and restarting Home Assistant, rather than replacing code
+  in the live process.
 
 ## Testing
 
