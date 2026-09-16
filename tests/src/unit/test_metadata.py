@@ -115,13 +115,14 @@ def test_server_defaults_are_scaffolded() -> None:
 def test_runtime_contract_has_stable_shared_runtime_invariants() -> None:
     """Generated snapshots preserve the stable shared-runtime invariants."""
     requirements = runtime_contract.HA_MCP_SERVER_REQUIREMENTS
-    parsed = Requirement(runtime_contract.HA_MCP_FASTMCP_REQUIREMENT)
-    fastmcp_specifiers = list(parsed.specifier)
-
-    assert parsed.name == "fastmcp"
-    assert len(fastmcp_specifiers) == 1
-    assert fastmcp_specifiers[0].operator == "=="
-    assert runtime_contract.HA_MCP_FASTMCP_REQUIREMENT in requirements
+    parsed = Requirement(runtime_contract.HA_MCP_RUNTIME_REQUIREMENT)
+    assert parsed.name == "ha-mcp"
+    assert parsed.url == (
+        "https://github.com/homeassistant-ai/ha-mcp/archive/"
+        f"{runtime_contract.HA_MCP_MASTER_SHA}.zip"
+    )
+    assert Version(runtime_contract.HA_MCP_FASTMCP_VERSION)
+    assert runtime_contract.HA_MCP_FASTMCP_MODULE == "ha_mcp._vendor.fastmcp"
     assert all(
         Requirement(requirement).name
         for requirement in (

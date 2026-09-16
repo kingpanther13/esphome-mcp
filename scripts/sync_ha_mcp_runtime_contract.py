@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import hashlib
 import json
 import os
 import re
@@ -91,6 +92,19 @@ def _string_constant(source: str, name: str, *, filename: str) -> str:
     raise RuntimeError(f"{filename} does not define string constant {name}")
 
 
+def _markers_disjoint(left: str, right: str) -> bool:
+    """Recognize complementary environment conditions; reject uncertain overlap."""
+    pattern = r"^([a-z_]+)\s*(<=|>=|==|!=|<|>)\s*['\"]([^'\"]+)['\"]$"
+    first, second = re.fullmatch(pattern, left), re.fullmatch(pattern, right)
+    if first is None or second is None:
+        return False
+    return (
+        first[1] == second[1]
+        and first[3] == second[3]
+        and {first[2], second[2]} in ({"<", ">="}, {"<=", ">"}, {"==", "!="})
+    )
+
+
 def _canonical_name(requirement: str) -> str:
     """Return the canonical distribution name from a simple PEP 508 string."""
     match = _REQUIREMENT_NAME_RE.match(requirement)
@@ -106,9 +120,14 @@ def _string_list(value: Any, *, label: str) -> tuple[str, ...]:
     ):
         raise RuntimeError(f"{label} must be a list of requirement strings")
     requirements = tuple(value)
-    names = [_canonical_name(requirement) for requirement in requirements]
-    if len(names) != len(set(names)):
-        raise RuntimeError(f"{label} declares a dependency more than once")
+    seen: dict[str, set[str]] = {}
+    for requirement in requirements:
+        name = _canonical_name(requirement)
+        marker = requirement.partition(";")[2].strip()
+        markers = seen.setdefault(name, set())
+        if any(not _markers_disjoint(marker, previous) for previous in markers):
+            raise RuntimeError(f"{label} declares a dependency more than once")
+        markers.add(marker)
     return requirements
 
 
@@ -129,6 +148,8 @@ def _render_contract(
     component_version: str,
     server_requirements: tuple[str, ...],
     component_requirements: tuple[str, ...],
+    vendor_version: str | None = None,
+    vendor_hashes: tuple[str, ...] = (),
 ) -> str:
     """Render the complete generated contract module."""
     fastmcp = next(
@@ -139,8 +160,18 @@ def _render_contract(
         ),
         None,
     )
-    if fastmcp is None:
-        raise RuntimeError("HA-MCP master does not declare a FastMCP dependency")
+    if fastmcp is None and vendor_version is None:
+        raise RuntimeError("HA-MCP master does not declare a FastMCP dependency or vendored runtime")
+    if vendor_version is not None:
+        runtime = f"ha-mcp @ https://github.com/{HA_MCP_REPOSITORY}/archive/{sha}.zip"
+        runtime_metadata = (
+            f"HA_MCP_RUNTIME_REQUIREMENT = (\n    {json.dumps(runtime)}\n)\n"
+            f"HA_MCP_FASTMCP_VERSION = {json.dumps(vendor_version)}\n"
+            'HA_MCP_FASTMCP_MODULE = "ha_mcp._vendor.fastmcp"\n'
+            f"{_format_tuple('HA_MCP_VENDOR_HASHES', vendor_hashes)}\n"
+        )
+    else:
+        runtime_metadata = f"HA_MCP_FASTMCP_REQUIREMENT = {json.dumps(fastmcp)}\n"
 
     return (
         '"""Generated dependency contract for one immutable HA-MCP master snapshot.\n\n'
@@ -156,7 +187,7 @@ def _render_contract(
         f"HA_MCP_COMPONENT_VERSION = {json.dumps(component_version)}\n\n"
         f"{_format_tuple('HA_MCP_SERVER_REQUIREMENTS', server_requirements)}\n\n"
         f"{_format_tuple('HA_MCP_COMPONENT_REQUIREMENTS', component_requirements)}\n\n"
-        f"HA_MCP_FASTMCP_REQUIREMENT = {json.dumps(fastmcp)}\n"
+        f"{runtime_metadata}"
         'HA_MCP_RUNTIME_CONTRACT_ID = f"{HA_MCP_REPOSITORY}@{HA_MCP_MASTER_SHA}"\n'
     )
 
@@ -208,12 +239,29 @@ def _generate(ref: str) -> str:
             f"{component_version!r} != const {const_version!r}"
         )
 
+    vendor_version = None
+    vendor_hashes: tuple[str, ...] = ()
+    if not any(_canonical_name(raw) == "fastmcp" for raw in server_requirements):
+        vendor_path = "src/ha_mcp/_vendor/fastmcp/__init__.py"
+        vendor_version = _string_constant(
+            _read_source(vendor_path, sha), "__version__", filename=vendor_path
+        )
+        vendor_hashes = tuple(
+            f"{name}:"
+            + hashlib.sha256(
+                _read_source(f"src/ha_mcp/_vendor/{name}/MANIFEST.sha256", sha).encode()
+            ).hexdigest()
+            for name in ("fastmcp", "mcp", "mcp_types", "websockets")
+        )
+
     return _render_contract(
         sha=sha,
         server_version=server_version,
         component_version=component_version,
         server_requirements=server_requirements,
         component_requirements=component_requirements,
+        vendor_version=vendor_version,
+        vendor_hashes=vendor_hashes,
     )
 
 

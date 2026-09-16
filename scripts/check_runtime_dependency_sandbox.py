@@ -72,6 +72,19 @@ def _constant_string_tuple(path: Path, name: str) -> tuple[str, ...] | None:
     return None
 
 
+def _markers_disjoint(left: str, right: str) -> bool:
+    """Recognize complementary environment conditions; reject uncertain overlap."""
+    pattern = r"^([a-z_]+)\s*(<=|>=|==|!=|<|>)\s*['\"]([^'\"]+)['\"]$"
+    first, second = re.fullmatch(pattern, left), re.fullmatch(pattern, right)
+    if first is None or second is None:
+        return False
+    return (
+        first[1] == second[1]
+        and first[3] == second[3]
+        and {first[2], second[2]} in ({"<", ">="}, {"<=", ">"}, {"==", "!="})
+    )
+
+
 def _canonical_name(requirement: str) -> str | None:
     """Return the canonical distribution name from a requirement string."""
     match = _REQUIREMENT_NAME.match(requirement.strip())
@@ -229,6 +242,7 @@ def validate_runtime_contract(path: Path = CONTRACT_PATH) -> list[str]:
     server_version = _constant_string(path, "HA_MCP_SERVER_VERSION")
     component_version = _constant_string(path, "HA_MCP_COMPONENT_VERSION")
     fastmcp = _constant_string(path, "HA_MCP_FASTMCP_REQUIREMENT")
+    runtime = _constant_string(path, "HA_MCP_RUNTIME_REQUIREMENT")
     server_requirements = _constant_string_tuple(
         path,
         "HA_MCP_SERVER_REQUIREMENTS",
@@ -250,16 +264,45 @@ def validate_runtime_contract(path: Path = CONTRACT_PATH) -> list[str]:
         errors.append("HA_MCP_SERVER_REQUIREMENTS must not be empty")
     if component_requirements is None:
         errors.append("HA_MCP_COMPONENT_REQUIREMENTS must be a string tuple")
-    if fastmcp is None or _EXACT_FASTMCP_PIN.fullmatch(fastmcp) is None:
-        errors.append("HA_MCP_FASTMCP_REQUIREMENT must be an exact FastMCP pin")
-    if server_requirements is not None and fastmcp not in server_requirements:
-        errors.append("HA_MCP_FASTMCP_REQUIREMENT must be present in HA_MCP_SERVER_REQUIREMENTS")
+    if runtime is not None:
+        expected = f"ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/{sha}.zip"
+        if runtime != expected:
+            errors.append("HA_MCP_RUNTIME_REQUIREMENT must install the immutable contract SHA")
+        if _constant_string(path, "HA_MCP_FASTMCP_MODULE") != "ha_mcp._vendor.fastmcp":
+            errors.append("HA_MCP_FASTMCP_MODULE must use HA-MCP's private namespace")
+        if not _constant_string(path, "HA_MCP_FASTMCP_VERSION"):
+            errors.append("HA_MCP_FASTMCP_VERSION is missing")
+        hashes = _constant_string_tuple(path, "HA_MCP_VENDOR_HASHES") or ()
+        if (
+            len(hashes) != 4
+            or {entry.split(":")[0] for entry in hashes}
+            != {"fastmcp", "mcp", "mcp_types", "websockets"}
+            or any(re.fullmatch(r"[a-z_]+:[0-9a-f]{64}", entry) is None for entry in hashes)
+        ):
+            errors.append("HA_MCP_VENDOR_HASHES must identify all four vendored packages")
+        if any(
+            _canonical_name(raw) in {"fastmcp", "fastmcp-slim", "mcp", "mcp-types"}
+            for raw in server_requirements or ()
+        ):
+            errors.append("Vendored runtime must not install public FastMCP/MCP distributions")
+    else:
+        if fastmcp is None or _EXACT_FASTMCP_PIN.fullmatch(fastmcp) is None:
+            errors.append("HA_MCP_FASTMCP_REQUIREMENT must be an exact FastMCP pin")
+        if server_requirements is not None and fastmcp not in server_requirements:
+            errors.append("HA_MCP_FASTMCP_REQUIREMENT must be present in HA_MCP_SERVER_REQUIREMENTS")
     if server_requirements is not None:
-        names = [_canonical_name(requirement) for requirement in server_requirements]
-        if None in names:
-            errors.append("HA_MCP_SERVER_REQUIREMENTS contains an invalid requirement")
-        elif len(names) != len(set(names)):
-            errors.append("HA_MCP_SERVER_REQUIREMENTS contains duplicate distributions")
+        seen: dict[str, set[str]] = {}
+        for raw in server_requirements:
+            name = _canonical_name(raw)
+            if name is None:
+                errors.append("HA_MCP_SERVER_REQUIREMENTS contains an invalid requirement")
+                break
+            marker = raw.partition(";")[2].strip()
+            markers = seen.setdefault(name, set())
+            if any(not _markers_disjoint(marker, previous) for previous in markers):
+                errors.append("HA_MCP_SERVER_REQUIREMENTS contains duplicate distributions")
+                break
+            markers.add(marker)
     return errors
 
 
@@ -347,7 +390,13 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
             and isinstance(requirements_arg.args[0], ast.Name)
             and requirements_arg.args[0].id == "HA_MCP_SERVER_REQUIREMENTS"
         )
-        if not (direct_contract or copied_contract):
+        vendored_contract = (
+            isinstance(requirements_arg, ast.List)
+            and len(requirements_arg.elts) == 1
+            and isinstance(requirements_arg.elts[0], ast.Name)
+            and requirements_arg.elts[0].id == "HA_MCP_RUNTIME_REQUIREMENT"
+        )
+        if not (direct_contract or copied_contract or vendored_contract):
             errors.append(
                 f"HA requirements-manager call at line {call.lineno} must use "
                 "exactly HA_MCP_SERVER_REQUIREMENTS"

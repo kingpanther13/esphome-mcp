@@ -8,7 +8,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal
 
-from fastmcp import FastMCP
+from ha_mcp._vendor.fastmcp import FastMCP
 from homeassistant.core import HomeAssistant
 from pydantic import Field
 

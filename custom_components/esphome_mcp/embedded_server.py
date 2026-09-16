@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import hashlib
 import importlib
 import logging
 import os
@@ -11,6 +13,7 @@ import threading
 import time
 from contextlib import suppress
 from importlib import metadata
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from homeassistant.core import HomeAssistant
@@ -33,10 +36,13 @@ from .const import (
 )
 from .ha_mcp_runtime import (
     HA_MCP_COMPONENT_VERSION,
-    HA_MCP_FASTMCP_REQUIREMENT,
+    HA_MCP_FASTMCP_MODULE,
+    HA_MCP_FASTMCP_VERSION,
     HA_MCP_MASTER_SHA,
     HA_MCP_RUNTIME_CONTRACT_ID,
+    HA_MCP_RUNTIME_REQUIREMENT,
     HA_MCP_SERVER_REQUIREMENTS,
+    HA_MCP_VENDOR_HASHES,
 )
 
 if TYPE_CHECKING:
@@ -76,7 +82,7 @@ class EmbeddedServerManager:
         self._port = int(entry.options.get(OPT_SERVER_PORT, DEFAULT_SERVER_PORT))
         self._bind_host = str(entry.options.get(OPT_BIND_HOST, DEFAULT_BIND_HOST))
         self._secret_path = str(entry.data.get(DATA_SECRET_PATH, ""))
-        self._pip_spec = HA_MCP_FASTMCP_REQUIREMENT
+        self._pip_spec = HA_MCP_RUNTIME_REQUIREMENT
         self._config_dir = hass.config.path(SERVER_CONFIG_SUBDIR)
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -338,6 +344,15 @@ class EmbeddedServerManager:
                 kind="package",
             )
         _validate_installed_ha_mcp_contract(peer_requirements)
+        if peer_requirements:
+            vendor_errors = await self._hass.async_add_executor_job(_vendored_runtime_violations)
+            if vendor_errors:
+                raise EmbeddedServerError(
+                    "Installed HA-MCP has a different vendored runtime: "
+                    f"{'; '.join(vendor_errors)}. Update HA-MCP to the matching "
+                    "snapshot and restart Home Assistant.",
+                    kind="restart" if _fastmcp_runtime_loaded() else "package",
+                )
 
         installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
@@ -395,7 +410,7 @@ class EmbeddedServerManager:
             await async_process_requirements(
                 self._hass,
                 f"ESPHome MCP server ({HA_MCP_RUNTIME_CONTRACT_ID})",
-                list(HA_MCP_SERVER_REQUIREMENTS),
+                [HA_MCP_RUNTIME_REQUIREMENT],
                 is_built_in=False,
             )
         except RequirementsNotFound as err:
@@ -431,7 +446,7 @@ class EmbeddedServerManager:
 def _server_dependencies_importable() -> bool:
     """Return True when runtime packages can resolve without importing them."""
     importlib.invalidate_caches()
-    return _module_resolves("fastmcp") and _module_resolves("uvicorn")
+    return _installed_fastmcp_origin() is not None and _module_resolves("uvicorn")
 
 
 def _module_resolves(module_name: str) -> bool:
@@ -443,12 +458,43 @@ def _module_resolves(module_name: str) -> bool:
 
 
 def _installed_fastmcp_version() -> str | None:
-    """Return the installed FastMCP distribution version without importing it."""
-    importlib.invalidate_caches()
-    try:
-        return metadata.version("fastmcp")
-    except metadata.PackageNotFoundError:
+    """Read the private runtime version without importing HA-MCP or FastMCP."""
+    origin = _installed_fastmcp_origin()
+    if origin is None:
         return None
+    try:
+        tree = ast.parse(Path(origin).read_text())
+        for node in tree.body:
+            if (
+                isinstance(node, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "__version__" for t in node.targets)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+            ):
+                return node.value.value
+    except (OSError, SyntaxError):
+        return None
+    return None
+
+
+def _vendored_runtime_violations() -> tuple[str, ...]:
+    """Match the vendored generation even when HA-MCP's public version is unchanged."""
+    origin = _installed_fastmcp_origin()
+    if origin is None:
+        return ("HA-MCP vendored FastMCP is missing",)
+    vendor_dir = Path(origin).parent.parent
+    violations = []
+    if _installed_fastmcp_version() != HA_MCP_FASTMCP_VERSION:
+        violations.append(f"vendored FastMCP must be {HA_MCP_FASTMCP_VERSION}")
+    for entry in HA_MCP_VENDOR_HASHES:
+        name, expected = entry.split(":", 1)
+        try:
+            actual = hashlib.sha256((vendor_dir / name / "MANIFEST.sha256").read_bytes()).hexdigest()
+        except OSError:
+            actual = None
+        if actual != expected:
+            violations.append(f"vendored {name} differs from the mirrored snapshot")
+    return tuple(violations)
 
 
 def _installed_ha_mcp_requirements() -> dict[str, tuple[str, ...]]:
@@ -538,7 +584,7 @@ def _unsatisfied_runtime_requirements() -> tuple[str, ...]:
         if requirement.marker is None or requirement.marker.evaluate({"extra": ""}):
             queue.append((requirement, "HA-MCP master contract"))
     seen: set[tuple[str, tuple[str, ...], str, str, str]] = set()
-    violations: list[str] = []
+    violations: list[str] = list(_vendored_runtime_violations())
 
     while queue:
         requirement, required_by = queue.pop(0)
@@ -591,7 +637,7 @@ def _loaded_fastmcp_fingerprint() -> tuple[str | None, str | None] | None:
     """Return the cached FastMCP generation without importing or reloading it."""
     if not _fastmcp_runtime_loaded():
         return None
-    module = sys.modules.get("fastmcp")
+    module = sys.modules.get(HA_MCP_FASTMCP_MODULE)
     if module is None:
         return None, None
     version = getattr(module, "__version__", None)
@@ -603,16 +649,17 @@ def _loaded_fastmcp_fingerprint() -> tuple[str | None, str | None] | None:
 
 
 def _installed_fastmcp_origin() -> str | None:
-    """Return the installed distribution path that owns fastmcp/__init__.py."""
-    for distribution_name in ("fastmcp-slim", "fastmcp"):
+    """Locate the private module through its owning HA-MCP distribution."""
+    for distribution_name in _HA_MCP_DISTRIBUTIONS:
         try:
             distribution = metadata.distribution(distribution_name)
         except metadata.PackageNotFoundError:
             continue
         for installed_file in distribution.files or ():
-            normalized = str(installed_file).replace("\\", "/")
-            if normalized == "fastmcp/__init__.py" or normalized.endswith("/fastmcp/__init__.py"):
-                return os.path.realpath(distribution.locate_file(installed_file))
+            if str(installed_file) == "ha_mcp/_vendor/fastmcp/__init__.py":
+                origin = Path(distribution.locate_file(installed_file))
+                if origin.is_file():
+                    return os.path.realpath(origin)
     return None
 
 
@@ -636,7 +683,7 @@ def _loaded_fastmcp_matches_install(
 
 def _fastmcp_runtime_loaded() -> bool:
     """Return whether any shared FastMCP module is loaded or mid-import."""
-    return any(name == "fastmcp" or name.startswith("fastmcp.") for name in sys.modules)
+    return any(name == "ha_mcp" or name.startswith("ha_mcp.") for name in sys.modules)
 
 
 def _import_server_runtime_with_retry() -> None:

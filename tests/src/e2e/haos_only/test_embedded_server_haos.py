@@ -95,9 +95,7 @@ def _contract_string(name: str) -> str:
 
 def _fastmcp_contract_version() -> str:
     """Return the FastMCP pin mirrored from the HA-MCP master snapshot."""
-    requirement = _contract_string("HA_MCP_FASTMCP_REQUIREMENT")
-    assert requirement.startswith("fastmcp==")
-    return requirement.partition("==")[2]
+    return _contract_string("HA_MCP_FASTMCP_VERSION")
 
 
 E2E_DEVICE_NAME = "ESP MCP E2E"
