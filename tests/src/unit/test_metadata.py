@@ -296,7 +296,7 @@ def test_release_workflow_creates_a_github_release() -> None:
 
 
 def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
-    """Release-facing component diffs must patch-bump the HACS-visible version."""
+    """Release-facing component diffs must increase the HACS-visible version."""
     workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     script = (ROOT / "scripts" / "check_version_bump.py").read_text()
     scope = (ROOT / "scripts" / "release_scope.py").read_text()
@@ -307,7 +307,6 @@ def test_pr_validation_requires_version_bumps_for_component_changes() -> None:
     assert "component_facing_changes" in script
     assert "custom_components/esphome_mcp/" in scope
     assert "manifest version did not increase" in script
-    assert "only cuts patch releases" in script
 
 
 def test_pr_template_and_validation_supply_release_notes() -> None:

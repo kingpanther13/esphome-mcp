@@ -46,7 +46,7 @@ def _version_key(version: str) -> tuple[int, int, int, int, int]:
 
 
 def validate_version_bump(base_ref: str) -> list[str]:
-    """Return errors for release-facing diffs that do not patch-bump the version."""
+    """Return errors for release-facing diffs that do not increase the version."""
     changed_files = component_facing_changes(base_ref, root=ROOT)
     if not changed_files:
         return []
@@ -60,10 +60,10 @@ def validate_version_bump(base_ref: str) -> list[str]:
             "custom_components/esphome_mcp changed but manifest version did not increase "
             f"over {base_ref}: {current_version!r} <= {base_version!r}"
         ]
-    if current_key[:2] != base_key[:2]:
+    if current_key[0] != base_key[0]:
         return [
-            "this repository only cuts patch releases: "
-            f"{base_version!r} -> {current_version!r} changes the major or minor version"
+            "this repository does not cut major releases: "
+            f"{base_version!r} -> {current_version!r} changes the major version"
         ]
     return []
 
