@@ -804,3 +804,26 @@ def test_standalone_can_upgrade_only_its_own_unloaded_runtime(
             entry.data["owned_runtime_url"]
             == module.Requirement(module.HA_MCP_RUNTIME_REQUIREMENT).url
         )
+
+
+@pytest.mark.parametrize("distribution", ["ha-mcp", "ha-mcp-dev"])
+def test_external_runtime_dependency_repair_never_installs_another_distribution(
+    monkeypatch: Any, distribution: str
+) -> None:
+    """A missing peer dependency must not install stable HA-MCP over a dev runtime."""
+    installs = []
+
+    async def install(_hass: Any, _label: str, requirements: list[str], **_kw: Any) -> None:
+        installs.append(requirements)
+
+    module = _load_embedded_server(monkeypatch, async_process_requirements=install)
+    _configure_runtime(
+        monkeypatch,
+        module,
+        peer_requirements={distribution: module.HA_MCP_SERVER_REQUIREMENTS},
+        violations=("httpx is missing",),
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+    with pytest.raises(module.EmbeddedServerError):
+        _run(manager._async_ensure_package())
+    assert installs == []
