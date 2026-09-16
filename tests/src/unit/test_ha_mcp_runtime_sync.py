@@ -127,3 +127,44 @@ def test_generator_requires_fastmcp_in_server_dependencies(
 
     with pytest.raises(RuntimeError, match="does not declare a FastMCP"):
         module._generate("master")
+
+
+def test_generator_accepts_python_specific_requirements() -> None:
+    """The same package can have different constraints on different Python versions."""
+    module = _load_sync()
+    requirements = [
+        "anyio>=4.10; python_version >= '3.14'",
+        "anyio>=4.9; python_version < '3.14'",
+    ]
+    assert module._string_list(requirements, label="server") == tuple(requirements)
+
+
+def test_generator_reads_vendored_runtime_from_same_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A vendored runtime must produce an installable immutable package reference."""
+    module = _load_sync()
+    sources = {
+        module.PYPROJECT_PATH: PYPROJECT.replace('"fastmcp==3.5.0",', '"uvicorn>=0.35",'),
+        module.MANIFEST_PATH: MANIFEST,
+        module.CONST_PATH: CONST,
+        "src/ha_mcp/_vendor/fastmcp/__init__.py": '__version__ = "4.0.3"\n',
+        **{
+            f"src/ha_mcp/_vendor/{name}/MANIFEST.sha256": "abc  __init__.py\n"
+            for name in ("fastmcp", "mcp", "mcp_types", "websockets")
+        },
+    }
+    requested = []
+
+    def read_source(path: str, sha: str) -> str:
+        requested.append((path, sha))
+        return sources[path]
+
+    monkeypatch.setattr(module, "_resolve_commit", lambda _ref: SHA)
+    monkeypatch.setattr(module, "_read_source", read_source)
+    rendered = module._generate("master")
+    assert 'HA_MCP_FASTMCP_VERSION = "4.0.3"' in rendered
+    assert f'ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/{SHA}.zip' in rendered
+    assert 'HA_MCP_FASTMCP_MODULE = "ha_mcp._vendor.fastmcp"' in rendered
+    assert all(sha == SHA for _, sha in requested)
+    assert {path for path, _ in requested} == set(sources)
