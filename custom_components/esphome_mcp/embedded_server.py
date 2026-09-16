@@ -419,12 +419,12 @@ class EmbeddedServerManager:
                 kind="restart",
             )
 
-        if peer_server_enabled:
+        if peer_server_enabled or (peer_requirements and not owns_runtime):
             detail = "; ".join(violations) if violations else "runtime modules are missing"
             raise EmbeddedServerError(
-                "HA-MCP owns the enabled shared runtime, but its dependency "
-                f"graph is not usable: {detail}. ESPHome MCP will not invoke "
-                "pip in the peer-owned path; resolve HA-MCP's repair issue, "
+                "A separately managed HA-MCP package owns this runtime, but its "
+                f"dependency graph is not usable: {detail}. ESPHome MCP will not "
+                "invoke pip in the peer-owned path; repair the HA-MCP package, "
                 "then reload ESPHome MCP.",
                 kind="package",
             )
