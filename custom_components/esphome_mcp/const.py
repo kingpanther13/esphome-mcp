@@ -35,6 +35,7 @@ DATA_WEBHOOK = "webhook"
 DATA_BRINGUP_TASK = "bringup_task"
 DATA_LAST_OPTIONS = "last_options"
 DATA_LAST_PIP_SPEC = "last_pip_spec"
+DATA_OWNED_RUNTIME_URL = "owned_runtime_url"
 
 WEBHOOK_AUTH_NONE = "none"
 WEBHOOK_AUTH_HA = "ha_auth"

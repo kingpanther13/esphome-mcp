@@ -6,6 +6,7 @@ import ast
 import asyncio
 import hashlib
 import importlib
+import json
 import logging
 import os
 import sys
@@ -23,6 +24,7 @@ from packaging.version import InvalidVersion, Version
 
 from .const import (
     DATA_LAST_PIP_SPEC,
+    DATA_OWNED_RUNTIME_URL,
     DATA_SECRET_PATH,
     DEFAULT_BIND_HOST,
     DEFAULT_SERVER_PORT,
@@ -343,21 +345,42 @@ class EmbeddedServerManager:
                 "before reloading ESPHome MCP.",
                 kind="package",
             )
-        _validate_installed_ha_mcp_contract(peer_requirements)
-        if peer_requirements:
-            vendor_errors = await self._hass.async_add_executor_job(_vendored_runtime_violations)
-            if vendor_errors:
-                raise EmbeddedServerError(
-                    "Installed HA-MCP has a different vendored runtime: "
-                    f"{'; '.join(vendor_errors)}. Update HA-MCP to the matching "
-                    "snapshot and restart Home Assistant.",
-                    kind="restart" if _fastmcp_runtime_loaded() else "package",
+        shared_runtime_loaded = await self._hass.async_add_executor_job(_fastmcp_runtime_loaded)
+        owns_runtime = (
+            set(peer_requirements) == {"ha-mcp"}
+            and not self._hass.config_entries.async_entries(HA_MCP_DOMAIN)
+            and await self._hass.async_add_executor_job(
+                _runtime_installed_from_url, self._entry.data.get(DATA_OWNED_RUNTIME_URL)
+            )
+        )
+        contract_needs_install = False
+        try:
+            _validate_installed_ha_mcp_contract(peer_requirements)
+            if peer_requirements:
+                vendor_errors = await self._hass.async_add_executor_job(
+                    _vendored_runtime_violations
                 )
+                if vendor_errors:
+                    raise EmbeddedServerError(
+                        "Installed HA-MCP has a different vendored runtime: "
+                        f"{'; '.join(vendor_errors)}. Update HA-MCP to the matching "
+                        "snapshot and restart Home Assistant.",
+                        kind="restart" if shared_runtime_loaded else "package",
+                    )
+        except EmbeddedServerError as err:
+            if not owns_runtime:
+                raise
+            if shared_runtime_loaded:
+                raise EmbeddedServerError(
+                    "ESPHome MCP's runtime needs an update but is already loaded. "
+                    "Restart Home Assistant to install the matching snapshot.",
+                    kind="restart",
+                ) from err
+            contract_needs_install = True
 
         installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
         importable = await self._hass.async_add_executor_job(_server_dependencies_importable)
         violations = await self._hass.async_add_executor_job(_unsatisfied_runtime_requirements)
-        shared_runtime_loaded = await self._hass.async_add_executor_job(_fastmcp_runtime_loaded)
         if shared_runtime_loaded:
             loaded_fingerprint = await self._hass.async_add_executor_job(
                 _loaded_fastmcp_fingerprint
@@ -381,7 +404,7 @@ class EmbeddedServerManager:
                     kind="restart",
                 )
 
-        if not violations and importable:
+        if not contract_needs_install and not violations and importable:
             self._fastmcp_version = installed_version
             self._store_effective_pip_spec()
             return
@@ -431,16 +454,26 @@ class EmbeddedServerManager:
             )
         installed_version = await self._hass.async_add_executor_job(_installed_fastmcp_version)
         self._fastmcp_version = installed_version
-        self._store_effective_pip_spec()
+        self._store_effective_pip_spec(owns_runtime=True)
 
-    def _store_effective_pip_spec(self) -> None:
+    def _store_effective_pip_spec(self, *, owns_runtime: bool = False) -> None:
         """Persist the requirement that owns the runtime used by this entry."""
-        if self._entry.data.get(DATA_LAST_PIP_SPEC) == self._pip_spec:
-            return
-        self._hass.config_entries.async_update_entry(
-            self._entry,
-            data={**self._entry.data, DATA_LAST_PIP_SPEC: self._pip_spec},
-        )
+        data = {**self._entry.data, DATA_LAST_PIP_SPEC: self._pip_spec}
+        if owns_runtime:
+            data[DATA_OWNED_RUNTIME_URL] = Requirement(HA_MCP_RUNTIME_REQUIREMENT).url
+        if data != self._entry.data:
+            self._hass.config_entries.async_update_entry(self._entry, data=data)
+
+
+def _runtime_installed_from_url(url: str | None) -> bool:
+    """Require recorded ownership and matching installer provenance before upgrading."""
+    if not url:
+        return False
+    try:
+        source = metadata.distribution("ha-mcp").read_text("direct_url.json")
+        return json.loads(source or "{}").get("url") == url
+    except (metadata.PackageNotFoundError, OSError, ValueError, AttributeError):
+        return False
 
 
 def _server_dependencies_importable() -> bool:

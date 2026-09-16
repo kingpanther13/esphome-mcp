@@ -760,8 +760,9 @@ def test_vendored_runtime_detects_changed_bundle(monkeypatch: Any, tmp_path: Pat
 
 
 @pytest.mark.parametrize("loaded", [False, True])
+@pytest.mark.parametrize("source_matches", [False, True])
 def test_standalone_can_upgrade_only_its_own_unloaded_runtime(
-    monkeypatch: Any, loaded: bool
+    monkeypatch: Any, loaded: bool, source_matches: bool
 ) -> None:
     """An ESPHome-installed snapshot can advance after restart, never while loaded."""
     import json
@@ -787,16 +788,19 @@ def test_standalone_can_upgrade_only_its_own_unloaded_runtime(
         "distribution",
         lambda _name: SimpleNamespace(read_text=lambda _file: json.dumps({"url": old_url})),
     )
-    entry = SimpleNamespace(data={"owned_runtime_url": old_url}, options={})
+    entry = SimpleNamespace(
+        data={"owned_runtime_url": old_url if source_matches else old_url + "?other"}, options={}
+    )
     manager = module.EmbeddedServerManager(_FakeHass(), entry)
-    if loaded:
+    if loaded or not source_matches:
         with pytest.raises(module.EmbeddedServerError) as exc:
             _run(manager._async_ensure_package())
-        assert exc.value.kind == "restart"
+        assert exc.value.kind == ("restart" if source_matches else "package")
         assert installs == []
     else:
         _run(manager._async_ensure_package())
         assert installs == [[module.HA_MCP_RUNTIME_REQUIREMENT]]
-        assert entry.data["owned_runtime_url"] == module.Requirement(
-            module.HA_MCP_RUNTIME_REQUIREMENT
-        ).url
+        assert (
+            entry.data["owned_runtime_url"]
+            == module.Requirement(module.HA_MCP_RUNTIME_REQUIREMENT).url
+        )
