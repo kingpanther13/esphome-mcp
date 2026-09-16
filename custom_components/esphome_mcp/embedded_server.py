@@ -489,7 +489,8 @@ def _vendored_runtime_violations() -> tuple[str, ...]:
     for entry in HA_MCP_VENDOR_HASHES:
         name, expected = entry.split(":", 1)
         try:
-            actual = hashlib.sha256((vendor_dir / name / "MANIFEST.sha256").read_bytes()).hexdigest()
+            manifest = (vendor_dir / name / "MANIFEST.sha256").read_bytes()
+            actual = hashlib.sha256(manifest).hexdigest()
         except OSError:
             actual = None
         if actual != expected:

@@ -289,7 +289,9 @@ def validate_runtime_contract(path: Path = CONTRACT_PATH) -> list[str]:
         if fastmcp is None or _EXACT_FASTMCP_PIN.fullmatch(fastmcp) is None:
             errors.append("HA_MCP_FASTMCP_REQUIREMENT must be an exact FastMCP pin")
         if server_requirements is not None and fastmcp not in server_requirements:
-            errors.append("HA_MCP_FASTMCP_REQUIREMENT must be present in HA_MCP_SERVER_REQUIREMENTS")
+            errors.append(
+                "HA_MCP_FASTMCP_REQUIREMENT must be present in HA_MCP_SERVER_REQUIREMENTS"
+            )
     if server_requirements is not None:
         seen: dict[str, set[str]] = {}
         for raw in server_requirements:

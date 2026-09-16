@@ -161,7 +161,9 @@ def _render_contract(
         None,
     )
     if fastmcp is None and vendor_version is None:
-        raise RuntimeError("HA-MCP master does not declare a FastMCP dependency or vendored runtime")
+        raise RuntimeError(
+            "HA-MCP master does not declare a FastMCP dependency or vendored runtime"
+        )
     if vendor_version is not None:
         runtime = f"ha-mcp @ https://github.com/{HA_MCP_REPOSITORY}/archive/{sha}.zip"
         runtime_metadata = (

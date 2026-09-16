@@ -19,6 +19,19 @@ jobs:
           node-version: "24"
       - name: Validate Renovate configuration
         run: npx --yes --package renovate@44.94.0 renovate-config-validator renovate.json
+      - name: Smoke-test the Renovate container
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/.*renovate-version: "\([^" ]*\)".*/\1/p' .github/workflows/renovate.yml)"
+          test -n "$version"
+          docker run --rm --volume "$PWD:/repo" --workdir /repo \
+            --env GIT_CONFIG_COUNT=1 --env GIT_CONFIG_KEY_0=safe.directory \
+            --env GIT_CONFIG_VALUE_0=/repo \
+            "ghcr.io/renovatebot/renovate:$version" --platform=local --dry-run=extract \
+            2>&1 | tee "$RUNNER_TEMP/renovate-startup.log"
+          # Older Renovate versions exited zero even after a bootstrap crash.
+          grep -q 'Repository finished' "$RUNNER_TEMP/renovate-startup.log"
+          ! grep -Eq 'ERROR|FATAL' "$RUNNER_TEMP/renovate-startup.log"
 
   lint:
     name: Ruff
@@ -33,7 +46,7 @@ jobs:
       - name: Ruff check
         run: ruff check custom_components tests scripts
       - name: Ruff format check
-        run: ruff format --check custom_components tests scripts
+        run: ruff format --check --diff custom_components tests scripts
 
   dependency-sandbox:
     name: Runtime Dependency Sandbox

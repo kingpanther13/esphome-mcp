@@ -328,11 +328,9 @@ def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch:
         monkeypatch,
         async_process_requirements=async_process_requirements,
     )
-    mismatched_fastmcp = "python-dotenv==0.0.0"
-    other_requirements = tuple(
-        mismatched_fastmcp if requirement.startswith("python-dotenv==") else requirement
-        for requirement in module.HA_MCP_SERVER_REQUIREMENTS
-    )
+    mismatched_fastmcp = "unexpected-runtime-package==0.0.0"
+    original = module.HA_MCP_SERVER_REQUIREMENTS[0]
+    other_requirements = (mismatched_fastmcp, *module.HA_MCP_SERVER_REQUIREMENTS[1:])
     _configure_runtime(
         monkeypatch,
         module,
@@ -348,7 +346,7 @@ def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch:
 
     assert exc.value.kind == "package"
     assert "does not match HA-MCP master" in str(exc.value)
-    assert "python-dotenv==1.2.3" in str(exc.value)
+    assert str(module.Requirement(original)) in str(exc.value)
     assert mismatched_fastmcp in str(exc.value)
     assert process_calls == []
 
@@ -752,6 +750,7 @@ def test_vendored_runtime_detects_changed_bundle(monkeypatch: Any, tmp_path: Pat
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
     monkeypatch.setattr(module, "_installed_fastmcp_origin", lambda: str(origin))
     monkeypatch.setattr(module, "HA_MCP_VENDOR_HASHES", (f"fastmcp:{digest}",))
+    monkeypatch.setattr(module, "HA_MCP_FASTMCP_VERSION", "4.0.3")
     assert module._vendored_runtime_violations() == ()
     manifest.write_text("other bundle\n")
     assert module._vendored_runtime_violations()
