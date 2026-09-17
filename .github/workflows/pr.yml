@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "24"
       - name: Validate Renovate configuration
-        run: npx --yes --package renovate@44.97.0 renovate-config-validator renovate.json
+        run: npx --yes --package renovate@44.97.4 renovate-config-validator renovate.json
       - name: Smoke-test the Renovate container
         run: |
           set -euo pipefail
