@@ -1,6 +1,6 @@
 [project]
 name = "esphome-mcp-custom-component"
-version = "1.1.16"
+version = "1.1.17"
 description = "ESPHome MCP server as a Home Assistant custom component"
 readme = "README.md"
 requires-python = ">=3.13"
