@@ -11,6 +11,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+from packaging.markers import default_environment
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -375,6 +376,32 @@ def test_installed_ha_mcp_rejects_different_python_marker_contracts(
 
     with pytest.raises(module.EmbeddedServerError, match="does not match HA-MCP master"):
         module._validate_installed_ha_mcp_contract({"ha-mcp-dev": (installed,)})
+
+
+def test_installed_ha_mcp_rejects_marker_rewrite_on_python_prerelease(monkeypatch: Any) -> None:
+    """Python 3.14rc activates the source AnyIO floor but not uv's rewritten floor."""
+    module = _load_embedded_server(monkeypatch)
+    environment = default_environment()
+    environment.update(python_version="3.14", python_full_version="3.14.0rc1")
+    monkeypatch.setattr("packaging.markers.default_environment", lambda: environment.copy())
+    monkeypatch.setattr(
+        module,
+        "HA_MCP_SERVER_REQUIREMENTS",
+        (
+            "anyio>=4.10; python_version >= '3.14'",
+            "anyio>=4.9; python_version < '3.14'",
+        ),
+    )
+
+    with pytest.raises(module.EmbeddedServerError, match="does not match HA-MCP master"):
+        module._validate_installed_ha_mcp_contract(
+            {
+                "ha-mcp-dev": (
+                    "anyio>=4.10; python_full_version >= '3.14'",
+                    "anyio>=4.9; python_full_version < '3.14'",
+                )
+            }
+        )
 
 
 def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch: Any) -> None:
