@@ -315,8 +315,9 @@ def test_installed_ha_mcp_with_matching_contract_is_accepted(monkeypatch: Any) -
 
 @pytest.mark.parametrize("distribution", ["ha-mcp", "ha-mcp-dev"])
 @pytest.mark.parametrize("marker_name", ["python_version", "python_full_version"])
+@pytest.mark.parametrize("python_version", ["3.13.7", "3.14.1"])
 def test_installed_ha_mcp_accepts_build_normalized_python_markers_without_install(
-    monkeypatch: Any, distribution: str, marker_name: str
+    monkeypatch: Any, distribution: str, marker_name: str, python_version: str
 ) -> None:
     """Source and uv-built AnyIO metadata reuse the same peer-owned runtime."""
 
@@ -324,6 +325,11 @@ def test_installed_ha_mcp_accepts_build_normalized_python_markers_without_instal
         pytest.fail("Matching peer-owned dependencies must not invoke pip")
 
     module = _load_embedded_server(monkeypatch, async_process_requirements=unexpected_install)
+    environment = default_environment()
+    environment.update(
+        python_version=".".join(python_version.split(".")[:2]), python_full_version=python_version
+    )
+    monkeypatch.setattr("packaging.markers.default_environment", lambda: environment.copy())
     monkeypatch.setattr(
         module,
         "HA_MCP_SERVER_REQUIREMENTS",

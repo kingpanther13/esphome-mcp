@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from homeassistant.core import HomeAssistant
+from packaging.markers import Marker
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
@@ -552,7 +553,10 @@ def _normalized_requirement(raw: str) -> tuple[str, tuple[str, ...], str, str, s
     # Only normalize simple < / >= major.minor comparisons: other operators,
     # patch-level bounds, and compound markers need different equivalence rules.
     if match := re.fullmatch(r'python_version (<|>=) "([0-9]+\.[0-9]+)"', marker):
-        marker = f'python_full_version {match[1]} "{match[2]}"'
+        normalized_marker = f'python_full_version {match[1]} "{match[2]}"'
+        # A Python prerelease can select different dependencies at this boundary.
+        if Marker(marker).evaluate() == Marker(normalized_marker).evaluate():
+            marker = normalized_marker
     return (
         canonicalize_name(requirement.name),
         tuple(sorted(requirement.extras)),
