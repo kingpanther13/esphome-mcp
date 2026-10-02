@@ -312,6 +312,71 @@ def test_installed_ha_mcp_with_matching_contract_is_accepted(monkeypatch: Any) -
     assert manager.fastmcp_version == "3.4.7"
 
 
+@pytest.mark.parametrize("distribution", ["ha-mcp", "ha-mcp-dev"])
+@pytest.mark.parametrize("marker_name", ["python_version", "python_full_version"])
+def test_installed_ha_mcp_accepts_build_normalized_python_markers_without_install(
+    monkeypatch: Any, distribution: str, marker_name: str
+) -> None:
+    """Source and uv-built AnyIO metadata reuse the same peer-owned runtime."""
+
+    async def unexpected_install(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("Matching peer-owned dependencies must not invoke pip")
+
+    module = _load_embedded_server(monkeypatch, async_process_requirements=unexpected_install)
+    monkeypatch.setattr(
+        module,
+        "HA_MCP_SERVER_REQUIREMENTS",
+        (
+            "anyio>=4.10; python_version >= '3.14'",
+            "anyio>=4.9; python_version < '3.14'",
+        ),
+    )
+    # Requires-Dist from ha-mcp-dev 8.6.0.dev2830 uses python_full_version;
+    # the earlier setuptools wheel preserves python_version from pyproject.toml.
+    _configure_runtime(
+        monkeypatch,
+        module,
+        peer_requirements={
+            distribution: (
+                f"anyio>=4.10; {marker_name} >= '3.14'",
+                f"anyio>=4.9; {marker_name} < '3.14'",
+            )
+        },
+    )
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    _run(manager._async_ensure_package())
+
+    assert manager.fastmcp_version == "3.4.7"
+
+
+@pytest.mark.parametrize(
+    ("expected", "installed"),
+    [
+        # Genuine version and environment differences must still fail closed.
+        ("anyio>=4.10; python_version >= '3.14'", "anyio>=4.9; python_full_version >= '3.14'"),
+        ("anyio>=4.10; python_version >= '3.14'", "anyio>=4.10; python_full_version >= '3.13'"),
+        ("anyio>=4.9; python_version < '3.14'", "anyio>=4.9; python_full_version < '3.14.1'"),
+        ("anyio>=4.10; python_version >= '3.14'", "anyio>=4.10"),
+        # Replacing the variable is not equivalent for these operators/bounds.
+        ("anyio>=4.9; python_version <= '3.14'", "anyio>=4.9; python_full_version <= '3.14'"),
+        ("anyio>=4.9; python_version > '3.14'", "anyio>=4.9; python_full_version > '3.14'"),
+        ("anyio>=4.9; python_version == '3.14'", "anyio>=4.9; python_full_version == '3.14'"),
+        ("anyio>=4.9; python_version != '3.14'", "anyio>=4.9; python_full_version != '3.14'"),
+        ("anyio>=4.9; python_version < '3.14.1'", "anyio>=4.9; python_full_version < '3.14.1'"),
+    ],
+)
+def test_installed_ha_mcp_rejects_different_python_marker_contracts(
+    monkeypatch: Any, expected: str, installed: str
+) -> None:
+    """Marker normalization cannot hide a changed dependency or Python boundary."""
+    module = _load_embedded_server(monkeypatch)
+    monkeypatch.setattr(module, "HA_MCP_SERVER_REQUIREMENTS", (expected,))
+
+    with pytest.raises(module.EmbeddedServerError, match="does not match HA-MCP master"):
+        module._validate_installed_ha_mcp_contract({"ha-mcp-dev": (installed,)})
+
+
 def test_installed_ha_mcp_with_other_contract_fails_without_install(monkeypatch: Any) -> None:
     """Stable metadata cannot silently override the mirrored master snapshot."""
     process_calls: list[list[str]] = []

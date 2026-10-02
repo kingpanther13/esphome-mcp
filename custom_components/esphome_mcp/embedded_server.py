@@ -9,6 +9,7 @@ import importlib
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -546,12 +547,18 @@ def _installed_ha_mcp_requirements() -> dict[str, tuple[str, ...]]:
 def _normalized_requirement(raw: str) -> tuple[str, tuple[str, ...], str, str, str]:
     """Return a stable comparison key for one PEP 508 requirement."""
     requirement = Requirement(raw)
+    marker = str(requirement.marker) if requirement.marker is not None else ""
+    # uv_build rewrites these minor-version boundaries in wheel metadata.
+    # Only normalize simple < / >= major.minor comparisons: other operators,
+    # patch-level bounds, and compound markers need different equivalence rules.
+    if match := re.fullmatch(r'python_version (<|>=) "([0-9]+\.[0-9]+)"', marker):
+        marker = f'python_full_version {match[1]} "{match[2]}"'
     return (
         canonicalize_name(requirement.name),
         tuple(sorted(requirement.extras)),
         str(requirement.specifier),
         requirement.url or "",
-        str(requirement.marker) if requirement.marker is not None else "",
+        marker,
     )
 
 
@@ -591,7 +598,7 @@ def _validate_installed_ha_mcp_contract(
     distribution, requirements = next(iter(installed.items()))
     expected = _requirement_map(HA_MCP_SERVER_REQUIREMENTS)
     actual = _requirement_map(requirements)
-    if expected == actual:
+    if expected.keys() == actual.keys():
         return
 
     missing = sorted(expected[key] for key in expected.keys() - actual.keys())
