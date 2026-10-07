@@ -180,14 +180,15 @@ def test_install_contract_rejects_direct_package_install(
     ]
 
 
-def test_install_contract_accepts_generated_server_tuple(tmp_path: Path) -> None:
+@pytest.mark.parametrize("name", ["HA_MCP_SERVER_REQUIREMENTS", "HA_MCP_BUILD_REQUIREMENTS"])
+def test_install_contract_accepts_generated_server_tuple(tmp_path: Path, name: str) -> None:
     """The supported install shape delegates locking to Home Assistant."""
     sandbox = _load_sandbox()
     embedded_server = tmp_path / "embedded_server.py"
     embedded_server.write_text(
         "async def install(hass):\n"
         "    await async_process_requirements(\n"
-        "        hass, 'ESPHome MCP', list(HA_MCP_SERVER_REQUIREMENTS)\n"
+        f"        hass, 'ESPHome MCP', list({name})\n"
         "    )\n"
     )
 

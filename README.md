@@ -153,9 +153,11 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
   Its generated contract mirrors one immutable HA-MCP `master` commit, including
   server requirements, component metadata, and vendored package fingerprints.
   Renovate advances that snapshot and CI verifies it against upstream.
-  When HA-MCP is absent, ESPHome MCP installs the pinned HA-MCP package through
-  Home Assistant's requirements manager to obtain the runtime; it does not start
-  an HA-MCP server. When HA-MCP is present, its requirements and vendored runtime
+  When HA-MCP is absent, ESPHome MCP installs the snapshot's declared build
+  requirements and then the pinned HA-MCP package through Home Assistant's
+  requirements manager. This lets source builds run with HAOS's non-executable
+  temporary directory; it does not start an HA-MCP server. When HA-MCP is present,
+  its requirements and vendored runtime
   must match, as must the version of any configured HA-MCP component. An enabled
   HA-MCP server owns package installation: ESPHome waits for its setup and never
   invokes pip in that path. A loaded runtime mismatch requires updating the

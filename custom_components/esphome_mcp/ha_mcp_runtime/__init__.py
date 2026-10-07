@@ -1,6 +1,7 @@
 """Dependency-only runtime contract mirrored from HA-MCP master."""
 
 from .contract import (
+    HA_MCP_BUILD_REQUIREMENTS,
     HA_MCP_COMPONENT_REQUIREMENTS,
     HA_MCP_COMPONENT_VERSION,
     HA_MCP_FASTMCP_MODULE,
@@ -15,6 +16,7 @@ from .contract import (
 )
 
 __all__ = (
+    "HA_MCP_BUILD_REQUIREMENTS",
     "HA_MCP_COMPONENT_REQUIREMENTS",
     "HA_MCP_COMPONENT_VERSION",
     "HA_MCP_FASTMCP_MODULE",
