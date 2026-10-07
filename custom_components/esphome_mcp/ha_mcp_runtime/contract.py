@@ -7,7 +7,7 @@ Only dependency metadata is mirrored; no HA-MCP server or tool code is bundled.
 
 HA_MCP_REPOSITORY = "homeassistant-ai/ha-mcp"
 # renovate: datasource=git-refs packageName=https://github.com/homeassistant-ai/ha-mcp branch=master
-HA_MCP_MASTER_SHA = "09e4741db465b292328534dd145aa88c030ceabb"
+HA_MCP_MASTER_SHA = "98da2877a2ed41f9eed0f1d2517e666c0ef663d1"
 HA_MCP_SERVER_VERSION = "8.6.0"
 HA_MCP_COMPONENT_VERSION = "2.2.2"
 
@@ -60,7 +60,7 @@ HA_MCP_COMPONENT_REQUIREMENTS = (
     "voluptuous-openapi>=0.4.1",
 )
 
-HA_MCP_RUNTIME_REQUIREMENT = "ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/09e4741db465b292328534dd145aa88c030ceabb.zip"
+HA_MCP_RUNTIME_REQUIREMENT = "ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/98da2877a2ed41f9eed0f1d2517e666c0ef663d1.zip"
 HA_MCP_FASTMCP_VERSION = "4.0.10"
 HA_MCP_FASTMCP_MODULE = "ha_mcp._vendor.fastmcp"
 HA_MCP_VENDOR_HASHES = (
