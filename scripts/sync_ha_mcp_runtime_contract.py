@@ -148,6 +148,7 @@ def _render_contract(
     component_version: str,
     server_requirements: tuple[str, ...],
     component_requirements: tuple[str, ...],
+    build_requirements: tuple[str, ...],
     vendor_version: str | None = None,
     vendor_hashes: tuple[str, ...] = (),
 ) -> str:
@@ -187,6 +188,7 @@ def _render_contract(
         f'HA_MCP_MASTER_SHA = "{sha}"\n'
         f"HA_MCP_SERVER_VERSION = {json.dumps(server_version)}\n"
         f"HA_MCP_COMPONENT_VERSION = {json.dumps(component_version)}\n\n"
+        f"{_format_tuple('HA_MCP_BUILD_REQUIREMENTS', build_requirements)}\n\n"
         f"{_format_tuple('HA_MCP_SERVER_REQUIREMENTS', server_requirements)}\n\n"
         f"{_format_tuple('HA_MCP_COMPONENT_REQUIREMENTS', component_requirements)}\n\n"
         f"{runtime_metadata}"
@@ -219,6 +221,10 @@ def _generate(ref: str) -> str:
     server_requirements = _string_list(
         project_table.get("dependencies"),
         label="HA-MCP server dependencies",
+    )
+    build_requirements = _string_list(
+        project.get("build-system", {}).get("requires"),
+        label="HA-MCP build dependencies",
     )
 
     if not isinstance(manifest, dict):
@@ -262,6 +268,7 @@ def _generate(ref: str) -> str:
         component_version=component_version,
         server_requirements=server_requirements,
         component_requirements=component_requirements,
+        build_requirements=build_requirements,
         vendor_version=vendor_version,
         vendor_hashes=vendor_hashes,
     )

@@ -39,6 +39,7 @@ from .const import (
     SERVER_CONFIG_SUBDIR,
 )
 from .ha_mcp_runtime import (
+    HA_MCP_BUILD_REQUIREMENTS,
     HA_MCP_COMPONENT_VERSION,
     HA_MCP_FASTMCP_MODULE,
     HA_MCP_FASTMCP_VERSION,
@@ -432,6 +433,17 @@ class EmbeddedServerManager:
             )
 
         try:
+            # Supervisor mounts /tmp noexec. An isolated uv_build executable
+            # there cannot run, so make the declared backend available on the
+            # normal executable path before building the source snapshot.
+            # Both steps stay under HA's requirements manager and constraints;
+            # the peer-owned and loaded-runtime guards above still apply.
+            await async_process_requirements(
+                self._hass,
+                f"ESPHome MCP build backend ({HA_MCP_RUNTIME_CONTRACT_ID})",
+                list(HA_MCP_BUILD_REQUIREMENTS),
+                is_built_in=False,
+            )
             await async_process_requirements(
                 self._hass,
                 f"ESPHome MCP server ({HA_MCP_RUNTIME_CONTRACT_ID})",

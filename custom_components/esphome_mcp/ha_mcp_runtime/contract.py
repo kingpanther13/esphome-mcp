@@ -11,6 +11,8 @@ HA_MCP_MASTER_SHA = "09e4741db465b292328534dd145aa88c030ceabb"
 HA_MCP_SERVER_VERSION = "8.6.0"
 HA_MCP_COMPONENT_VERSION = "2.2.2"
 
+HA_MCP_BUILD_REQUIREMENTS = ("uv_build>=0.12.17,<0.13",)
+
 HA_MCP_SERVER_REQUIREMENTS = (
     "anyio>=4.10; python_version >= '3.14'",
     "anyio>=4.9; python_version < '3.14'",

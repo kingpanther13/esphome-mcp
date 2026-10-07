@@ -265,6 +265,8 @@ def validate_runtime_contract(path: Path = CONTRACT_PATH) -> list[str]:
     if component_requirements is None:
         errors.append("HA_MCP_COMPONENT_REQUIREMENTS must be a string tuple")
     if runtime is not None:
+        if not _constant_string_tuple(path, "HA_MCP_BUILD_REQUIREMENTS"):
+            errors.append("HA_MCP_BUILD_REQUIREMENTS must not be empty")
         expected = f"ha-mcp @ https://github.com/homeassistant-ai/ha-mcp/archive/{sha}.zip"
         if runtime != expected:
             errors.append("HA_MCP_RUNTIME_REQUIREMENT must install the immutable contract SHA")
@@ -390,7 +392,8 @@ def validate_install_contract(path: Path = EMBEDDED_SERVER_PATH) -> list[str]:
             and len(requirements_arg.args) == 1
             and not requirements_arg.keywords
             and isinstance(requirements_arg.args[0], ast.Name)
-            and requirements_arg.args[0].id == "HA_MCP_SERVER_REQUIREMENTS"
+            and requirements_arg.args[0].id
+            in {"HA_MCP_SERVER_REQUIREMENTS", "HA_MCP_BUILD_REQUIREMENTS"}
         )
         vendored_contract = (
             isinstance(requirements_arg, ast.List)

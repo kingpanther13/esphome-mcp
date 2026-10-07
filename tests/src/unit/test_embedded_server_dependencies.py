@@ -229,7 +229,9 @@ def test_missing_contract_installs_exact_server_requirements(monkeypatch: Any) -
         nonlocal installed
         assert is_built_in is False
         process_calls.append((label, requirements))
-        installed = True
+        if requirements == [module.HA_MCP_RUNTIME_REQUIREMENT]:
+            assert process_calls[0][1] == list(module.HA_MCP_BUILD_REQUIREMENTS)
+            installed = True
 
     module = _load_embedded_server(
         monkeypatch,
@@ -257,11 +259,37 @@ def test_missing_contract_installs_exact_server_requirements(monkeypatch: Any) -
 
     assert process_calls == [
         (
+            f"ESPHome MCP build backend ({module.HA_MCP_RUNTIME_CONTRACT_ID})",
+            list(module.HA_MCP_BUILD_REQUIREMENTS),
+        ),
+        (
             f"ESPHome MCP server ({module.HA_MCP_RUNTIME_CONTRACT_ID})",
             [module.HA_MCP_RUNTIME_REQUIREMENT],
-        )
+        ),
     ]
     assert manager.fastmcp_version == "3.4.7"
+
+
+def test_build_backend_failure_stops_before_runtime_install(monkeypatch: Any) -> None:
+    """Never attempt the source build when its executable could not be installed."""
+    failure = type("RequirementsNotFound", (Exception,), {})
+    calls = []
+
+    async def install(_hass: Any, _label: str, requirements: list[str], **_kw: Any) -> None:
+        calls.append(requirements)
+        raise failure("backend unavailable")
+
+    module = _load_embedded_server(
+        monkeypatch, async_process_requirements=install, requirements_not_found=failure
+    )
+    _configure_runtime(monkeypatch, module, version=None, importable=False)
+    manager = module.EmbeddedServerManager(_FakeHass(), SimpleNamespace(data={}, options={}))
+
+    with pytest.raises(module.EmbeddedServerError) as exc:
+        _run(manager._async_ensure_package())
+
+    assert exc.value.kind == "package"
+    assert calls == [list(module.HA_MCP_BUILD_REQUIREMENTS)]
 
 
 def test_requirement_install_failure_is_a_package_error(monkeypatch: Any) -> None:
@@ -897,7 +925,10 @@ def test_standalone_can_upgrade_only_its_own_unloaded_runtime(
         assert installs == []
     else:
         _run(manager._async_ensure_package())
-        assert installs == [[module.HA_MCP_RUNTIME_REQUIREMENT]]
+        assert installs == [
+            list(module.HA_MCP_BUILD_REQUIREMENTS),
+            [module.HA_MCP_RUNTIME_REQUIREMENT],
+        ]
         assert (
             entry.data["owned_runtime_url"]
             == module.Requirement(module.HA_MCP_RUNTIME_REQUIREMENT).url
