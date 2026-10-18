@@ -56,6 +56,23 @@ def _hass(*, port: int = 8123) -> SimpleNamespace:
     return SimpleNamespace(http=SimpleNamespace(server_port=port))
 
 
+def _ingress_hass(*, port: int = 8123) -> SimpleNamespace:
+    """Minimal HA object with a valid administrator for ingress-session tests."""
+    return SimpleNamespace(
+        http=SimpleNamespace(server_port=port),
+        auth=SimpleNamespace(
+            async_get_users=lambda: [
+                SimpleNamespace(
+                    id="admin-user-id",
+                    is_active=True,
+                    is_admin=True,
+                    system_generated=False,
+                )
+            ]
+        ),
+    )
+
+
 def _esphome_addon(**overrides: Any) -> dict[str, Any]:
     addon: dict[str, Any] = {
         "slug": "5c53de3b_esphome",
@@ -197,6 +214,52 @@ def test_ingress_route_uses_home_assistant_core_proxy_session(
         "ws://127.0.0.1:8124/api/hassio_ingress/esphome/ws",
         {"Cookie": "ingress_session=test-ingress-session"},
     )
+
+
+def test_create_ingress_session_supplies_active_admin_user_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Supervisor ingress sessions must be explicitly bound to an HA user."""
+    captured: dict[str, Any] = {}
+
+    async def supervisor_api_call(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        captured.update(kwargs)
+        return {"success": True, "result": {"session": "test-ingress-session"}}
+
+    monkeypatch.setattr(addon_tools, "_supervisor_api_call", supervisor_api_call)
+
+    result = _run(addon_tools._create_ingress_session(_ingress_hass()))
+
+    assert result == {"success": True, "session": "test-ingress-session"}
+    assert captured == {
+        "method": "POST",
+        "data": {"user_id": "admin-user-id"},
+        "timeout": 30,
+    }
+
+
+def test_create_ingress_session_rejects_missing_human_admin() -> None:
+    """Never ask Supervisor to create an unbound ingress session."""
+    hass = SimpleNamespace(
+        auth=SimpleNamespace(
+            async_get_users=lambda: [
+                SimpleNamespace(
+                    id="system-user-id",
+                    is_active=True,
+                    is_admin=True,
+                    system_generated=True,
+                )
+            ]
+        )
+    )
+
+    result = _run(addon_tools._create_ingress_session(hass))
+
+    assert result == {
+        "success": False,
+        "error_code": "ingress_user_unavailable",
+        "error": "No active human administrator is available for the Supervisor ingress session.",
+    }
 
 
 def test_direct_port_route_uses_addon_ip_without_ingress_session(

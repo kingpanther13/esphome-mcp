@@ -15,6 +15,7 @@ bridge without inventing an unavailable external bearer token.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
@@ -308,13 +309,53 @@ def _ha_core_base_url(hass: HomeAssistant) -> str:
     return f"http://127.0.0.1:{port}"
 
 
+async def _ingress_user_id(hass: HomeAssistant) -> str | None:
+    """Return an active human administrator suitable for Supervisor ingress.
+
+    Supervisor's ``/ingress/session`` API requires the Home Assistant user the
+    session represents.  MCP requests can be authenticated by a secret webhook,
+    which deliberately has no per-request HA user, so use an active human admin
+    rather than minting a session for a system-generated account.
+    """
+    auth = getattr(hass, "auth", None)
+    get_users = getattr(auth, "async_get_users", None)
+    if not callable(get_users):
+        return None
+
+    try:
+        users = get_users()
+        if inspect.isawaitable(users):
+            users = await users
+    except Exception:
+        return None
+
+    for user in users or ():
+        user_id = getattr(user, "id", None)
+        if (
+            isinstance(user_id, str)
+            and user_id
+            and getattr(user, "is_active", False)
+            and getattr(user, "is_admin", False)
+            and not getattr(user, "system_generated", False)
+        ):
+            return user_id
+    return None
+
+
 async def _create_ingress_session(hass: HomeAssistant) -> dict[str, Any]:
     """Mint a Supervisor ingress session token through HA's hassio client."""
+    user_id = await _ingress_user_id(hass)
+    if user_id is None:
+        return _error(
+            "No active human administrator is available for the Supervisor ingress session.",
+            code="ingress_user_unavailable",
+        )
+
     response = await _supervisor_api_call(
         hass,
         "/ingress/session",
         method="POST",
-        data={},
+        data={"user_id": user_id},
         timeout=30,
     )
     if not response.get("success"):
