@@ -10,6 +10,7 @@ from enum import Enum
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -61,14 +62,16 @@ def _ingress_hass(*, port: int = 8123) -> SimpleNamespace:
     return SimpleNamespace(
         http=SimpleNamespace(server_port=port),
         auth=SimpleNamespace(
-            async_get_users=lambda: [
-                SimpleNamespace(
-                    id="admin-user-id",
-                    is_active=True,
-                    is_admin=True,
-                    system_generated=False,
-                )
-            ]
+            async_get_users=AsyncMock(
+                return_value=[
+                    SimpleNamespace(
+                        id="admin-user-id",
+                        is_active=True,
+                        is_admin=True,
+                        system_generated=False,
+                    )
+                ]
+            )
         ),
     )
 
@@ -242,14 +245,16 @@ def test_create_ingress_session_rejects_missing_human_admin() -> None:
     """Never ask Supervisor to create an unbound ingress session."""
     hass = SimpleNamespace(
         auth=SimpleNamespace(
-            async_get_users=lambda: [
-                SimpleNamespace(
-                    id="system-user-id",
-                    is_active=True,
-                    is_admin=True,
-                    system_generated=True,
-                )
-            ]
+            async_get_users=AsyncMock(
+                return_value=[
+                    SimpleNamespace(
+                        id="system-user-id",
+                        is_active=True,
+                        is_admin=True,
+                        system_generated=True,
+                    )
+                ]
+            )
         )
     )
 
@@ -260,6 +265,15 @@ def test_create_ingress_session_rejects_missing_human_admin() -> None:
         "error_code": "ingress_user_unavailable",
         "error": "No active human administrator is available for the Supervisor ingress session.",
     }
+
+
+def test_ingress_user_lookup_preserves_auth_errors() -> None:
+    """Auth failures must not be reported as a missing administrator."""
+    hass = _ingress_hass()
+    hass.auth.async_get_users.side_effect = RuntimeError("Auth lookup failed")
+
+    with pytest.raises(RuntimeError, match="Auth lookup failed"):
+        _run(addon_tools._create_ingress_session(hass))
 
 
 def test_direct_port_route_uses_addon_ip_without_ingress_session(

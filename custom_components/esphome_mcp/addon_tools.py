@@ -15,7 +15,6 @@ bridge without inventing an unavailable external bearer token.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import json
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote
@@ -317,28 +316,9 @@ async def _ingress_user_id(hass: HomeAssistant) -> str | None:
     which deliberately has no per-request HA user, so use an active human admin
     rather than minting a session for a system-generated account.
     """
-    auth = getattr(hass, "auth", None)
-    get_users = getattr(auth, "async_get_users", None)
-    if not callable(get_users):
-        return None
-
-    try:
-        users = get_users()
-        if inspect.isawaitable(users):
-            users = await users
-    except Exception:
-        return None
-
-    for user in users or ():
-        user_id = getattr(user, "id", None)
-        if (
-            isinstance(user_id, str)
-            and user_id
-            and getattr(user, "is_active", False)
-            and getattr(user, "is_admin", False)
-            and not getattr(user, "system_generated", False)
-        ):
-            return user_id
+    for user in await hass.auth.async_get_users():
+        if user.is_active and user.is_admin and not user.system_generated:
+            return user.id
     return None
 
 
