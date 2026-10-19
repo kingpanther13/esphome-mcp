@@ -78,10 +78,23 @@ _UNPATCHED_LOOKUP_RE = re.compile(
     r"""(fastmcp|fastmcp-slim|mcp|mcp-types|mcp_types)["']"""
 )
 # Requirements the manifest never declares: the vendored distributions
-# themselves, and websockets, which no vendored module imports. Home
-# Assistant's shared websockets copy is contested by many integrations, so
-# declaring it would only let this component pin or replace it.
-_NOT_DECLARED = frozenset({"fastmcp", "fastmcp-slim", "mcp", "mcp-types", "websockets"})
+# themselves; websockets, which no vendored module imports (Home Assistant's
+# shared copy is contested by many integrations, so declaring it would only let
+# this component pin or replace it); and Home Assistant Core's own dependencies,
+# which hassfest rejects in a custom integration manifest.
+_NOT_DECLARED = frozenset(
+    {
+        "fastmcp",
+        "fastmcp-slim",
+        "mcp",
+        "mcp-types",
+        "websockets",
+        "packaging",
+        "pyjwt",
+        "pyyaml",
+        "typing-extensions",
+    }
+)
 # Home Assistant 2026.8+ runs CPython 3.14 on Linux. Every marker the vendored
 # metadata uses must be listed here; an unknown one fails the sync.
 _TARGET_MARKERS = {
