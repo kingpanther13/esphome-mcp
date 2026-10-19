@@ -28,7 +28,6 @@ from .const import DATA_MANAGER, DOMAIN, VERSION
 from .filesystem_tools import create_esphome_path
 
 
-
 class EspHomeMCPServer:
     """Small ESPHome-focused MCP server running inside Home Assistant."""
 
