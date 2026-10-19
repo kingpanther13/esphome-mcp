@@ -32,7 +32,7 @@ LOG = logging.getLogger("haos_image_build")
 # renovate: datasource=github-releases depName=home-assistant/operating-system
 HAOS_VERSION = "18.3"
 # renovate: datasource=github-releases depName=home-assistant/core
-HA_CORE_VERSION = "2026.10.1"
+HA_CORE_VERSION = "2026.10.2"
 # renovate: datasource=github-releases depName=homeassistant-ai/ha-mcp-integration
 HA_MCP_INTEGRATION_VERSION = "2.2.2"
 HA_MCP_INTEGRATION_ARCHIVE_URL = (
