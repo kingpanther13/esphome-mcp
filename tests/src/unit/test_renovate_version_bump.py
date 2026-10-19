@@ -9,23 +9,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_ha_mcp_contract_update_runs_allowed_version_bump() -> None:
-    """A future HA-MCP master update must produce a releaseable ESPHome PR."""
+def test_vendored_runtime_update_runs_allowed_version_bump() -> None:
+    """A vendored FastMCP / MCP SDK bump must produce a releaseable ESPHome PR."""
     renovate = json.loads((ROOT / "renovate.json").read_text())
     workflow = (ROOT / ".github" / "workflows" / "renovate.yml").read_text()
-    contract_rule = next(
-        rule for rule in renovate["packageRules"] if rule["description"].startswith("HA-MCP master")
+    vendor_rule = next(
+        rule for rule in renovate["packageRules"] if rule["description"].startswith("Vendored")
     )
 
-    commands = contract_rule["postUpgradeTasks"]["commands"]
+    commands = vendor_rule["postUpgradeTasks"]["commands"]
     assert commands == [
-        "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref",
+        "python scripts/vendor_fastmcp.py",
         "python scripts/bump_component_version.py origin/master",
     ]
-    assert contract_rule["postUpgradeTasks"]["fileFilters"] == [
-        "custom_components/esphome_mcp/ha_mcp_runtime/contract.py",
-        "custom_components/esphome_mcp/manifest.json",
-        "custom_components/esphome_mcp/const.py",
+    assert vendor_rule["postUpgradeTasks"]["fileFilters"] == [
+        "custom_components/esphome_mcp/**",
         "pyproject.toml",
     ]
 

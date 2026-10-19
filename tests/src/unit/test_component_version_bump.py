@@ -49,22 +49,15 @@ def _release_versions(root: Path) -> tuple[str, str, str]:
     return str(project["project"]["version"]), str(manifest["version"]), const_version
 
 
-_CONTRACT_TEMPLATE = '''"""Test contract."""
-
-HA_MCP_MASTER_SHA = "{sha}"
-HA_MCP_SERVER_REQUIREMENTS = ("fastmcp=={fastmcp}",)
-'''
-
-
-def _write_contract(root: Path, *, sha: str, fastmcp: str = "1.0.0") -> None:
-    runtime = root / "custom_components" / "esphome_mcp" / "ha_mcp_runtime"
-    runtime.mkdir(parents=True, exist_ok=True)
-    (runtime / "contract.py").write_text(_CONTRACT_TEMPLATE.format(sha=sha, fastmcp=fastmcp))
+def _write_vendor_pins(root: Path, *, fastmcp: str = "1.0.0") -> None:
+    vendor = root / "custom_components" / "esphome_mcp" / "_vendor"
+    vendor.mkdir(parents=True, exist_ok=True)
+    (vendor / "requirements.txt").write_text(f"fastmcp-slim=={fastmcp}\n")
 
 
 def _initialize_release_repo(root: Path, version: str) -> None:
     _write_versions(root, version)
-    _write_contract(root, sha="a" * 40)
+    _write_vendor_pins(root)
     (root / "ci.yml").write_text("name: ci\n")
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -164,35 +157,23 @@ def test_bump_skips_when_nothing_reaches_the_component(tmp_path: Path) -> None:
     assert _release_versions(tmp_path) == ("1.2.3", "1.2.3", "1.2.3")
 
 
-def test_bump_skips_a_sha_only_contract_update(tmp_path: Path) -> None:
-    """A server-only upstream move changes just the pinned SHA -- no release."""
+def test_bump_releases_a_vendored_runtime_update(tmp_path: Path) -> None:
+    """A vendored-runtime pin change reaches the component and must release."""
     module = _load_bump_script()
     _initialize_release_repo(tmp_path, "1.2.3")
     module.ROOT = tmp_path
-    _write_contract(tmp_path, sha="b" * 40)
-
-    assert module.bump_component_version("HEAD") == "1.2.3"
-    assert _release_versions(tmp_path) == ("1.2.3", "1.2.3", "1.2.3")
-
-
-def test_bump_releases_a_contract_update_that_changes_requirements(tmp_path: Path) -> None:
-    """A contract change beyond the SHA reaches the component and must release."""
-    module = _load_bump_script()
-    _initialize_release_repo(tmp_path, "1.2.3")
-    module.ROOT = tmp_path
-    _write_contract(tmp_path, sha="b" * 40, fastmcp="2.0.0")
+    _write_vendor_pins(tmp_path, fastmcp="2.0.0")
 
     assert module.bump_component_version("HEAD") == "1.2.4"
     assert _release_versions(tmp_path) == ("1.2.4", "1.2.4", "1.2.4")
 
 
 def test_check_requires_a_bump_only_for_component_facing_changes(tmp_path: Path) -> None:
-    """The CI check must accept sha-only and CI-only diffs without a bump."""
+    """The CI check must accept CI-only diffs without a bump."""
     module = _load_check_script()
     _initialize_release_repo(tmp_path, "1.2.3")
     module.ROOT = tmp_path
 
-    _write_contract(tmp_path, sha="b" * 40)
     (tmp_path / "ci.yml").write_text("name: ci\non: push\n")
     assert module.validate_version_bump("HEAD") == []
 
@@ -202,18 +183,19 @@ def test_check_requires_a_bump_only_for_component_facing_changes(tmp_path: Path)
     assert "did not increase" in errors[0]
 
 
-def test_check_accepts_minor_and_patch_bumps_but_rejects_major_bumps(tmp_path: Path) -> None:
-    """Intentional minor releases are allowed alongside automated patch releases."""
+def test_check_accepts_patch_minor_and_clean_next_major_bumps(tmp_path: Path) -> None:
+    """Majors are deliberate: only the exact next X.0.0 passes."""
     module = _load_check_script()
     _initialize_release_repo(tmp_path, "1.2.3")
     module.ROOT = tmp_path
     _touch_component(tmp_path)
 
-    _write_versions(tmp_path, "2.0.0")
-    errors = module.validate_version_bump("HEAD")
-    assert len(errors) == 1
-    assert "does not cut major releases" in errors[0]
+    for version in ("3.0.0", "2.0.1", "2.1.0", "2.0.0rc1"):
+        _write_versions(tmp_path, version)
+        errors = module.validate_version_bump("HEAD")
+        assert len(errors) == 1, version
+        assert "exactly the next major version" in errors[0]
 
-    for version in ("1.2.4", "1.3.0"):
+    for version in ("1.2.4", "1.3.0", "2.0.0"):
         _write_versions(tmp_path, version)
         assert module.validate_version_bump("HEAD") == []

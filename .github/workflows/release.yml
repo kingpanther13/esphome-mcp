@@ -62,13 +62,11 @@ jobs:
       - name: Ruff format check
         run: ruff format --check custom_components tests scripts
 
-      - name: Runtime dependency sandbox
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Vendored runtime matches its pins
         run: |
           set -euo pipefail
-          python scripts/check_runtime_dependency_sandbox.py
-          python scripts/sync_ha_mcp_runtime_contract.py --contract-ref --check
+          python scripts/vendor_fastmcp.py
+          test -z "$(git status --porcelain -- custom_components/esphome_mcp)"
 
       - name: Unit tests
         run: pytest tests/src/unit

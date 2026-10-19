@@ -4,7 +4,8 @@
 The harness is adapted from ha-mcp's HAOS embedded lane. This project only
 needs the in-component proof: a real HAOS VM with the ESPHome MCP custom
 component baked into `/config/custom_components` and the official ESPHome
-Device Builder add-on installed and running.
+Device Builder add-on installed and running. The HA-MCP custom component is
+baked in beside it, test-only, to prove the two embedded MCP servers coexist.
 """
 
 from __future__ import annotations
@@ -32,6 +33,12 @@ LOG = logging.getLogger("haos_image_build")
 HAOS_VERSION = "18.3"
 # renovate: datasource=github-releases depName=home-assistant/core
 HA_CORE_VERSION = "2026.10.2"
+# renovate: datasource=github-releases depName=homeassistant-ai/ha-mcp-integration
+HA_MCP_INTEGRATION_VERSION = "2.2.2"
+HA_MCP_INTEGRATION_ARCHIVE_URL = (
+    "https://github.com/homeassistant-ai/ha-mcp-integration/archive/refs/tags/"
+    f"v{HA_MCP_INTEGRATION_VERSION}.tar.gz"
+)
 HAOS_QCOW2_URL = (
     f"https://github.com/home-assistant/operating-system/releases/download/"
     f"{HAOS_VERSION}/haos_ova-{HAOS_VERSION}.qcow2.xz"
@@ -58,6 +65,11 @@ ESPHOME_MCP_WEBHOOK_ID = "esp_mcp_e2e_haos"
 ESPHOME_MCP_SECRET_PATH = "/private_e2e_esphome_mcp_haos"
 ESPHOME_MCP_PORT = 9590
 ESPHOME_FIXTURE_ENTRY_ID = "e2e_test_esphome_fixture_entry"
+HA_MCP_DOMAIN = "ha_mcp_tools"
+HA_MCP_SERVER_ENTRY_ID = "e2e_test_ha_mcp_server_entry"
+HA_MCP_SERVER_WEBHOOK_ID = "ha_mcp_e2e_haos"
+HA_MCP_SERVER_SECRET_PATH = "/private_e2e_ha_mcp_haos"
+HA_MCP_SERVER_PORT = 9584
 ESPHOME_FIXTURE_DEVICE_ID = "ee2e0000000000000000000000000001"
 ESPHOME_FIXTURE_ENTITY_REGISTRY_ID = "ee2e0000000000000000000000000002"
 ESPHOME_FIXTURE_ENTITY_ID = "sensor.kitchen_esphome_temperature"
@@ -725,6 +737,60 @@ def _inject_esphome_mcp_entry(config_dir: Path) -> None:
     LOG.info("Injected disabled ESPHome MCP config entry (%s)", ESPHOME_MCP_ENTRY_ID)
 
 
+def _stage_ha_mcp_component(cc_dir: Path, workdir: Path) -> None:
+    """Stage the pinned HA-MCP custom component release beside ESPHome MCP."""
+    archive = workdir / "ha-mcp-integration.tar.gz"
+    LOG.info("Downloading %s", HA_MCP_INTEGRATION_ARCHIVE_URL)
+    with urllib.request.urlopen(HA_MCP_INTEGRATION_ARCHIVE_URL, timeout=120) as response:
+        archive.write_bytes(response.read())
+    extract_dir = workdir / "ha-mcp-integration"
+    extract_dir.mkdir()
+    _run(["tar", "-xzf", str(archive), "-C", str(extract_dir)])
+    sources = list(extract_dir.glob(f"*/custom_components/{HA_MCP_DOMAIN}"))
+    if len(sources) != 1:
+        raise RuntimeError(f"HA-MCP archive layout unexpected: {sources}")
+    shutil.copytree(sources[0], cc_dir / HA_MCP_DOMAIN)
+    LOG.info("Staged HA-MCP custom component %s", HA_MCP_INTEGRATION_VERSION)
+
+
+def _inject_ha_mcp_server_entry(config_dir: Path) -> None:
+    """Seed a disabled HA-MCP in-process server entry with fixed webhook ids."""
+    ce_path = config_dir / ".storage" / "core.config_entries"
+    ce_data = _load_storage_entries(ce_path)
+    entries = ce_data["data"]["entries"]
+    if not any(entry.get("entry_id") == HA_MCP_SERVER_ENTRY_ID for entry in entries):
+        entries.append(
+            {
+                "created_at": "2026-07-08T00:00:00+00:00",
+                "data": {
+                    "entry_type": "server",
+                    "webhook_id": HA_MCP_SERVER_WEBHOOK_ID,
+                    "secret_path": HA_MCP_SERVER_SECRET_PATH,
+                },
+                "disabled_by": "user",
+                "discovery_keys": {},
+                "domain": HA_MCP_DOMAIN,
+                "entry_id": HA_MCP_SERVER_ENTRY_ID,
+                "minor_version": 1,
+                "modified_at": "2026-07-08T00:00:00+00:00",
+                "options": {
+                    "server_port": HA_MCP_SERVER_PORT,
+                    "bind_host": "127.0.0.1",
+                    "auto_update": False,
+                },
+                "pref_disable_new_entities": False,
+                "pref_disable_polling": False,
+                "source": "user",
+                "subentries": [],
+                "title": "HA-MCP Server",
+                "unique_id": f"{HA_MCP_DOMAIN}-server",
+                "version": 1,
+            }
+        )
+    ce_path.write_text(json.dumps(ce_data, indent=2))
+    LOG.info("Injected disabled HA-MCP server entry (%s)", HA_MCP_SERVER_ENTRY_ID)
+
+
 def _inject_esphome_fixture_entry(config_dir: Path) -> None:
     """Seed a disabled ESPHome owner for the registry fixture."""
     ce_path = config_dir / ".storage" / "core.config_entries"
@@ -878,8 +944,10 @@ def bake_component_into_config(qcow2: Path) -> None:
             shutil.rmtree(dest)
         shutil.copytree(component_src, dest)
         LOG.info("Staged custom component %s", ESPHOME_MCP_DOMAIN)
+        _stage_ha_mcp_component(cc_dir, workdir)
 
         _inject_esphome_mcp_entry(config_dir)
+        _inject_ha_mcp_server_entry(config_dir)
         _inject_esphome_fixture_entry(config_dir)
         _inject_esphome_registry_fixtures(config_dir)
 

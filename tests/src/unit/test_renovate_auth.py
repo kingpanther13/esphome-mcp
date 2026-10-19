@@ -45,7 +45,7 @@ def test_renovate_uses_a_short_lived_github_app_token() -> None:
     assert "secrets.GITHUB_TOKEN" not in RENOVATE_WORKFLOW.read_text()
 
 
-def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
+def test_renovate_rebases_on_push_but_discovers_weekly() -> None:
     """Scheduled discovery bypasses delivery delays while pushes stay throttled."""
     workflow = yaml.safe_load(RENOVATE_WORKFLOW.read_text())
     renovate = json.loads(RENOVATE_CONFIG.read_text())
@@ -53,17 +53,11 @@ def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
     triggers = workflow[True]
 
     assert triggers["push"]["branches"] == ["master"]
-    assert triggers["schedule"] == [{"cron": "17 5,17 * * *", "timezone": "America/New_York"}]
+    assert triggers["schedule"] == [{"cron": "17 5 * * 4", "timezone": "America/New_York"}]
     assert "workflow_dispatch" in triggers
-    assert triggers["workflow_dispatch"]["inputs"]["scope"] == {
-        "description": "Dependency scope",
-        "required": False,
-        "default": "all",
-        "type": "choice",
-        "options": ["all", "ha-mcp"],
-    }
+    assert "scope" not in triggers["workflow_dispatch"]["inputs"]
     assert renovate["timezone"] == "America/New_York"
-    assert renovate["schedule"] == ["* 5,17 * * *"]
+    assert renovate["schedule"] == ["* 5 * * 4"]
     assert renovate["updateNotScheduled"] is True
 
     renovate_step = next(
@@ -75,15 +69,8 @@ def test_renovate_rebases_on_push_but_discovers_twice_daily() -> None:
         "${{ github.event_name != 'push' && '{\"schedule\":null}' || '{}' }}"
     )
 
-    assert renovate_step["env"]["RENOVATE_INCLUDE_PATHS"] == (
-        "${{ inputs.scope == 'ha-mcp' "
-        "&& '[\"custom_components/esphome_mcp/ha_mcp_runtime/contract.py\"]' || '[]' }}"
-    )
-    # A partial scan must not prune unrelated dependency branches.
-    assert renovate_step["env"]["RENOVATE_PRUNE_STALE_BRANCHES"] == (
-        "${{ inputs.scope == 'ha-mcp' && 'false' || 'true' }}"
-    )
-    assert workflow["jobs"]["dependabot-groom"]["if"] == "${{ inputs.scope != 'ha-mcp' }}"
+    assert "RENOVATE_INCLUDE_PATHS" not in renovate_step["env"]
+    assert "if" not in workflow["jobs"]["dependabot-groom"]
 
     # Per-job groups so a hung groom cannot starve Renovate runs, never
     # cancelling in-flight work, with a bounded runtime on both jobs.

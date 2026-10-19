@@ -574,7 +574,10 @@ def test_embedded_e2e_module_tracks_expected_webhook_and_tool_names() -> None:
     assert "MCPServerUnavailableError" in source
     assert 'assert "<your-home-assistant-url>" not in connect_url' in source
     assert 'assert "Home Assistant URL unavailable" not in connect_url' in source
-    assert 'assert payload["fastmcp_version"] == _fastmcp_contract_version()' in source
-    assert 'payload["ha_mcp_master_sha"] == _contract_string("HA_MCP_MASTER_SHA")' in source
-    assert 'payload["ha_mcp_server_version"] == _contract_string(' in source
-    assert 'payload["ha_mcp_component_version"] == _contract_string(' in source
+    assert 'assert payload["fastmcp_version"] == _vendored_fastmcp_version()' in source
+    assert "ha_mcp_master_sha" not in source
+    # HA-MCP starts first, then ESPHome MCP must still come up beside it.
+    assert source.index("HA_MCP_SERVER_ENTRY_ID)") < source.index(
+        "enable_config_entry(base_url, token, ESPHOME_MCP_SERVER_ENTRY_ID)"
+    )
+    assert "def test_ha_mcp_server_keeps_running_beside_esphome_mcp" in source
