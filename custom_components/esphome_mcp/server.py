@@ -414,11 +414,21 @@ class EspHomeMCPServer:
                 "title": "Create ESPHome Folder",
             },
         )
-        async def esp_create_directory(path: str, parents: bool = True) -> dict[str, Any]:
-            """Create a folder relative to HA's esphome config directory.
+        async def esp_create_directory(
+            path: Annotated[
+                str,
+                Field(description="Relative folder path under HA's ESPHome config directory."),
+            ],
+            parents: Annotated[
+                bool,
+                Field(description="Create missing parent folders; defaults to true."),
+            ] = True,
+        ) -> dict[str, Any]:
+            """Create a folder under the existing, Device Builder-shared ESPHome config root.
 
-            Requires a locally accessible shared esphome directory. Existing folders
-            succeed. Hidden paths, traversal and symlinks are refused.
+            Returns success, path, and created; failures include an actionable error_code.
+            The root must already exist. Existing folders succeed; hidden paths, traversal,
+            and symlinks are refused.
             """
             return await _run_on_hass(
                 self.hass, create_esphome_path(self.hass, path=path, parents=parents)
@@ -433,12 +443,28 @@ class EspHomeMCPServer:
                 "title": "Create ESPHome Supporting File",
             },
         )
-        async def esp_create_file(path: str, content: str, parents: bool = True) -> dict[str, Any]:
-            """Create a UTF-8 supporting file, optionally in nested folders.
+        async def esp_create_file(
+            path: Annotated[
+                str,
+                Field(
+                    description="Relative supporting-file path under HA's ESPHome config directory."
+                ),
+            ],
+            content: Annotated[
+                str,
+                Field(description="UTF-8 file content, written without YAML validation."),
+            ],
+            parents: Annotated[
+                bool,
+                Field(description="Create missing parent folders; defaults to true."),
+            ] = True,
+        ) -> dict[str, Any]:
+            """Create an unvalidated UTF-8 supporting file under the existing shared ESPHome root.
 
-            Relative to HA's shared esphome config directory. Never overwrites an
-            existing file. Hidden paths, traversal and symlinks are refused.
-            Use esp_update_yaml for existing Device Builder configurations.
+            Returns success, path, and created; failures include an actionable error_code.
+            The root must already exist. Supporting files belong in subfolders; top-level
+            device YAML is refused. Existing files are never overwritten; use esp_update_yaml
+            for existing Device Builder configurations. Hidden paths and symlinks are refused.
             """
             return await _run_on_hass(
                 self.hass,

@@ -162,7 +162,9 @@ uses this shared folder before trying them. A missing root folder returns an
 error rather than creating a potentially unrelated configuration tree.
 Absolute paths, traversal, hidden path components, and symlinks in the relative
 path or at the root are refused. File creation bypasses Device Builder's YAML
-validation guards; use `esp_update_yaml` to edit existing device configurations.
+validation guards; top-level `.yaml` and `.yml` device files are refused, and
+`esp_update_yaml` remains the supported way to edit existing device
+configurations.
 
 ## Safety Notes
 
