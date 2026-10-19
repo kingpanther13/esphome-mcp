@@ -51,7 +51,7 @@
     },
     "server_restart_required": {
       "title": "Restart Home Assistant to start ESPHome MCP",
-      "description": "ESPHome MCP protected a shared Python dependency from being replaced while Home Assistant was running:\n\n{detail}\n\nUpdate ESPHome MCP and ha-mcp to compatible versions, then restart Home Assistant."
+      "description": "ESPHome MCP could not finish loading its Python modules while Home Assistant was running:\n\n{detail}\n\nRestart Home Assistant to start ESPHome MCP."
     }
   },
   "selector": {

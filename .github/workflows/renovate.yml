@@ -8,20 +8,12 @@ on:
     branches:
       - master
   schedule:
-    # Twice daily for upstream discovery. Existing branches still refresh on
-    # every push, and Dependabot keeps its separate Thursday run.
-    - cron: "17 5,17 * * *"
+    # Weekly discovery, alongside Dependabot's Thursday run. Existing branches
+    # still refresh on every push.
+    - cron: "17 5 * * 4"
       timezone: "America/New_York"
   workflow_dispatch:
     inputs:
-      scope:
-        description: "Dependency scope"
-        required: false
-        default: "all"
-        type: choice
-        options:
-          - all
-          - ha-mcp
       logLevel:
         description: "Log level"
         required: false
@@ -41,7 +33,7 @@ jobs:
     # Never cancel an in-flight run: interrupting a rebase can leave a branch
     # half-written. GitHub keeps at most one pending run per group and a newer
     # trigger replaces it, which is fine -- the newest run works against the
-    # newest master, and the twice-daily schedule is the backstop.
+    # newest master, and the weekly schedule is the backstop.
     concurrency:
       group: renovate
       cancel-in-progress: false
@@ -81,13 +73,8 @@ jobs:
           # maintain existing Renovate branches through updateNotScheduled.
           RENOVATE_FORCE: >-
             ${{ github.event_name != 'push' && '{"schedule":null}' || '{}' }}
-          # Preserve other update branches omitted from this partial scan.
-          RENOVATE_INCLUDE_PATHS: >-
-            ${{ inputs.scope == 'ha-mcp' && '["custom_components/esphome_mcp/ha_mcp_runtime/contract.py"]' || '[]' }}
-          RENOVATE_PRUNE_STALE_BRANCHES: >-
-            ${{ inputs.scope == 'ha-mcp' && 'false' || 'true' }}
           RENOVATE_ALLOWED_COMMANDS: >-
-            ["^python scripts/sync_ha_mcp_runtime_contract\\.py --contract-ref$", "^python scripts/bump_component_version\\.py origin/master$"]
+            ["^python scripts/vendor_fastmcp\\.py$", "^python scripts/bump_component_version\\.py origin/master$"]
           RENOVATE_REPOSITORIES: ${{ github.repository }}
 
   # Renovate only tends its own branches, and Dependabot rebases its PRs only
@@ -101,7 +88,6 @@ jobs:
   # carries "[dependabot skip]" so Dependabot keeps force-pushing over it when
   # a newer version or a conflict needs its rebase.
   dependabot-groom:
-    if: ${{ inputs.scope != 'ha-mcp' }}
     name: Groom Dependabot PRs
     runs-on: ubuntu-latest
     timeout-minutes: 10

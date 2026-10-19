@@ -25,8 +25,8 @@ use, including Nabu Casa Remote UI.
   Builder tools. These tools require Supervisor.
 - The official ESPHome Device Builder add-on installed and running for the
   Device Builder tool set.
-- Network/package-install access on first server start so Home Assistant can
-  install any missing packages from the generated HA-MCP runtime contract.
+- Network/package-install access on first setup so Home Assistant can install
+  any missing packages listed in the component manifest.
 
 The Home Assistant registry tools can still report ESPHome integration devices
 and entities anywhere this custom component can run, but the add-on and Device
@@ -148,35 +148,30 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
   server can perform privileged Home Assistant and Supervisor operations.
 - Add-on and Device Builder tools require Home Assistant Supervisor; they return
   structured errors when Supervisor or the ESPHome add-on is not available.
-- ESPHome MCP uses HA-MCP's private, vendored FastMCP/MCP runtime rather than
-  installing public FastMCP or MCP packages over Home Assistant's copies.
-  Its generated contract mirrors one immutable HA-MCP `master` commit, including
-  server requirements, component metadata, and vendored package fingerprints.
-  Renovate advances that snapshot and CI verifies it against upstream.
-  When HA-MCP is absent, ESPHome MCP installs the snapshot's declared build
-  requirements and then the pinned HA-MCP package through Home Assistant's
-  requirements manager. This lets source builds run with HAOS's non-executable
-  temporary directory; it does not start an HA-MCP server. When HA-MCP is present,
-  its requirements and vendored runtime
-  must match, as must the version of any configured HA-MCP component. An enabled
-  HA-MCP server owns package installation: ESPHome waits for its setup and never
-  invokes pip in that path. A loaded runtime mismatch requires updating the
-  matching packages and restarting Home Assistant, rather than replacing code
-  in the live process.
+- ESPHome MCP ships its own private copy of FastMCP and the MCP SDK under
+  `custom_components/esphome_mcp/_vendor`, so it never installs public FastMCP
+  or MCP packages over Home Assistant's copies and never depends on HA-MCP.
+  Both integrations can be installed and updated independently. The manifest
+  declares only the vendored code's remaining dependencies, as minimum
+  versions, through Home Assistant's normal requirements step.
+  `scripts/vendor_fastmcp.py` regenerates the vendored tree and those manifest
+  requirements from the pins in `_vendor/requirements.txt`; Renovate bumps the
+  pins weekly and CI rejects any drift.
 
 ## Testing
 
 The repository includes unit and end-to-end coverage for the custom component
 and tool surface:
 
-- Ruff lint and format checks, generated-contract validation, Renovate config
-  validation, and an AST-based shared-dependency sandbox.
+- Ruff lint and format checks, vendored-runtime regeneration checks, and
+  Renovate config validation.
 - Unit tests for metadata, tool registration, Supervisor routing, ingress-session
   routing, Device Builder WebSocket framing, stream cancellation, import-deadlock
   recovery, and wrapper behavior.
 - ESPHome host-device E2E tests using ESPHome's host platform.
 - HAOS embedded E2E tests that boot a HAOS image, install ESPHome Device Builder,
-  bake this custom component into Home Assistant, and drive the MCP webhook.
+  bake this custom component into Home Assistant beside a released HA-MCP
+  component, and drive both MCP webhooks.
 
 ## Prior Art
 

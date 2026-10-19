@@ -5,12 +5,12 @@ from __future__ import annotations
 import json
 import re
 import struct
+import sys
 from importlib import util
 from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
-from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[3]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
@@ -24,14 +24,16 @@ release_metadata = util.module_from_spec(RELEASE_METADATA_SPEC)
 RELEASE_METADATA_SPEC.loader.exec_module(release_metadata)
 validate_release_metadata = release_metadata.validate_release_metadata
 
-RUNTIME_CONTRACT_SPEC = util.spec_from_file_location(
-    "esphome_mcp_runtime_contract",
-    COMPONENT / "ha_mcp_runtime" / "contract.py",
+VENDOR_SPEC = util.spec_from_file_location(
+    "vendor_fastmcp",
+    ROOT / "scripts" / "vendor_fastmcp.py",
 )
-assert RUNTIME_CONTRACT_SPEC is not None
-assert RUNTIME_CONTRACT_SPEC.loader is not None
-runtime_contract = util.module_from_spec(RUNTIME_CONTRACT_SPEC)
-RUNTIME_CONTRACT_SPEC.loader.exec_module(runtime_contract)
+assert VENDOR_SPEC is not None
+assert VENDOR_SPEC.loader is not None
+vendor_fastmcp = util.module_from_spec(VENDOR_SPEC)
+# dataclasses resolves the defining module through sys.modules.
+sys.modules.setdefault("vendor_fastmcp", vendor_fastmcp)
+VENDOR_SPEC.loader.exec_module(vendor_fastmcp)
 
 
 def _build_image_version(constant: str) -> str:
@@ -93,7 +95,7 @@ def test_server_defaults_are_scaffolded() -> None:
     assert '"websockets>=' not in const
     assert '"websockets==' not in const
     assert "OPT_PIP_SPEC" not in const
-    assert 'DATA_LAST_PIP_SPEC = "last_pip_spec"' in const
+    assert "HA_MCP_" not in const
     assert 'name="esp_overview"' in server
     assert 'name="esp_list_devices"' in server
     assert 'name="esp_list_entities"' in server
@@ -112,37 +114,25 @@ def test_server_defaults_are_scaffolded() -> None:
     assert 'name="esp_follow_firmware_job"' in server
 
 
-def test_runtime_contract_has_stable_shared_runtime_invariants() -> None:
-    """Generated snapshots preserve the stable shared-runtime invariants."""
-    requirements = runtime_contract.HA_MCP_SERVER_REQUIREMENTS
-    parsed = Requirement(runtime_contract.HA_MCP_RUNTIME_REQUIREMENT)
-    assert parsed.name == "ha-mcp"
-    assert parsed.url == (
-        "https://github.com/homeassistant-ai/ha-mcp/archive/"
-        f"{runtime_contract.HA_MCP_MASTER_SHA}.zip"
-    )
-    assert Version(runtime_contract.HA_MCP_FASTMCP_VERSION)
-    assert runtime_contract.HA_MCP_FASTMCP_MODULE == "ha_mcp._vendor.fastmcp"
-    assert all(
-        Requirement(requirement).name
-        for requirement in (
-            *requirements,
-            *runtime_contract.HA_MCP_COMPONENT_REQUIREMENTS,
-        )
-    )
-    assert Version(runtime_contract.HA_MCP_SERVER_VERSION)
-    assert Version(runtime_contract.HA_MCP_COMPONENT_VERSION)
-    assert re.fullmatch(r"[0-9a-f]{40}", runtime_contract.HA_MCP_MASTER_SHA)
-    assert runtime_contract.HA_MCP_RUNTIME_CONTRACT_ID == (
-        f"{runtime_contract.HA_MCP_REPOSITORY}@{runtime_contract.HA_MCP_MASTER_SHA}"
-    )
-    assert not any(
-        Requirement(requirement).name.lower() == "websockets" for requirement in requirements
-    )
+def test_manifest_requirements_cover_the_vendored_runtime() -> None:
+    """The manifest declares exactly the vendored trees' Linux runtime requirements."""
+    manifest = json.loads((COMPONENT / "manifest.json").read_text())
+    requirements = manifest["requirements"]
+
+    assert requirements == vendor_fastmcp.manifest_requirements(COMPONENT / "_vendor")
+    names = {Requirement(requirement).name.lower() for requirement in requirements}
+    assert {"starlette", "uvicorn", "sse-starlette", "pydantic", "httpx2"} <= names
+    # Vendored packages and the contested shared websockets copy stay undeclared.
+    assert not names & {"fastmcp", "fastmcp-slim", "mcp", "mcp-types", "websockets", "ha-mcp"}
+    for requirement in map(Requirement, requirements):
+        assert requirement.marker is None
+        # Floors only, apart from upstream's own caps: an ``==`` pin here could
+        # fight another integration or Home Assistant's constraints.
+        assert all(spec.operator != "==" for spec in requirement.specifier)
 
 
-def test_restart_repair_is_declared_for_shared_dependency_conflicts() -> None:
-    """Unsafe live dependency replacement surfaces a restart-specific repair."""
+def test_restart_repair_is_declared_for_import_collisions() -> None:
+    """A shared-import collision surfaces a restart-specific repair."""
     strings = json.loads((COMPONENT / "strings.json").read_text())
     translations = json.loads((COMPONENT / "translations" / "en.json").read_text())
     embedded_setup = (COMPONENT / "embedded_setup.py").read_text()
@@ -150,7 +140,8 @@ def test_restart_repair_is_declared_for_shared_dependency_conflicts() -> None:
     for payload in (strings, translations):
         issue = payload["issues"]["server_restart_required"]
         assert "Restart Home Assistant" in issue["title"]
-        assert "shared Python dependency" in issue["description"]
+        assert "Python modules" in issue["description"]
+        assert "ha-mcp" not in issue["description"]
     assert '"restart": ISSUE_RESTART_REQUIRED' in embedded_setup
 
 
@@ -321,20 +312,18 @@ def test_pr_template_and_validation_supply_release_notes() -> None:
     assert "types: [opened, edited, reopened, synchronize]" in workflow
 
 
-def test_runtime_dependency_sandbox_is_enforced_before_merge_and_release() -> None:
-    """Both CI gates protect and regenerate the immutable upstream snapshot."""
+def test_vendored_runtime_is_regenerated_before_merge_and_release() -> None:
+    """Both CI gates re-vendor from the pinned wheels and reject drift."""
     pr_workflow = (ROOT / ".github" / "workflows" / "pr.yml").read_text()
     release_workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text()
-    sandbox = (ROOT / "scripts" / "check_runtime_dependency_sandbox.py").read_text()
 
+    # The PR job keeps its required-check name.
+    assert "name: Runtime Dependency Sandbox" in pr_workflow
     for workflow in (pr_workflow, release_workflow):
-        assert "Runtime dependency sandbox" in workflow
-        assert "python scripts/check_runtime_dependency_sandbox.py" in workflow
-        assert "sync_ha_mcp_runtime_contract.py --contract-ref --check" in workflow
-    assert "forbidden runtime dependency mutation" in sandbox
-    assert "HA_MCP_SERVER_REQUIREMENTS" in sandbox
-    assert "HA_MCP_COMPONENT_REQUIREMENTS" in sandbox
-    assert "HA_MCP_MASTER_SHA must be one immutable" in sandbox
+        assert "python scripts/vendor_fastmcp.py" in workflow
+        assert 'test -z "$(git status --porcelain -- custom_components/esphome_mcp)"' in workflow
+        assert "sync_ha_mcp_runtime_contract" not in workflow
+        assert "watch_ha_mcp_component" not in workflow
 
 
 def test_repository_maintenance_scaffolding_exists() -> None:
@@ -345,8 +334,10 @@ def test_repository_maintenance_scaffolding_exists() -> None:
 
     assert (github_dir / "dependabot.yml").is_file()
     assert (ROOT / "renovate.json").is_file()
-    assert (COMPONENT / "ha_mcp_runtime" / "contract.py").is_file()
-    assert (ROOT / "scripts" / "sync_ha_mcp_runtime_contract.py").is_file()
+    assert (COMPONENT / "_vendor" / "requirements.txt").is_file()
+    assert (ROOT / "scripts" / "vendor_fastmcp.py").is_file()
+    assert not (COMPONENT / "ha_mcp_runtime").exists()
+    assert not (workflows_dir / "watch-ha-mcp-component.yml").exists()
     assert (workflows_dir / "renovate.yml").is_file()
     assert (workflows_dir / "close-inactive-issues.yml").is_file()
     assert (github_dir / "pull_request_template.md").is_file()
@@ -377,7 +368,7 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert dependabot.count('day: "thursday"') == 3
     assert dependabot.count('time: "08:00"') == 3
     assert renovate["enabledManagers"] == ["custom.regex"]
-    assert renovate["schedule"] == ["* 5,17 * * *"]
+    assert renovate["schedule"] == ["* 5 * * 4"]
 
     # automerge drives the rest -- the top-level description in renovate.json
     # records the full rationale, verified against Renovate 44.48.0. The two
@@ -387,18 +378,22 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
     assert "rebaseWhen" not in renovate
     assert "platformAutomerge" not in renovate
     assert "matchUpdateTypes" not in json.dumps(renovate)
-    assert len(renovate["customManagers"]) == 4
+    assert len(renovate["customManagers"]) == 5
     assert "home-assistant/operating-system" in json.dumps(renovate)
     assert "home-assistant/core" in json.dumps(renovate)
     assert "tests/fastmcp_canary" not in json.dumps(renovate)
-    assert "https://github.com/homeassistant-ai/ha-mcp" in json.dumps(renovate)
+    assert "git-refs" not in json.dumps(renovate)
+    assert "ha_mcp_runtime" not in json.dumps(renovate)
     assert "aioesphomeapi" in dependabot
     assert "esphome" in dependabot
     assert "configurationFile:" not in renovate_workflow
     assert "RENOVATE_REPOSITORIES: ${{ github.repository }}" in renovate_workflow
     assert "RENOVATE_ALLOWED_COMMANDS" in renovate_workflow
 
-    managers = {manager["depNameTemplate"]: manager for manager in renovate["customManagers"]}
+    managers = {
+        manager.get("depNameTemplate", manager["datasourceTemplate"]): manager
+        for manager in renovate["customManagers"]
+    }
     expected = {
         "home-assistant/operating-system": (
             "github-releases",
@@ -406,12 +401,14 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             build_image,
             "HAOS_VERSION",
         ),
+        "homeassistant-ai/ha-mcp-integration": (
+            "github-releases",
+            "/^tests/haos_image_build/build_image\\.py$/",
+            build_image,
+            "HA_MCP_INTEGRATION_VERSION",
+        ),
     }
-    assert managers.keys() == expected.keys() | {
-        "home-assistant/core",
-        "HA-MCP master runtime contract",
-        "renovate",
-    }
+    assert managers.keys() == expected.keys() | {"home-assistant/core", "pypi", "renovate"}
     for dep_name, (datasource, file_pattern, source, version_constant) in expected.items():
         manager = managers[dep_name]
         assert manager["datasourceTemplate"] == datasource
@@ -423,32 +420,24 @@ def test_dependency_update_scaffolding_targets_this_repo() -> None:
             {"currentValue": _build_image_version(version_constant)}
         ]
 
-    contract_manager = managers["HA-MCP master runtime contract"]
-    assert contract_manager["datasourceTemplate"] == "git-refs"
-    assert contract_manager["currentValueTemplate"] == "master"
-    assert contract_manager["packageNameTemplate"] == ("https://github.com/homeassistant-ai/ha-mcp")
-    contract_source = (COMPONENT / "ha_mcp_runtime" / "contract.py").read_text()
-    contract_pattern = contract_manager["matchStrings"][0].replace(
-        "(?<",
-        "(?P<",
-    )
-    matches = list(re.finditer(contract_pattern, contract_source))
-    assert [match.groupdict() for match in matches] == [
-        {"currentDigest": runtime_contract.HA_MCP_MASTER_SHA}
+    vendor_manager = managers["pypi"]
+    assert vendor_manager["managerFilePatterns"] == [
+        "/^custom_components/esphome_mcp/_vendor/requirements\\.txt$/"
     ]
-    contract_rule = next(
-        rule for rule in renovate["packageRules"] if rule["description"].startswith("HA-MCP master")
+    pins = (COMPONENT / "_vendor" / "requirements.txt").read_text()
+    vendor_pattern = vendor_manager["matchStrings"][0].replace("(?<", "(?P<")
+    assert {m["depName"]: m["currentValue"] for m in re.finditer(vendor_pattern, pins)} == (
+        vendor_fastmcp.read_pins(COMPONENT / "_vendor" / "requirements.txt")
     )
-    assert contract_rule["postUpgradeTasks"]["commands"] == [
-        "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref",
+    vendor_rule = next(
+        rule for rule in renovate["packageRules"] if rule["description"].startswith("Vendored")
+    )
+    assert vendor_rule["matchPackageNames"] == ["fastmcp-slim", "mcp", "mcp-types"]
+    assert vendor_rule["postUpgradeTasks"]["commands"] == [
+        "python scripts/vendor_fastmcp.py",
         "python scripts/bump_component_version.py origin/master",
     ]
-    assert contract_rule["postUpgradeTasks"]["fileFilters"] == [
-        "custom_components/esphome_mcp/ha_mcp_runtime/contract.py",
-        "custom_components/esphome_mcp/manifest.json",
-        "custom_components/esphome_mcp/const.py",
-        "pyproject.toml",
-    ]
+    assert vendor_rule["postUpgradeTasks"]["executionMode"] == "branch"
 
     renovate_manager = managers["renovate"]
     assert renovate_manager["datasourceTemplate"] == "npm"
@@ -515,8 +504,11 @@ def test_hacs_release_archive_contains_component_payload() -> None:
         "embedded_entry.py",
         "embedded_server.py",
         "embedded_setup.py",
-        "ha_mcp_runtime/__init__.py",
-        "ha_mcp_runtime/contract.py",
+        "_vendor/__init__.py",
+        "_vendor/requirements.txt",
+        "_vendor/fastmcp/__init__.py",
+        "_vendor/mcp/__init__.py",
+        "_vendor/mcp_types/__init__.py",
         "manifest.json",
         "mcp_webhook.py",
         "server.py",

@@ -1,4 +1,4 @@
-"""Tests for release notes on automated HA-MCP contract updates."""
+"""Tests for release notes on automated vendored-runtime updates."""
 
 from __future__ import annotations
 
@@ -20,16 +20,16 @@ def _load_release_notes() -> ModuleType:
     return module
 
 
-def test_ha_mcp_contract_update_supplies_publishable_release_notes() -> None:
+def test_vendored_runtime_update_supplies_publishable_release_notes() -> None:
     """The automatic version bump must not create an unpublishable release PR."""
     renovate = json.loads((ROOT / "renovate.json").read_text())
-    contract_rule = next(
-        rule for rule in renovate["packageRules"] if rule["description"].startswith("HA-MCP master")
+    vendor_rule = next(
+        rule for rule in renovate["packageRules"] if rule["description"].startswith("Vendored")
     )
     release_notes = _load_release_notes()
 
-    body = "\n\n".join(contract_rule["prBodyNotes"])
+    body = "\n\n".join(vendor_rule["prBodyNotes"])
 
     assert release_notes.extract_release_notes(body) == (
-        "- Updated ESPHome MCP's embedded runtime contract to the latest HA-MCP `master` snapshot."
+        "- Updated ESPHome MCP's bundled FastMCP / MCP SDK runtime."
     )

@@ -5,29 +5,26 @@
   ],
   "timezone": "America/New_York",
   "schedule": [
-    "* 5,17 * * *"
+    "* 5 * * 4"
   ],
   "updateNotScheduled": true,
   "enabledManagers": [
     "custom.regex"
   ],
   "ignorePaths": [],
-  "description": "scheduled and manual workflow runs bypass the repository schedule for reliable discovery, while push runs remain limited to the 5 AM and 5 PM Eastern new-branch windows and updateNotScheduled keeps their existing-branch rebases active. automerge deliberately covers every managed update, majors included; only conflicts and red required checks block a merge. automergeStrategy is pinned because its derived default follows repository merge settings. rebaseWhen and platformAutomerge stay at defaults: with automerge on, rebaseWhen=auto resolves to behind-base-branch (verified against Renovate 44.48.0), which the ruleset's strict status-check policy requires.",
+  "description": "scheduled and manual workflow runs bypass the repository schedule for reliable discovery, while push runs remain limited to the Thursday 5 AM Eastern new-branch window and updateNotScheduled keeps their existing-branch rebases active. automerge deliberately covers every managed update, majors included; only conflicts and red required checks block a merge. automergeStrategy is pinned because its derived default follows repository merge settings. rebaseWhen and platformAutomerge stay at defaults: with automerge on, rebaseWhen=auto resolves to behind-base-branch (verified against Renovate 44.48.0), which the ruleset's strict status-check policy requires.",
   "automerge": true,
   "automergeStrategy": "squash",
   "customManagers": [
     {
       "customType": "regex",
       "managerFilePatterns": [
-        "/^custom_components/esphome_mcp/ha_mcp_runtime/contract\\.py$/"
+        "/^custom_components/esphome_mcp/_vendor/requirements\\.txt$/"
       ],
       "matchStrings": [
-        "HA_MCP_MASTER_SHA\\s*=\\s*[\"'](?<currentDigest>[0-9a-f]{40})[\"']"
+        "(?<depName>[A-Za-z0-9._-]+)==(?<currentValue>[A-Za-z0-9.!+-]+)"
       ],
-      "currentValueTemplate": "master",
-      "depNameTemplate": "HA-MCP master runtime contract",
-      "packageNameTemplate": "https://github.com/homeassistant-ai/ha-mcp",
-      "datasourceTemplate": "git-refs"
+      "datasourceTemplate": "pypi"
     },
     {
       "customType": "regex",
@@ -68,38 +65,53 @@
       ],
       "depNameTemplate": "home-assistant/core",
       "datasourceTemplate": "github-releases"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^tests/haos_image_build/build_image\\.py$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=github-releases depName=homeassistant-ai/ha-mcp-integration\\s+HA_MCP_INTEGRATION_VERSION\\s*=\\s*[\"'](?<currentValue>\\d+\\.\\d+\\.\\d+)[\"']"
+      ],
+      "depNameTemplate": "homeassistant-ai/ha-mcp-integration",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v?(?<version>.*)$"
     }
   ],
   "packageRules": [
     {
-      "description": "HA-MCP master server and custom-component lockstep",
+      "description": "Vendored FastMCP / MCP SDK, re-synced and released together",
+      "matchManagers": [
+        "custom.regex"
+      ],
       "matchDatasources": [
-        "git-refs"
+        "pypi"
       ],
       "matchPackageNames": [
-        "https://github.com/homeassistant-ai/ha-mcp"
+        "fastmcp-slim",
+        "mcp",
+        "mcp-types"
       ],
+      "groupName": "vendored FastMCP runtime",
       "labels": [
         "dependencies",
         "python",
-        "ha-mcp",
         "e2e"
       ],
       "prBodyNotes": [
-        "## Release notes\n\n- Updated ESPHome MCP's embedded runtime contract to the latest HA-MCP `master` snapshot."
+        "## Release notes\n\n- Updated ESPHome MCP's bundled FastMCP / MCP SDK runtime."
       ],
       "postUpgradeTasks": {
         "commands": [
-          "python scripts/sync_ha_mcp_runtime_contract.py --contract-ref",
+          "python scripts/vendor_fastmcp.py",
           "python scripts/bump_component_version.py origin/master"
         ],
         "fileFilters": [
-          "custom_components/esphome_mcp/ha_mcp_runtime/contract.py",
-          "custom_components/esphome_mcp/manifest.json",
-          "custom_components/esphome_mcp/const.py",
+          "custom_components/esphome_mcp/**",
           "pyproject.toml"
         ],
-        "executionMode": "update",
+        "executionMode": "branch",
         "installTools": {
           "python": {}
         }
@@ -130,6 +142,19 @@
       "labels": [
         "dependencies",
         "home-assistant",
+        "e2e"
+      ]
+    },
+    {
+      "description": "HA-MCP release baked into the HAOS E2E image as a coexistence peer (test-only)",
+      "matchDatasources": [
+        "github-releases"
+      ],
+      "matchPackageNames": [
+        "homeassistant-ai/ha-mcp-integration"
+      ],
+      "labels": [
+        "dependencies",
         "e2e"
       ]
     }

@@ -1,19 +1,12 @@
 """Constants for the ESPHome MCP custom component."""
 
 DOMAIN = "esphome_mcp"
-VERSION = "1.1.45"
+VERSION = "2.0.0"
 
 DEFAULT_SERVER_PORT = 9590
 DEFAULT_BIND_HOST = "0.0.0.0"
 BIND_HOST_ALL = "0.0.0.0"
 BIND_HOST_LOOPBACK = "127.0.0.1"
-
-# HA-MCP's public integration domain. ESPHome MCP only reads the installed
-# component metadata; it never mutates another integration's data.
-HA_MCP_DOMAIN = "ha_mcp_tools"
-HA_MCP_ENTRY_TYPE_KEY = "entry_type"
-HA_MCP_SERVER_ENTRY_TYPE = "server"
-HA_MCP_BRINGUP_TASK_KEY = "bringup_task"
 
 SERVER_CONFIG_SUBDIR = ".esphome_mcp"
 
@@ -34,8 +27,6 @@ DATA_MANAGER = "manager"
 DATA_WEBHOOK = "webhook"
 DATA_BRINGUP_TASK = "bringup_task"
 DATA_LAST_OPTIONS = "last_options"
-DATA_LAST_PIP_SPEC = "last_pip_spec"
-DATA_OWNED_RUNTIME_URL = "owned_runtime_url"
 
 WEBHOOK_AUTH_NONE = "none"
 WEBHOOK_AUTH_HA = "ha_auth"

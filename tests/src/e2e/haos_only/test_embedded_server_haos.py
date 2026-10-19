@@ -22,6 +22,8 @@ from haos_runtime import (
     ESPHOME_FIXTURE_ENTITY_ID,
     ESPHOME_MCP_SERVER_ENTRY_ID,
     ESPHOME_MCP_SERVER_WEBHOOK_ID,
+    HA_MCP_SERVER_ENTRY_ID,
+    HA_MCP_SERVER_WEBHOOK_ID,
     HAOS_IMAGE_ENV,
     boot_haos_qemu,
     collect_runtime_logs,
@@ -48,19 +50,20 @@ LOG = logging.getLogger(__name__)
 HAOS_BOOT_TIMEOUT_S = 180 + 600
 WEBHOOK_READY_TIMEOUT_S = 900
 DEVICE_BUILDER_READY_TIMEOUT_S = 180
+# One webhook wait each for HA-MCP and ESPHome MCP.
 PYTEST_TIMEOUT_S = (
-    HAOS_BOOT_TIMEOUT_S + WEBHOOK_READY_TIMEOUT_S + DEVICE_BUILDER_READY_TIMEOUT_S + 120
+    HAOS_BOOT_TIMEOUT_S + 2 * WEBHOOK_READY_TIMEOUT_S + DEVICE_BUILDER_READY_TIMEOUT_S + 120
 )
 READY_POLL_S = 5
 DEVICE_BUILDER_CONFIG_TIMEOUT_S = 180
 FIRMWARE_JOB_TIMEOUT_S = 120
 PERSISTENT_NOTIFICATION_ID = "esphome_mcp_server_connect"
-HA_MCP_CONTRACT_PATH = (
+VENDOR_PINS_PATH = (
     Path(__file__).resolve().parents[4]
     / "custom_components"
     / "esphome_mcp"
-    / "ha_mcp_runtime"
-    / "contract.py"
+    / "_vendor"
+    / "requirements.txt"
 )
 
 EXPECTED_ESP_TOOLS = {
@@ -82,20 +85,11 @@ EXPECTED_ESP_TOOLS = {
 }
 
 
-def _contract_string(name: str) -> str:
-    """Return one generated string literal from the HA-MCP contract."""
-    match = re.search(
-        rf'^{re.escape(name)} = "([^"]+)"$',
-        HA_MCP_CONTRACT_PATH.read_text(),
-        re.MULTILINE,
-    )
+def _vendored_fastmcp_version() -> str:
+    """Return the vendored FastMCP pin."""
+    match = re.search(r"^fastmcp-slim==(\S+)$", VENDOR_PINS_PATH.read_text(), re.MULTILINE)
     assert match is not None
     return match.group(1)
-
-
-def _fastmcp_contract_version() -> str:
-    """Return the FastMCP pin mirrored from the HA-MCP master snapshot."""
-    return _contract_string("HA_MCP_FASTMCP_VERSION")
 
 
 E2E_DEVICE_NAME = "ESP MCP E2E"
@@ -152,6 +146,7 @@ def _mcp_post(
     *,
     session_id: str | None = None,
     timeout: float = 60.0,
+    webhook_id: str = ESPHOME_MCP_SERVER_WEBHOOK_ID,
 ) -> requests.Response:
     headers = {
         "Content-Type": "application/json",
@@ -160,7 +155,7 @@ def _mcp_post(
     if session_id:
         headers["Mcp-Session-Id"] = session_id
     return requests.post(
-        f"{base_url}/api/webhook/{ESPHOME_MCP_SERVER_WEBHOOK_ID}",
+        f"{base_url}/api/webhook/{webhook_id}",
         headers=headers,
         data=json.dumps(payload),
         timeout=timeout,
@@ -171,7 +166,9 @@ def _parse_mcp(resp: requests.Response) -> dict[str, Any] | None:
     return parse_mcp_response(resp.headers.get("Content-Type", ""), resp.content)
 
 
-def _initialize(base_url: str) -> tuple[bool, str | None]:
+def _initialize(
+    base_url: str, webhook_id: str = ESPHOME_MCP_SERVER_WEBHOOK_ID
+) -> tuple[bool, str | None]:
     resp = _mcp_post(
         base_url,
         {
@@ -184,6 +181,7 @@ def _initialize(base_url: str) -> tuple[bool, str | None]:
                 "clientInfo": {"name": "esphome-mcp-haos-e2e", "version": "1.0"},
             },
         },
+        webhook_id=webhook_id,
     )
     parsed = _parse_mcp(resp)
     if not parsed or "result" not in parsed:
@@ -194,13 +192,32 @@ def _initialize(base_url: str) -> tuple[bool, str | None]:
             base_url,
             {"jsonrpc": "2.0", "method": "notifications/initialized"},
             session_id=session_id,
+            webhook_id=webhook_id,
         )
     return True, session_id
 
 
+def _wait_for_webhook_mcp(base_url: str, webhook_id: str, entry_id: str) -> str | None:
+    """Wait for an embedded MCP server to answer initialize through its webhook."""
+    deadline = time.monotonic() + WEBHOOK_READY_TIMEOUT_S
+    while time.monotonic() < deadline:
+        try:
+            ready, session_id = _initialize(base_url, webhook_id)
+        except requests.exceptions.RequestException:
+            ready = False
+        if ready:
+            return session_id
+        time.sleep(READY_POLL_S)
+    raise AssertionError(
+        f"No MCP server became reachable at /api/webhook/{webhook_id} within "
+        f"{WEBHOOK_READY_TIMEOUT_S}s of enabling {entry_id}. See ha-core-runtime.log "
+        "and supervisor-runtime.log in the HAOS diagnostics artifact."
+    )
+
+
 @pytest.fixture(scope="module")
 def embedded_server() -> Iterator[tuple[str, str | None, str]]:
-    """Boot HAOS, enable the baked ESPHome MCP entry, and wait for its webhook."""
+    """Boot HAOS, start HA-MCP then ESPHome MCP, and wait for both webhooks."""
     image_raw = os.environ.get(HAOS_IMAGE_ENV)
     if not image_raw:
         pytest.skip(f"{HAOS_IMAGE_ENV} is not set")
@@ -211,30 +228,19 @@ def embedded_server() -> Iterator[tuple[str, str | None, str]]:
     with boot_haos_qemu(image_path) as base_url:
         token = login_for_token(base_url)
         try:
+            # HA-MCP loads its own vendored FastMCP first, the order that used
+            # to make ESPHome MCP refuse to start.
+            enable_config_entry(base_url, token, HA_MCP_SERVER_ENTRY_ID)
+            LOG.info("Enabled %s; waiting for the HA-MCP webhook", HA_MCP_SERVER_ENTRY_ID)
+            _wait_for_webhook_mcp(base_url, HA_MCP_SERVER_WEBHOOK_ID, HA_MCP_SERVER_ENTRY_ID)
             enable_config_entry(base_url, token, ESPHOME_MCP_SERVER_ENTRY_ID)
             LOG.info(
                 "Enabled %s; waiting for the ESPHome MCP webhook",
                 ESPHOME_MCP_SERVER_ENTRY_ID,
             )
-            deadline = time.monotonic() + WEBHOOK_READY_TIMEOUT_S
-            session_id: str | None = None
-            ready = False
-            while time.monotonic() < deadline:
-                try:
-                    ready, session_id = _initialize(base_url)
-                except requests.exceptions.RequestException:
-                    ready = False
-                if ready:
-                    break
-                time.sleep(READY_POLL_S)
-            if not ready:
-                raise AssertionError(
-                    "ESPHome MCP did not become reachable through the HA webhook "
-                    f"within {WEBHOOK_READY_TIMEOUT_S}s of enabling "
-                    f"{ESPHOME_MCP_SERVER_ENTRY_ID} at /api/webhook/"
-                    f"{ESPHOME_MCP_SERVER_WEBHOOK_ID}. See ha-core-runtime.log "
-                    "and supervisor-runtime.log in the HAOS diagnostics artifact."
-                )
+            session_id = _wait_for_webhook_mcp(
+                base_url, ESPHOME_MCP_SERVER_WEBHOOK_ID, ESPHOME_MCP_SERVER_ENTRY_ID
+            )
             LOG.info("ESPHome MCP webhook is ready")
             configuration = _prepare_device_builder_fixture(base_url, session_id)
             yield base_url, session_id, configuration
@@ -814,11 +820,31 @@ class TestEmbeddedServerOnHaos:
 
         assert payload["success"] is True
         assert payload["mcp_domain"] == "esphome_mcp"
-        assert payload["fastmcp_version"] == _fastmcp_contract_version()
-        assert payload["ha_mcp_master_sha"] == _contract_string("HA_MCP_MASTER_SHA")
-        assert payload["ha_mcp_server_version"] == _contract_string("HA_MCP_SERVER_VERSION")
-        assert payload["ha_mcp_component_version"] == _contract_string("HA_MCP_COMPONENT_VERSION")
+        assert payload["fastmcp_version"] == _vendored_fastmcp_version()
         assert "device_count" in payload
+
+    def test_ha_mcp_server_keeps_running_beside_esphome_mcp(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, _session_id, _configuration = embedded_server
+        ready, session_id = _initialize(base_url, HA_MCP_SERVER_WEBHOOK_ID)
+        assert ready
+        listed = _parse_mcp(
+            _mcp_post(
+                base_url,
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                session_id=session_id,
+                webhook_id=HA_MCP_SERVER_WEBHOOK_ID,
+            )
+        )
+        assert listed is not None and listed.get("result", {}).get("tools"), listed
+
+        token = login_for_token(base_url)
+        issues = websocket_command(base_url, token, {"type": "repairs/list_issues"})
+        assert isinstance(issues, dict), issues
+        esphome_issues = [i for i in issues["issues"] if i.get("domain") == "esphome_mcp"]
+        assert esphome_issues == []
 
     def test_local_brand_icon_uses_home_assistant_authenticated_proxy(
         self,

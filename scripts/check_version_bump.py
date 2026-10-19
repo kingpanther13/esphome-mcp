@@ -60,10 +60,11 @@ def validate_version_bump(base_ref: str) -> list[str]:
             "custom_components/esphome_mcp changed but manifest version did not increase "
             f"over {base_ref}: {current_version!r} <= {base_version!r}"
         ]
-    if current_key[0] != base_key[0]:
+    # A major release must be the clean next major; anything else is a typo.
+    if current_key[0] != base_key[0] and current_key != (base_key[0] + 1, 0, 0, 3, 0):
         return [
-            "this repository does not cut major releases: "
-            f"{base_version!r} -> {current_version!r} changes the major version"
+            "a major release must be exactly the next major version: "
+            f"{base_version!r} -> {current_version!r}"
         ]
     return []
 
