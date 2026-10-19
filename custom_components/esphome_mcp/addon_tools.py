@@ -308,13 +308,34 @@ def _ha_core_base_url(hass: HomeAssistant) -> str:
     return f"http://127.0.0.1:{port}"
 
 
+async def _ingress_user_id(hass: HomeAssistant) -> str | None:
+    """Return an active human administrator suitable for Supervisor ingress.
+
+    Supervisor's ``/ingress/session`` API requires the Home Assistant user the
+    session represents.  MCP requests can be authenticated by a secret webhook,
+    which deliberately has no per-request HA user, so use an active human admin
+    rather than minting a session for a system-generated account.
+    """
+    for user in await hass.auth.async_get_users():
+        if user.is_active and user.is_admin and not user.system_generated:
+            return user.id
+    return None
+
+
 async def _create_ingress_session(hass: HomeAssistant) -> dict[str, Any]:
     """Mint a Supervisor ingress session token through HA's hassio client."""
+    user_id = await _ingress_user_id(hass)
+    if user_id is None:
+        return _error(
+            "No active human administrator is available for the Supervisor ingress session.",
+            code="ingress_user_unavailable",
+        )
+
     response = await _supervisor_api_call(
         hass,
         "/ingress/session",
         method="POST",
-        data={},
+        data={"user_id": user_id},
         timeout=30,
     )
     if not response.get("success"):
