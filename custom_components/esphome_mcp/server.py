@@ -25,6 +25,8 @@ from .addon_tools import (
     write_device_builder_config,
 )
 from .const import DATA_MANAGER, DOMAIN, VERSION
+from .filesystem_tools import create_esphome_path
+
 
 
 class EspHomeMCPServer:
@@ -402,6 +404,46 @@ class EspHomeMCPServer:
                     timeout=timeout,
                     debug=debug,
                 ),
+            )
+
+        @self.mcp.tool(
+            name="esp_create_directory",
+            annotations={
+                "readOnlyHint": False,
+                "idempotentHint": True,
+                "destructiveHint": False,
+                "title": "Create ESPHome Folder",
+            },
+        )
+        async def esp_create_directory(path: str, parents: bool = True) -> dict[str, Any]:
+            """Create a folder relative to HA's esphome config directory.
+
+            Requires a locally accessible shared esphome directory. Existing folders
+            succeed. Hidden paths, traversal and symlinks are refused.
+            """
+            return await _run_on_hass(
+                self.hass, create_esphome_path(self.hass, path=path, parents=parents)
+            )
+
+        @self.mcp.tool(
+            name="esp_create_file",
+            annotations={
+                "readOnlyHint": False,
+                "idempotentHint": False,
+                "destructiveHint": False,
+                "title": "Create ESPHome Supporting File",
+            },
+        )
+        async def esp_create_file(path: str, content: str, parents: bool = True) -> dict[str, Any]:
+            """Create a UTF-8 supporting file, optionally in nested folders.
+
+            Relative to HA's shared esphome config directory. Never overwrites an
+            existing file. Hidden paths, traversal and symlinks are refused.
+            Use esp_update_yaml for existing Device Builder configurations.
+            """
+            return await _run_on_hass(
+                self.hass,
+                create_esphome_path(self.hass, path=path, parents=parents, content=content),
             )
 
         @self.mcp.tool(

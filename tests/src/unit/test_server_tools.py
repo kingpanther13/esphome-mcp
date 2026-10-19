@@ -24,6 +24,8 @@ EXPECTED_ESP_TOOLS = {
     "esp_search_yaml",
     "esp_get_yaml",
     "esp_update_yaml",
+    "esp_create_directory",
+    "esp_create_file",
     "esp_validate_yaml",
     "esp_device_logs",
     "esp_compile_firmware",
@@ -719,3 +721,25 @@ def test_snapshot_collects_only_esphome_registry_records(
     assert snapshot["entities"][0]["state"] == "71.2"
     assert snapshot["entities"][1]["disabled_by"] == "user"
     assert snapshot["entities"][1]["platform"] == "template"
+
+
+@pytest.mark.parametrize("tool", ["esp_create_directory", "esp_create_file"])
+def test_filesystem_tools_delegate_to_ha(monkeypatch: pytest.MonkeyPatch, tool: str) -> None:
+    module = _load_server_module(monkeypatch)
+    monkeypatch.setattr(module, "_run_on_hass", _run_inline)
+    hass = SimpleNamespace()
+    calls = []
+
+    async def create(received_hass, **kwargs):
+        assert received_hass is hass
+        calls.append(kwargs)
+        return {"success": True, "path": kwargs["path"], "created": True}
+
+    monkeypatch.setattr(module, "create_esphome_path", create)
+    server = module.EspHomeMCPServer(hass)
+    args = {"path": "packages/base", "parents": False}
+    if tool == "esp_create_file":
+        args["content"] = "# supporting YAML\n"
+    assert _run(server.mcp.tools[tool].func(**args))["success"]
+    assert calls == [args]
+    assert server.mcp.tools[tool].annotations["destructiveHint"] is False

@@ -139,6 +139,31 @@ including `devices/list`, `yaml/search`, `devices/get_config`,
 `devices/stop_stream`, `firmware/compile`, `firmware/install`,
 `firmware/get_jobs`, `firmware/get_job`, and `firmware/follow_job`.
 
+### Configuration Folders and Supporting Files
+
+| Tool | Purpose |
+| --- | --- |
+| `esp_create_directory` | Create an ESPHome folder, including missing parent folders by default. Existing folders succeed. |
+| `esp_create_file` | Create a UTF-8 supporting file, including missing parent folders by default. Existing files are never overwritten. |
+
+Both tools take `path` relative to Home Assistant's `esphome` configuration
+folder (normally `/config/esphome`) and an optional `parents` boolean, defaulting
+to `true`. `esp_create_file` also requires `content`.
+For example, create `packages/common`, then create
+`packages/common/base.yaml` with the desired YAML content. Supporting files can
+be referenced from device YAML using ESPHome's normal `!include` or package
+syntax; these tools do not register nested files as dashboard devices.
+
+These operations run locally inside Home Assistant Core and require that its
+existing `esphome` folder is the configuration folder shared with Device
+Builder. They do not use the add-on ingress API, accept an add-on slug, or
+support a separate remote Device Builder filesystem. Verify that the add-on
+uses this shared folder before trying them. A missing root folder returns an
+error rather than creating a potentially unrelated configuration tree.
+Absolute paths, traversal, hidden path components, and symlinks in the relative
+path or at the root are refused. File creation bypasses Device Builder's YAML
+validation guards; use `esp_update_yaml` to edit existing device configurations.
+
 ## Safety Notes
 
 - `esp_update_yaml`, firmware actions, and add-on lifecycle/config actions can

@@ -75,6 +75,8 @@ EXPECTED_ESP_TOOLS = {
     "esp_search_yaml",
     "esp_get_yaml",
     "esp_update_yaml",
+    "esp_create_directory",
+    "esp_create_file",
     "esp_validate_yaml",
     "esp_device_logs",
     "esp_compile_firmware",
