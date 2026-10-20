@@ -30,9 +30,10 @@ def test_nested_directory_and_file_creation(tmp_path: Path) -> None:
     assert not filesystem._create(str(tmp_path), "packages/common/base.yaml", True, "new")[
         "success"
     ]
-    assert filesystem._create(str(tmp_path), "packages/common/base.yaml", True, "new")[
-        "error_code"
-    ] == "already_exists"
+    assert (
+        filesystem._create(str(tmp_path), "packages/common/base.yaml", True, "new")["error_code"]
+        == "already_exists"
+    )
     assert (tmp_path / "packages/common/base.yaml").read_text() == "# café\n"
 
 
@@ -117,8 +118,7 @@ def test_missing_root_parents_and_file_collision(tmp_path: Path) -> None:
     (tmp_path / "file").write_text("original")
     assert filesystem._create(str(tmp_path), "file", True, None)["error_code"] == "already_exists"
     assert (
-        filesystem._create(str(tmp_path), "file/new", True, None)["error_code"]
-        == "not_a_directory"
+        filesystem._create(str(tmp_path), "file/new", True, None)["error_code"] == "not_a_directory"
     )
     assert (tmp_path / "file").read_text() == "original"
 
@@ -129,8 +129,7 @@ def test_symlink_root_is_reported_as_refused(tmp_path: Path) -> None:
     linked_root = tmp_path / "linked-root"
     linked_root.symlink_to(actual_root, target_is_directory=True)
     assert (
-        filesystem._create(str(linked_root), "new", True, None)["error_code"]
-        == "symlink_refused"
+        filesystem._create(str(linked_root), "new", True, None)["error_code"] == "symlink_refused"
     )
 
 
