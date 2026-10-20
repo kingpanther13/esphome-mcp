@@ -75,6 +75,8 @@ EXPECTED_ESP_TOOLS = {
     "esp_search_yaml",
     "esp_get_yaml",
     "esp_update_yaml",
+    "esp_create_directory",
+    "esp_create_file",
     "esp_validate_yaml",
     "esp_device_logs",
     "esp_compile_firmware",
@@ -1105,6 +1107,61 @@ class TestEmbeddedServerOnHaos:
         )
         assert search_updated["success"] is True, search_updated
         assert search_updated["count"] >= 1, search_updated
+
+    def test_supporting_package_file_is_included_and_never_overwritten(
+        self,
+        embedded_server: tuple[str, str | None, str],
+    ) -> None:
+        base_url, session_id, configuration = embedded_server
+        package_path = "packages/esphome-mcp-e2e/package.yaml"
+        package_content = 'substitutions:\n  mcp_folder_test: "included"\n'
+        created = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_create_file",
+                {"path": package_path, "content": package_content},
+            )
+        )
+        assert created["success"] is True, created
+        assert created["created"] is True, created
+
+        configured_yaml = E2E_YAML.replace(
+            "friendly_name: ESP MCP E2E",
+            "friendly_name: ${mcp_folder_test}",
+        ).replace(
+            "host:\n",
+            "host:\n\npackages:\n"
+            "  mcp_folder_test: !include packages/esphome-mcp-e2e/package.yaml\n",
+        )
+        updated = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_update_yaml",
+                {"configuration": configuration, "content": configured_yaml, "allow_wipe": False},
+            )
+        )
+        assert updated["success"] is True, updated
+        validated = _tool_payload(
+            _tool_call(base_url, session_id, "esp_validate_yaml", {"configuration": configuration})
+        )
+        assert validated["success"] is True, validated
+
+        duplicate = _tool_payload(
+            _tool_call(
+                base_url,
+                session_id,
+                "esp_create_file",
+                {"path": package_path, "content": "invalid: [replacement"},
+            )
+        )
+        assert duplicate["success"] is False, duplicate
+        assert duplicate["error_code"] == "already_exists", duplicate
+        validated_unchanged = _tool_payload(
+            _tool_call(base_url, session_id, "esp_validate_yaml", {"configuration": configuration})
+        )
+        assert validated_unchanged["success"] is True, validated_unchanged
 
     def test_device_builder_validate_tool_runs_on_created_device(
         self,

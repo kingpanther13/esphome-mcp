@@ -25,6 +25,7 @@ from .addon_tools import (
     write_device_builder_config,
 )
 from .const import DATA_MANAGER, DOMAIN, VERSION
+from .filesystem_tools import create_esphome_path
 
 
 class EspHomeMCPServer:
@@ -402,6 +403,72 @@ class EspHomeMCPServer:
                     timeout=timeout,
                     debug=debug,
                 ),
+            )
+
+        @self.mcp.tool(
+            name="esp_create_directory",
+            annotations={
+                "readOnlyHint": False,
+                "idempotentHint": True,
+                "destructiveHint": False,
+                "title": "Create ESPHome Folder",
+            },
+        )
+        async def esp_create_directory(
+            path: Annotated[
+                str,
+                Field(description="Relative folder path under HA's ESPHome config directory."),
+            ],
+            parents: Annotated[
+                bool,
+                Field(description="Create missing parent folders; defaults to true."),
+            ] = True,
+        ) -> dict[str, Any]:
+            """Create a folder under the existing, Device Builder-shared ESPHome config root.
+
+            Returns success, path, and created; failures include an actionable error_code.
+            The root must already exist. Existing folders succeed; hidden paths, traversal,
+            and symlinks are refused.
+            """
+            return await _run_on_hass(
+                self.hass, create_esphome_path(self.hass, path=path, parents=parents)
+            )
+
+        @self.mcp.tool(
+            name="esp_create_file",
+            annotations={
+                "readOnlyHint": False,
+                "idempotentHint": False,
+                "destructiveHint": False,
+                "title": "Create ESPHome Supporting File",
+            },
+        )
+        async def esp_create_file(
+            path: Annotated[
+                str,
+                Field(
+                    description="Relative supporting-file path under HA's ESPHome config directory."
+                ),
+            ],
+            content: Annotated[
+                str,
+                Field(description="UTF-8 file content, written without YAML validation."),
+            ],
+            parents: Annotated[
+                bool,
+                Field(description="Create missing parent folders; defaults to true."),
+            ] = True,
+        ) -> dict[str, Any]:
+            """Create an unvalidated UTF-8 supporting file under the existing shared ESPHome root.
+
+            Returns success, path, and created; failures include an actionable error_code.
+            The root must already exist. Supporting files belong in subfolders; top-level
+            device YAML is refused. Existing files are never overwritten; use esp_update_yaml
+            for existing Device Builder configurations. Hidden paths and symlinks are refused.
+            """
+            return await _run_on_hass(
+                self.hass,
+                create_esphome_path(self.hass, path=path, parents=parents, content=content),
             )
 
         @self.mcp.tool(
