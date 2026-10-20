@@ -101,7 +101,11 @@ def _create(root: str, path: str, parents: bool, content: str | None) -> dict[st
                         try:
                             info = os.stat(parts[-1], dir_fd=descriptor, follow_symlinks=False)
                         except FileNotFoundError:
-                            raise err
+                            return _failure(
+                                path,
+                                "filesystem_error",
+                                "The path changed during creation.",
+                            )
                         code = "symlink_refused" if stat.S_ISLNK(info.st_mode) else "already_exists"
                         message = (
                             f"Path {path!r} is a symlink and was not followed."
