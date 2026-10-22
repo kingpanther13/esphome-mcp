@@ -429,12 +429,21 @@ class File:
 
     def _get_mime_type(self) -> str:
         """Get MIME type from format or guess from file extension."""
+        # Text formats whose canonical MIME type is text/*, not application/*
+        mapping = {
+            "plain": "text/plain",
+            "txt": "text/plain",
+            "text": "text/plain",
+            "csv": "text/csv",
+            "html": "text/html",
+            "htm": "text/html",
+            "md": "text/markdown",
+            "markdown": "text/markdown",
+        }
+
         if self._format:
             fmt = self._format.lower()
-            # Map common text formats to text/plain
-            if fmt in {"plain", "txt", "text"}:
-                return "text/plain"
-            return f"application/{fmt}"
+            return mapping.get(fmt, f"application/{fmt}")
 
         if self.path:
             mime_type, _ = mimetypes.guess_type(self.path)
@@ -454,15 +463,20 @@ class File:
                 uri_str = self.path.resolve().as_uri()
         elif self.data is not None:
             raw_data = self.data
+            # The URI extension follows the requested format, not the MIME
+            # subtype (format="txt" is text/plain but should stay .txt).
+            extension = (
+                f".{self._format.lower()}"
+                if self._format
+                else f".{self._mime_type.split('/')[1]}"
+            )
             if self._name:
-                extension = (
-                    ""
-                    if Path(self._name).suffix
-                    else f".{self._mime_type.split('/')[1]}"
-                )
-                uri_str = f"file:///{quote(self._name + extension)}"
+                if Path(self._name).suffix:
+                    uri_str = f"file:///{quote(self._name)}"
+                else:
+                    uri_str = f"file:///{quote(self._name + extension)}"
             else:
-                uri_str = f"file:///resource.{self._mime_type.split('/')[1]}"
+                uri_str = f"file:///resource{extension}"
         else:
             raise ValueError("No resource data available")
 
