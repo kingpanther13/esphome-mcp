@@ -28,7 +28,7 @@ Example:
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncGenerator, Generator, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -109,7 +109,7 @@ class Provider:
     @contextmanager
     def _extension_runtime(
         self, available: frozenset[str], *, root: FastMCP | None
-    ) -> Iterator[None]:
+    ) -> Generator[None, None, None]:
         """Track a serving root independently of resource lifespan ownership.
 
         Composite providers forward this scope to their children so live
@@ -290,7 +290,11 @@ class Provider:
         found = await self._get_tool_by_hash(tool_hash, tool_name)
         if found is None:
             return None
-        name = await _listed_name(self.transforms, found)
+        name = (
+            await _listed_name(self.transforms, found, await self._list_tools())
+            if self.transforms
+            else found.name
+        )
         if name is None:
             return None
 
@@ -656,7 +660,7 @@ class Provider:
     # -------------------------------------------------------------------------
 
     @asynccontextmanager
-    async def lifespan(self) -> AsyncIterator[None]:
+    async def lifespan(self) -> AsyncGenerator[None, None]:
         """User-overridable lifespan for custom setup and teardown.
 
         Override this method to perform provider-specific initialization
@@ -801,7 +805,9 @@ def hashed_lookup_target(provider: Provider) -> Tool | None:
     return current.tool
 
 
-async def _listed_name(transforms: Sequence[Transform], tool: Tool) -> str | None:
+async def _listed_name(
+    transforms: Sequence[Transform], tool: Tool, catalog: Sequence[Tool]
+) -> str | None:
     """The name `tool` is listed under after passing through `transforms`.
 
     Each transform's listing gives the tool's name above it. A transform that
@@ -813,11 +819,18 @@ async def _listed_name(transforms: Sequence[Transform], tool: Tool) -> str | Non
     identity = tool_identity(tool)
     current = tool
     for transform in transforms:
+        catalog = await transform.list_tools(catalog)
         listed = [
             t
-            for t in await transform.list_tools([current])
-            if tool_identity(t) == identity
+            for t in catalog
+            if tool_identity(t) == identity and t.version == tool.version
         ]
+        if not listed:
+            listed = [
+                t
+                for t in await transform.list_tools([current])
+                if tool_identity(t) == identity and t.version == tool.version
+            ]
         if len({t.name for t in listed}) > 1:
             return None
         if listed:

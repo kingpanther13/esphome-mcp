@@ -32,7 +32,7 @@ from custom_components.esphome_mcp._vendor.fastmcp import _compat
 
 _compat.install()
 
-__version__ = "4.0.11"
+__version__ = "4.1.4"
 
 if settings.deprecation_warnings:
     warnings.simplefilter("default", FastMCPDeprecationWarning)
