@@ -30,7 +30,7 @@ from typing import Any
 LOG = logging.getLogger("haos_image_build")
 
 # renovate: datasource=github-releases depName=home-assistant/operating-system
-HAOS_VERSION = "18.3"
+HAOS_VERSION = "18.4"
 # renovate: datasource=github-releases depName=home-assistant/core
 HA_CORE_VERSION = "2026.10.2"
 # renovate: datasource=github-releases depName=homeassistant-ai/ha-mcp-integration
