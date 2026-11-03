@@ -251,7 +251,10 @@ configurations.
   versions, through Home Assistant's normal requirements step.
   `scripts/vendor_fastmcp.py` regenerates the vendored tree and those manifest
   requirements from the pins in `_vendor/requirements.txt`; Renovate bumps the
-  pins weekly and CI rejects any drift.
+  pins weekly and CI rejects any drift. Dependency markers use the supported
+  Home Assistant runtime (Linux, Python 3.14), independent of the vendoring
+  runner's Python version. Update `_TARGET_PYTHON_VERSION` in the script when
+  that runtime changes; unsupported marker expressions fail the sync.
 
 ## Testing
 

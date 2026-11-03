@@ -104,12 +104,67 @@ def test_manifest_requirement_merge_keeps_the_highest_floor() -> None:
     assert vendor_fastmcp._merge_clauses({"<0.5.0", ">=0.4.4"}) == ["<0.5.0", ">=0.4.4"]
 
 
-def test_manifest_requirements_reject_unknown_markers(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "platform_machine == 'arm64'",
+        "python_version >= '3.14' or sys_platform == 'win32'",
+        "(python_version >= '3.14'",
+        "python_version >= '3.14')",
+        "python_version ~= '3.14'",
+        "python_version == '3.14.*'",
+    ],
+)
+def test_manifest_requirements_reject_unknown_markers(tmp_path: Path, marker: str) -> None:
     for spec in vendor_fastmcp.PACKAGES:
         tree = tmp_path / spec.package
         tree.mkdir()
         (tree / vendor_fastmcp.REQUIRES_NAME).write_text(
-            "anyio>=4.9; platform_machine == 'arm64'\n", encoding="utf-8"
+            f"anyio>=4.9; {marker}\n", encoding="utf-8"
         )
     with pytest.raises(SystemExit, match="unhandled marker"):
         vendor_fastmcp.manifest_requirements(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("marker", "included"),
+    [
+        ("(python_version >= '3.15')", False),
+        ("python_version < '3.15'", True),
+        ('(python_version >= "3.14")', True),
+        ("python_version >= '3.9'", True),
+        ("python_version > '3.14'", False),
+        ("python_version <= '3.14'", True),
+        ("python_version == '3.14'", True),
+        ("python_version != '3.14'", False),
+        ("python_version >= '3.14'", True),
+        ("python_version < '3.14'", False),
+        ("sys_platform == 'win32'", False),
+        ("sys_platform != 'emscripten'", True),
+    ],
+)
+def test_manifest_python_markers_use_the_ha_target(
+    tmp_path: Path, marker: str, included: bool
+) -> None:
+    """The runner's Python version must not determine HA's dependencies."""
+    for spec in vendor_fastmcp.PACKAGES:
+        tree = tmp_path / spec.package
+        tree.mkdir()
+        (tree / vendor_fastmcp.REQUIRES_NAME).write_text(
+            f"beartype>=0.23.0rc2; {marker}\n", encoding="utf-8"
+        )
+    requirements = vendor_fastmcp.manifest_requirements(tmp_path)
+    assert requirements == (["beartype>=0.23.0rc2"] if included else [])
+
+
+def test_future_ha_python_target_includes_its_conditional_dependency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(vendor_fastmcp, "_TARGET_PYTHON_VERSION", (3, 15))
+    for spec in vendor_fastmcp.PACKAGES:
+        tree = tmp_path / spec.package
+        tree.mkdir()
+        (tree / vendor_fastmcp.REQUIRES_NAME).write_text(
+            "beartype>=0.23.0rc2; (python_version >= '3.15')\n", encoding="utf-8"
+        )
+    assert vendor_fastmcp.manifest_requirements(tmp_path) == ["beartype>=0.23.0rc2"]
