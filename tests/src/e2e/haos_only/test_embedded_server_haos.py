@@ -853,7 +853,7 @@ class TestEmbeddedServerOnHaos:
                 {
                     **args,
                     "location": location,
-                    "automation": {"actions": [{"action_id": "delay", "params": {"value": "1s"}}]},
+                    "automation": {"actions": [{"action_id": "delay", "params": {"id": "1s"}}]},
                 },
             )
             assert "yaml_diff" in json.loads(_native_text(inserted))
