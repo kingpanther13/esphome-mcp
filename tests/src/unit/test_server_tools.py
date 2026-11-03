@@ -592,8 +592,9 @@ def test_device_builder_tool_wrappers_forward_expected_arguments(
     }
 
 
+@pytest.mark.parametrize("modern_devices", [False, True])
 def test_snapshot_collects_only_esphome_registry_records(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, modern_devices: bool,
 ) -> None:
     """Registry snapshots include ESPHome records and ignore unrelated HA records."""
     module = _load_server_module(monkeypatch)
@@ -718,9 +719,31 @@ def test_snapshot_collects_only_esphome_registry_records(
                 return None
             return SimpleNamespace(state=states[entity_id])
 
+    registry_devices = devices
+    if modern_devices:
+        class ModernDevice(SimpleNamespace):
+            @property
+            def config_entries(self):
+                raise AssertionError("Use config_entry_id on modern HA")
+
+        modern_entries = []
+        for device in devices.values():
+            fields = vars(device).copy()
+            fields["config_entry_id"] = next(iter(fields.pop("config_entries")))
+            modern_entries.append(ModernDevice(**fields))
+
+        class DeviceCollection:
+            def __iter__(self):
+                return iter(modern_entries)
+
+            def values(self):
+                raise AssertionError("Iterate modern registry devices directly")
+
+        registry_devices = DeviceCollection()
+
     hass = SimpleNamespace(
         config_entries=_FakeConfigEntries(),
-        device_registry=SimpleNamespace(devices=devices),
+        device_registry=SimpleNamespace(devices=registry_devices),
         entity_registry=SimpleNamespace(entities=entities),
         states=_FakeStates(),
     )
