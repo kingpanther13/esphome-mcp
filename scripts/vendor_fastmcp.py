@@ -97,14 +97,16 @@ _NOT_DECLARED = frozenset(
         "typing-extensions",
     }
 )
-# Home Assistant 2026.8+ runs CPython 3.14 on Linux. Every marker the vendored
-# metadata uses must be listed here; an unknown one fails the sync.
+# Home Assistant 2026.8+ runs CPython 3.14 on Linux. Evaluate Python markers
+# against that deployment target, never the interpreter running this script.
+_TARGET_PYTHON_VERSION = (3, 14)
 _TARGET_MARKERS = {
-    "python_version >= '3.14'": True,
-    "python_version < '3.14'": False,
     "sys_platform == 'win32'": False,
     "sys_platform != 'emscripten'": True,
 }
+_PYTHON_VERSION_MARKER_RE = re.compile(
+    r"python_version\s*(>=|<=|==|!=|<|>)\s*'([0-9]+)\.([0-9]+)'"
+)
 _REQUIREMENT_RE = re.compile(
     r"\A(?P<name>[A-Za-z0-9._-]+)(?:\[(?P<extras>[^\]]*)\])?(?P<spec>[^;]*)(?:;(?P<marker>.*))?\Z"
 )
@@ -310,6 +312,27 @@ def _merge_clauses(clauses: set[str]) -> list[str]:
     return sorted(clauses)
 
 
+def _marker_applies(marker: str, requirement: str) -> bool:
+    """Evaluate supported single comparisons; reject unfamiliar marker semantics."""
+    marker = marker.strip().replace('"', "'")
+    if marker.startswith("(") and marker.endswith(")"):
+        marker = marker[1:-1].strip()
+    if marker in _TARGET_MARKERS:
+        return _TARGET_MARKERS[marker]
+    if match := _PYTHON_VERSION_MARKER_RE.fullmatch(marker):
+        version = (int(match[2]), int(match[3]))
+        target = _TARGET_PYTHON_VERSION
+        return {
+            ">=": target >= version,
+            "<=": target <= version,
+            "==": target == version,
+            "!=": target != version,
+            "<": target < version,
+            ">": target > version,
+        }[match[1]]
+    raise SystemExit(f"unhandled marker in vendored requirement {requirement!r}")
+
+
 def manifest_requirements(vendor_dir: Path = _VENDOR_DIR) -> list[str]:
     """Merge the vendored trees' runtime requirements for the HA manifest."""
     merged: dict[str, tuple[set[str], set[str]]] = {}
@@ -319,12 +342,9 @@ def manifest_requirements(vendor_dir: Path = _VENDOR_DIR) -> list[str]:
             match = _REQUIREMENT_RE.fullmatch(line)
             if match is None:
                 raise SystemExit(f"cannot parse vendored requirement {line!r}")
-            marker = (match["marker"] or "").strip().replace('"', "'")
-            if marker:
-                if marker not in _TARGET_MARKERS:
-                    raise SystemExit(f"unhandled marker in vendored requirement {line!r}")
-                if not _TARGET_MARKERS[marker]:
-                    continue
+            marker = (match["marker"] or "").strip()
+            if marker and not _marker_applies(marker, line):
+                continue
             name = canonical(match["name"])
             if name in _NOT_DECLARED:
                 continue
