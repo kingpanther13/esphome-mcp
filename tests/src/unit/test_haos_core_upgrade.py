@@ -84,3 +84,44 @@ def test_supervisor_readiness_retries_only_unregistered_handler(monkeypatch, cod
     else:
         runtime.upgrade_core("http://ha", "token", "2026.11.0b4")
         assert calls == ["/supervisor/info", "/supervisor/info", "/core/update"]
+
+
+@pytest.mark.parametrize(
+    "message,retry",
+    [
+        ("Supervisor is not ready to perform this operation, please try again later", True),
+        ("Another job is running for job group home_assistant_core", True),
+        ("Unexpected update failure", False),
+    ],
+)
+def test_only_explicit_startup_refusals_allow_another_update_request(
+    monkeypatch, message, retry
+) -> None:
+    runtime = _load_module("esphome_mcp_test_haos_runtime", HAOS_RUNTIME_PATH)
+    updates = []
+    versions = iter(["2026.10.2", "2026.11.0b4"])
+    monkeypatch.setattr(
+        runtime,
+        "_http_json",
+        lambda *args, **kwargs: {"version": next(versions), "state": "RUNNING"},
+    )
+    monkeypatch.setattr(runtime.time, "sleep", lambda _: None)
+
+    def command(base_url, token, body, **kwargs):
+        if body["endpoint"] == "/supervisor/info":
+            return {}
+        updates.append(body)
+        if len(updates) == 1:
+            raise runtime.WebSocketCommandError(
+                body, {"error": {"code": "unknown_error", "message": message}}
+            )
+        return {}
+
+    monkeypatch.setattr(runtime, "websocket_command", command)
+    if retry:
+        runtime.upgrade_core("http://ha", "token", "2026.11.0b4")
+        assert len(updates) == 2
+    else:
+        with pytest.raises(runtime.WebSocketCommandError):
+            runtime.upgrade_core("http://ha", "token", "2026.11.0b4")
+        assert len(updates) == 1

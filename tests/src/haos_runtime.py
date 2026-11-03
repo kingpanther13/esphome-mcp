@@ -150,6 +150,7 @@ class WebSocketCommandError(RuntimeError):
     def __init__(self, command: dict, response: dict) -> None:
         super().__init__(f"WebSocket command {command!r} failed: {response!r}")
         self.code = response.get("error", {}).get("code")
+        self.message = response.get("error", {}).get("message", "")
 
 
 def upgrade_core(base_url: str, token: str, version: str, *, timeout: float = 600) -> None:
@@ -179,25 +180,39 @@ def upgrade_core(base_url: str, token: str, version: str, *, timeout: float = 60
             raise TimeoutError(f"Core/Supervisor did not become ready to install {version}")
         time.sleep(5)
     LOG.info("Updating running HA Core from %s to %s", current.get("version"), version)
-    try:
-        result = websocket_command(
-            base_url,
-            token,
-            {
-                "type": "supervisor/api",
-                "endpoint": "/core/update",
-                "method": "post",
-                "data": {"version": version},
-                "timeout": 600,
-            },
-            timeout=60,
-        )
-        if result.get("result") == "error":
-            raise RuntimeError(f"Core update refused: {result}")
-    except (ConnectionClosed, OSError, TimeoutError):
-        # The accepted update may restart Core before the request can answer.
-        # Never submit it twice; check the running version after reconnecting.
-        LOG.info("Core update connection closed; waiting for version readback")
+    startup_refusals = {
+        "Supervisor is not ready to perform this operation, please try again later",
+        "Another job is running for job group home_assistant_core",
+    }
+    while True:
+        try:
+            result = websocket_command(
+                base_url,
+                token,
+                {
+                    "type": "supervisor/api",
+                    "endpoint": "/core/update",
+                    "method": "post",
+                    "data": {"version": version},
+                    "timeout": 600,
+                },
+                timeout=60,
+            )
+            if result.get("result") == "error":
+                raise RuntimeError(f"Core update refused: {result}")
+            break
+        except WebSocketCommandError as err:
+            if err.code != "unknown_error" or err.message not in startup_refusals:
+                raise
+            if time.monotonic() >= ready_deadline:
+                raise TimeoutError(f"Supervisor could not start the update to {version}") from err
+            # These explicit refusals mean no update started. Only these may retry.
+            LOG.info("Supervisor refused the update during startup; waiting: %s", err.message)
+            time.sleep(5)
+        except (ConnectionClosed, OSError, TimeoutError):
+            # Never retry an ambiguous submission; reconnect and read its result.
+            LOG.info("Core update connection closed; waiting for version readback")
+            break
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
