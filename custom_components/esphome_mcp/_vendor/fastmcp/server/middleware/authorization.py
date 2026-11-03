@@ -31,7 +31,7 @@ import custom_components.esphome_mcp._vendor.mcp_types as mt
 
 from custom_components.esphome_mcp._vendor.fastmcp.exceptions import AuthorizationError, InsufficientScopeError
 from custom_components.esphome_mcp._vendor.fastmcp.prompts.base import Prompt, PromptResult
-from custom_components.esphome_mcp._vendor.fastmcp.resources.base import Resource, ResourceResult
+from custom_components.esphome_mcp._vendor.fastmcp.resources.base import Resource
 from custom_components.esphome_mcp._vendor.fastmcp.resources.template import ResourceTemplate
 from custom_components.esphome_mcp._vendor.fastmcp.server.dependencies import get_access_token
 from custom_components.esphome_mcp._vendor.fastmcp.server.middleware.middleware import (
@@ -280,17 +280,15 @@ class AuthMiddleware(Middleware):
 
         return authorized_resources
 
-    async def on_read_resource(
-        self,
-        context: MiddlewareContext[mt.ReadResourceRequestParams],
-        call_next: CallNext[mt.ReadResourceRequestParams, ResourceResult],
-    ) -> ResourceResult:
-        """Check auth before resource read."""
+    async def check_resource_access(
+        self, context: MiddlewareContext[mt.ReadResourceRequestParams]
+    ) -> None:
+        """Apply the resource policy shared by reads and extension discovery."""
         # STDIO has no auth concept, skip enforcement
         from custom_components.esphome_mcp._vendor.fastmcp.server.context import _current_transport
 
         if _current_transport.get() == "stdio":
-            return await call_next(context)
+            return
 
         # Get the resource being read
         uri = context.message.uri
@@ -338,8 +336,6 @@ class AuthMiddleware(Middleware):
             raise AuthorizationError(
                 f"Authorization failed for resource '{uri}': insufficient permissions"
             )
-
-        return await call_next(context)
 
     async def on_list_resource_templates(
         self,
