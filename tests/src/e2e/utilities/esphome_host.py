@@ -111,6 +111,11 @@ async def compile_esphome(config_path: Path, work_dir: Path, cache_dir: Path | N
         config = esphome.config.read_config({"command": "compile", "config": str(config_path)})
         if config is None:
             raise RuntimeError(f"Failed to re-read compiled config {config_path}")
+        # Current ESPHome host builds use Ninja and emit no PlatformIO idedata.
+        # The output location is shared with the older PlatformIO host builds.
+        host_binary = Path(CORE.relative_pioenvs_path(CORE.name, "program"))
+        if host_binary.is_file():
+            return host_binary
         return Path(get_idedata(config).firmware_elf_path)
 
     binary_path = await loop.run_in_executor(None, _read_binary_path)

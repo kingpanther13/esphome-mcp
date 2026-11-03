@@ -144,6 +144,88 @@ def login_for_token(
     return str(token_resp["access_token"])
 
 
+class WebSocketCommandError(RuntimeError):
+    """A rejected HA command with its structured error code preserved."""
+
+    def __init__(self, command: dict, response: dict) -> None:
+        super().__init__(f"WebSocket command {command!r} failed: {response!r}")
+        self.code = response.get("error", {}).get("code")
+        self.message = response.get("error", {}).get("message", "")
+
+
+def upgrade_core(base_url: str, token: str, version: str, *, timeout: float = 600) -> None:
+    """Update Core in the running VM, then require the requested version's readback."""
+    from websockets.exceptions import ConnectionClosed
+
+    config_url = f"{base_url}/api/config"
+    current = _http_json("GET", config_url, token=token)
+    if current.get("version") == version:
+        return
+    ready_deadline = time.monotonic() + timeout
+    while True:
+        try:
+            websocket_command(
+                base_url,
+                token,
+                {"type": "supervisor/api", "endpoint": "/supervisor/info", "method": "get"},
+                timeout=10,
+            )
+            break
+        except WebSocketCommandError as err:
+            if err.code != "unknown_command":
+                raise
+        except (ConnectionClosed, OSError, TimeoutError):
+            pass
+        if time.monotonic() >= ready_deadline:
+            raise TimeoutError(f"Core/Supervisor did not become ready to install {version}")
+        time.sleep(5)
+    LOG.info("Updating running HA Core from %s to %s", current.get("version"), version)
+    startup_refusals = {
+        "Supervisor is not ready to perform this operation, please try again later",
+        "Another job is running for job group home_assistant_core",
+    }
+    while True:
+        try:
+            result = websocket_command(
+                base_url,
+                token,
+                {
+                    "type": "supervisor/api",
+                    "endpoint": "/core/update",
+                    "method": "post",
+                    "data": {"version": version},
+                    "timeout": 600,
+                },
+                timeout=60,
+            )
+            if result.get("result") == "error":
+                raise RuntimeError(f"Core update refused: {result}")
+            break
+        except WebSocketCommandError as err:
+            if err.code != "unknown_error" or err.message not in startup_refusals:
+                raise
+            if time.monotonic() >= ready_deadline:
+                raise TimeoutError(f"Supervisor could not start the update to {version}") from err
+            # These explicit refusals mean no update started. Only these may retry.
+            LOG.info("Supervisor refused the update during startup; waiting: %s", err.message)
+            time.sleep(5)
+        except (ConnectionClosed, OSError, TimeoutError):
+            # Never retry an ambiguous submission; reconnect and read its result.
+            LOG.info("Core update connection closed; waiting for version readback")
+            break
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            current = _http_json("GET", config_url, token=token, timeout=15)
+            if current.get("version") == version and current.get("state") == "RUNNING":
+                LOG.info("Verified running HA Core %s", version)
+                return
+        except (urllib.error.URLError, OSError):
+            pass
+        time.sleep(5)
+    raise TimeoutError(f"Core did not reach {version}; last version: {current.get('version')}")
+
+
 def enable_config_entry(
     base_url: str,
     token: str,
@@ -196,7 +278,7 @@ def websocket_command(
             if resp.get("id") != msg_id:
                 continue
             if not resp.get("success", False):
-                raise RuntimeError(f"WebSocket command {command!r} failed: {resp!r}")
+                raise WebSocketCommandError(command, resp)
             return resp.get("result")
     raise TimeoutError(f"WebSocket command {command!r} got no response")
 
