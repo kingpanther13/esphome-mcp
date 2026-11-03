@@ -594,7 +594,8 @@ def test_device_builder_tool_wrappers_forward_expected_arguments(
 
 @pytest.mark.parametrize("modern_devices", [False, True])
 def test_snapshot_collects_only_esphome_registry_records(
-    monkeypatch: pytest.MonkeyPatch, modern_devices: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    modern_devices: bool,
 ) -> None:
     """Registry snapshots include ESPHome records and ignore unrelated HA records."""
     module = _load_server_module(monkeypatch)
@@ -721,6 +722,7 @@ def test_snapshot_collects_only_esphome_registry_records(
 
     registry_devices = devices
     if modern_devices:
+
         class ModernDevice(SimpleNamespace):
             @property
             def config_entries(self):

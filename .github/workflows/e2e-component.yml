@@ -16,7 +16,7 @@ on:
         required: false
         default: false
       core_version:
-        description: 'Optional Core version to install in the booted VM (for example 2026.11.0b4)'
+        description: 'Core target: empty for minimum supported, beta for current beta, or an exact version'
         type: string
         required: false
         default: ''
@@ -40,12 +40,37 @@ env:
 
 jobs:
   haos-e2e-embedded:
-    name: HAOS E2E Tests (embedded)
+    name: HAOS E2E Tests (embedded ${{ matrix.lane }})
     runs-on: ubuntu-22.04
     timeout-minutes: ${{ inputs.dev_minutes > 0 && 330 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(github.event_name == 'pull_request' && '["minimum", "beta"]' || '["selected"]') }}
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Resolve Core test version
+        id: core
+        env:
+          CORE_TARGET: ${{ matrix.lane == 'beta' && 'beta' || inputs.core_version }}
+        run: |
+          version="$CORE_TARGET"
+          if [ "$version" = beta ]; then
+            metadata=$(curl --fail --silent --show-error --retry 3 \
+              https://version.home-assistant.io/beta.json)
+            version=$(python3 -c \
+              'import json,sys; print(json.load(sys.stdin)["homeassistant"]["qemux86-64"])' \
+              <<< "$metadata")
+            test -n "$version"
+          fi
+          if [ -n "$version" ] && ! [[ "$version" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+([.]dev[0-9]+|b[0-9]+|rc[0-9]+)?$ ]]; then
+            echo "::error::Invalid Core test version"
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'Core test target: %s\n' "${version:-minimum supported}"
 
       - name: Validate dev environment inputs
         if: inputs.dev_minutes > 0
@@ -215,7 +240,7 @@ jobs:
           HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
           HAOS_TEST_MODE: embedded
           HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
-          HAOS_CORE_VERSION: ${{ inputs.core_version }}
+          HAOS_CORE_VERSION: ${{ steps.core.outputs.version }}
 
       - name: Boot live HAOS and open encrypted dev tunnels
         if: inputs.dev_minutes > 0
@@ -225,7 +250,7 @@ jobs:
           HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
           HAOS_TEST_MODE: embedded
           HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
-          HAOS_CORE_VERSION: ${{ inputs.core_version }}
+          HAOS_CORE_VERSION: ${{ steps.core.outputs.version }}
         run: |
           curl --fail --location --retry 3 \
             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
@@ -310,10 +335,22 @@ jobs:
         if: ${{ always() && !(inputs.dev_minutes > 0) }}
         uses: actions/upload-artifact@v7
         with:
-          name: haos-embedded-diagnostics
+          name: haos-embedded${{ matrix.lane == 'beta' && '-beta' || '' }}-diagnostics
           path: |
             /tmp/haos-embedded-diagnostics/
             /tmp/haos-diagnostics/
             /tmp/haos-e2e-serial.log
           if-no-files-found: warn
           retention-days: 7
+
+  haos-e2e-required:
+    # Preserve the existing required check, now covering both matrix lanes.
+    name: HAOS E2E Tests (embedded)
+    needs: haos-e2e-embedded
+    if: ${{ always() && !(inputs.dev_minutes > 0) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every HAOS lane to pass
+        env:
+          E2E_RESULT: ${{ needs.haos-e2e-embedded.result }}
+        run: test "$E2E_RESULT" = success

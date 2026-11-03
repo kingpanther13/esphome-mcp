@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Annotated, Any, Literal
 
 from homeassistant.core import HomeAssistant
@@ -821,8 +821,14 @@ async def _async_snapshot(hass: HomeAssistant) -> dict[str, Any]:
     entity_registry = er.async_get(hass)
 
     devices = []
-    for device in device_registry.devices.values():
-        config_entries = set(getattr(device, "config_entries", set()) or set())
+    registered_devices = device_registry.devices
+    if isinstance(registered_devices, Mapping):
+        registered_devices = registered_devices.values()
+    for device in registered_devices:
+        if hasattr(device, "config_entry_id"):
+            config_entries = {device.config_entry_id} if device.config_entry_id else set()
+        else:
+            config_entries = set(getattr(device, "config_entries", set()) or set())
         identifiers = sorted([list(item) for item in getattr(device, "identifiers", set())])
         if not (config_entries & entry_ids or any(item[0] == "esphome" for item in identifiers)):
             continue

@@ -8,6 +8,14 @@ temporary Cloudflare tunnels, encrypted URLs, and testing through MCP.
 
 No test or VM runs on your PC. Ordinary PR E2E jobs never open a tunnel.
 
+Every PR runs the full HAOS suite twice: on the minimum supported Core and on
+the current beta-channel Core resolved from Home Assistant's official
+`beta.json` at run time. Both lanes must pass; failures are not ignored. The
+beta lane still runs when that channel points to a stable release, so an older
+minimum-version pin cannot hide compatibility failures. Each lane has its own
+VM and diagnostics artifact. Both reuse the base-image cache, with the beta
+lane upgrading its booted VM in place before testing.
+
 1. Generate a throwaway RSA key locally (keep the private key private):
 
    ```sh
@@ -46,7 +54,8 @@ No test or VM runs on your PC. Ordinary PR E2E jobs never open a tunnel.
    store's download dialog and verify the installed files before testing.
    These updates do not require rebuilding the image or replacing the VM.
 
-   To test a particular Core version, pass `-f core_version=2026.11.0b4` when
+   To use the current beta, pass `-f core_version=beta`. To test a particular
+   Core version, pass `-f core_version=2026.11.0b4` when
    dispatching. The fixture upgrades Core in the booted VM and verifies the
    running version before loading either MCP integration. This works for both
    dev mode and the ordinary E2E suite and leaves the cached base image's

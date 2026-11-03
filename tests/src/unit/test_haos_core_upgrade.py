@@ -16,9 +16,11 @@ def test_upgrade_reads_back_after_one_update_request(monkeypatch, disconnected) 
 
     def request(method, url, **kwargs):
         assert method == "GET"
-        return {"version": next(versions), "state": "RUNNING"}
+        return {"version": next(versions), "state": "RUNNING", "components": ["hassio"]}
 
     def command(base_url, token, body, **kwargs):
+        if body["endpoint"] == "/supervisor/info":
+            return {}
         calls.append(body)
         if disconnected:
             raise ConnectionClosed(None, None)
@@ -54,3 +56,31 @@ def test_failed_update_does_not_silently_test_the_old_core(monkeypatch) -> None:
     monkeypatch.setattr(runtime, "websocket_command", lambda *args, **kwargs: {"result": "ok"})
     with pytest.raises(TimeoutError, match="2026.11.0b4"):
         runtime.upgrade_core("http://ha", "token", "2026.11.0b4", timeout=0)
+
+
+@pytest.mark.parametrize("code", ["unknown_command", "unauthorized"])
+def test_supervisor_readiness_retries_only_unregistered_handler(monkeypatch, code) -> None:
+    runtime = _load_module("esphome_mcp_test_haos_runtime", HAOS_RUNTIME_PATH)
+    calls = []
+    versions = iter(["2026.10.2", "2026.11.0b4"])
+    monkeypatch.setattr(
+        runtime,
+        "_http_json",
+        lambda *args, **kwargs: {"version": next(versions), "state": "RUNNING"},
+    )
+    monkeypatch.setattr(runtime.time, "sleep", lambda _: None)
+
+    def command(base_url, token, body, **kwargs):
+        calls.append(body["endpoint"])
+        if len(calls) == 1:
+            raise runtime.WebSocketCommandError(body, {"error": {"code": code}})
+        return {}
+
+    monkeypatch.setattr(runtime, "websocket_command", command)
+    if code == "unauthorized":
+        with pytest.raises(runtime.WebSocketCommandError):
+            runtime.upgrade_core("http://ha", "token", "2026.11.0b4")
+        assert calls == ["/supervisor/info"]
+    else:
+        runtime.upgrade_core("http://ha", "token", "2026.11.0b4")
+        assert calls == ["/supervisor/info", "/supervisor/info", "/core/update"]
