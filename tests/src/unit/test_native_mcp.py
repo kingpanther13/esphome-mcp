@@ -27,7 +27,7 @@ class Response:
 
     async def read(self, size: int = -1) -> bytes:
         chunk = self.raw if size < 0 else self.raw[:size]
-        self.raw = self.raw[len(chunk):]
+        self.raw = self.raw[len(chunk) :]
         return chunk
 
     async def __aenter__(self) -> Response:
@@ -84,6 +84,8 @@ def _native_server(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> list[di
                 "tools/call": {"content": [{"type": "text", "text": "host:\\n"}], "isError": False},
             }[rpc_method]
             replacement = overrides.get(rpc_method, result)
+            if callable(replacement):
+                replacement = replacement(body)
             if isinstance(replacement, Exception):
                 raise replacement
             if isinstance(replacement, Response):
@@ -92,11 +94,13 @@ def _native_server(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> list[di
 
     monkeypatch.setattr(addon_tools.aiohttp, "ClientSession", Session)
     monkeypatch.setattr(
-        addon_tools, "_resolve_esphome_addon",
+        addon_tools,
+        "_resolve_esphome_addon",
         AsyncMock(return_value={"success": True, "addon": _esphome_addon()}),
     )
     monkeypatch.setattr(
-        addon_tools, "_create_ingress_session",
+        addon_tools,
+        "_create_ingress_session",
         AsyncMock(return_value={"success": True, "session": "private-cookie"}),
     )
     return calls
@@ -112,7 +116,9 @@ def test_native_discovery_returns_installed_schemas(monkeypatch: pytest.MonkeyPa
         {"name": "update_config", "inputSchema": {"type": "object", "required": ["expected"]}}
     ]
     assert [call["method"] for call in calls] == [
-        "initialize", "notifications/initialized", "tools/list"
+        "initialize",
+        "notifications/initialized",
+        "tools/list",
     ]
 
 
@@ -173,36 +179,143 @@ def test_yaml_read_uses_native_content(monkeypatch: pytest.MonkeyPatch) -> None:
     _native_server(monkeypatch)
     legacy = AsyncMock(side_effect=AssertionError("native reads must not use WS"))
     monkeypatch.setattr(addon_tools, "_device_builder_command", legacy)
-    result = _run(addon_tools.read_device_builder_config(
-        _hass(), slug=None, configuration="fixture.yaml", timeout=60, debug=False
-    ))
+    result = _run(
+        addon_tools.read_device_builder_config(
+            _hass(), slug=None, configuration="fixture.yaml", timeout=60, debug=False
+        )
+    )
     assert result == {"success": True, "configuration": "fixture.yaml", "content": "host:\\n"}
 
 
-@pytest.mark.parametrize("code, fallback", [
-    ("native_mcp_unavailable", True), ("native_tool_unavailable", True),
-    ("timeout", False), ("native_tool_error", False), ("native_protocol_error", False),
-])
+@pytest.mark.parametrize(
+    "code, fallback",
+    [
+        ("native_mcp_unavailable", True),
+        ("native_tool_unavailable", True),
+        ("timeout", False),
+        ("native_tool_error", False),
+        ("native_protocol_error", False),
+    ],
+)
 def test_yaml_read_fallback_only_for_missing_capability(
     monkeypatch: pytest.MonkeyPatch, code: str, fallback: bool
 ) -> None:
     _api("call_native_device_builder_tool")
-    monkeypatch.setattr(addon_tools, "call_native_device_builder_tool", AsyncMock(
-        return_value={"success": False, "error_code": code}
-    ))
+    monkeypatch.setattr(
+        addon_tools,
+        "call_native_device_builder_tool",
+        AsyncMock(return_value={"success": False, "error_code": code}),
+    )
     legacy = AsyncMock(return_value={"success": True, "result": "legacy YAML"})
     monkeypatch.setattr(addon_tools, "_device_builder_command", legacy)
-    result = _run(addon_tools.read_device_builder_config(
-        _hass(), slug=None, configuration="fixture.yaml", timeout=60, debug=False
-    ))
+    result = _run(
+        addon_tools.read_device_builder_config(
+            _hass(), slug=None, configuration="fixture.yaml", timeout=60, debug=False
+        )
+    )
     assert result["success"] is fallback
     assert legacy.call_count == int(fallback)
 
 
 def test_native_cancellation_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     discover = _api("native_device_builder_tools")
-    monkeypatch.setattr(addon_tools, "_resolve_esphome_addon", AsyncMock(
-        side_effect=asyncio.CancelledError
-    ))
+    monkeypatch.setattr(
+        addon_tools, "_resolve_esphome_addon", AsyncMock(side_effect=asyncio.CancelledError)
+    )
     with pytest.raises(asyncio.CancelledError):
         _run(discover(_hass()))
+
+
+@pytest.mark.parametrize("payload", [
+    {"protocolVersion": "2099-01-01", "capabilities": {"tools": {}}, "serverInfo": {}},
+    {"protocolVersion": "2025-11-25", "capabilities": {}, "serverInfo": {}},
+    {"protocolVersion": [], "capabilities": {"tools": {}}, "serverInfo": {}},
+])
+def test_native_rejects_incompatible_initialization(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]
+) -> None:
+    calls = _native_server(monkeypatch, initialize=payload)
+    result = _run(_api("native_device_builder_tools")(_hass()))
+    assert result["error_code"] == "native_protocol_error"
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("payload", [
+    {"jsonrpc": "2.0", "id": "wrong", "result": {}},
+    {"jsonrpc": "2.0", "id": "initialize", "result": {}, "error": {}},
+    {"jsonrpc": "2.0", "id": "initialize", "result": []},
+    [],
+])
+def test_native_rejects_invalid_rpc_envelope(
+    monkeypatch: pytest.MonkeyPatch, payload: Any
+) -> None:
+    _native_server(monkeypatch, initialize=Response(payload))
+    result = _run(_api("native_device_builder_tools")(_hass()))
+    assert result["error_code"] == "native_protocol_error"
+
+
+def test_native_json_rpc_error_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = {"code": -32602, "message": "Unknown tool: update_config"}
+    calls = _native_server(monkeypatch, **{"tools/call": Response({
+        "jsonrpc": "2.0", "id": "tools/call", "error": error
+    })})
+    result = _run(_api("call_native_device_builder_tool")(_hass(), name="update_config"))
+    assert result["success"] is False
+    assert result["native_error"] == error
+    assert len([row for row in calls if row["method"] == "tools/call"]) == 1
+
+
+def test_native_catalog_pagination_preserves_nested_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    nested = {"name": "new_tool", "inputSchema": {
+        "type": "object", "properties": {"location": {"oneOf": [{"type": "string"}]}}
+    }}
+
+    def page(body: dict[str, Any]) -> dict[str, Any]:
+        if "cursor" not in body["params"]:
+            return {"tools": [], "nextCursor": "second"}
+        assert body["params"]["cursor"] == "second"
+        return {"tools": [nested]}
+
+    _native_server(monkeypatch, **{"tools/list": page})
+    result = _run(_api("native_device_builder_tools")(_hass(), tool="new_tool"))
+    assert result["tools"] == [nested]
+
+
+def test_native_repeated_cursor_fails_instead_of_partial_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _native_server(monkeypatch, **{"tools/list": {"tools": [], "nextCursor": "same"}})
+    result = _run(_api("native_device_builder_tools")(_hass()))
+    assert result["error_code"] == "native_protocol_error"
+    assert len([row for row in calls if row["method"] == "tools/list"]) == 2
+
+
+def test_native_oversize_reply_fails_instead_of_truncating_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _native_server(monkeypatch, **{"tools/list": {"tools": [], "padding": "x" * (2 * 1024 * 1024)}})
+    result = _run(_api("native_device_builder_tools")(_hass()))
+    assert result["error_code"] == "native_response_too_large"
+
+
+def test_native_malformed_tool_result_is_not_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    _native_server(monkeypatch, **{"tools/call": {"content": [{"type": "text", "text": None}]}})
+    result = _run(_api("call_native_device_builder_tool")(_hass(), name="get_config"))
+    assert result["error_code"] == "native_protocol_error"
+
+
+def test_native_success_preserves_structured_and_text_content(monkeypatch: pytest.MonkeyPatch) -> None:
+    reply = {"content": [{"type": "text", "text": "ok"}], "structuredContent": {"ok": True}}
+    _native_server(monkeypatch, **{"tools/call": reply})
+    result = _run(_api("call_native_device_builder_tool")(_hass(), name="get_config"))
+    assert result["success"] is True
+    assert result["result"] == reply
+
+
+def test_native_catalog_is_refreshed_after_addon_upgrade(monkeypatch: pytest.MonkeyPatch) -> None:
+    _native_server(monkeypatch)
+    first = _run(_api("native_device_builder_tools")(_hass()))
+    assert first["count"] == 2
+    _native_server(monkeypatch, **{"tools/list": {"tools": []}})
+    second = _run(_api("native_device_builder_tools")(_hass()))
+    assert second["tools"] == []

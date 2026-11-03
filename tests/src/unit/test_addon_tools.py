@@ -58,9 +58,11 @@ def legacy_device_builder(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Native routing and error boundaries are exercised in test_native_mcp.py.
     """
-    monkeypatch.setattr(addon_tools, "call_native_device_builder_tool", AsyncMock(
-        return_value={"success": False, "error_code": "native_mcp_unavailable"}
-    ))
+    monkeypatch.setattr(
+        addon_tools,
+        "call_native_device_builder_tool",
+        AsyncMock(return_value={"success": False, "error_code": "native_mcp_unavailable"}),
+    )
 
 
 def _hass(*, port: int = 8123) -> SimpleNamespace:

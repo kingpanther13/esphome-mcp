@@ -70,9 +70,8 @@ class EspHomeMCPServer:
             available on older add-ons without native MCP. slug defaults to auto-detection.
             """
             return await _run_on_hass(
-                self.hass, native_device_builder_tools(
-                    self.hass, tool=tool, slug=slug, timeout=timeout
-                )
+                self.hass,
+                native_device_builder_tools(self.hass, tool=tool, slug=slug, timeout=timeout),
             )
 
         @self.mcp.tool(
@@ -94,9 +93,10 @@ class EspHomeMCPServer:
             or connection failure, read back the state before considering another write.
             """
             return await _run_on_hass(
-                self.hass, call_native_device_builder_tool(
+                self.hass,
+                call_native_device_builder_tool(
                     self.hass, name=name, arguments=arguments, slug=slug, timeout=timeout
-                )
+                ),
             )
 
         @self.mcp.tool(name="esp_overview")

@@ -151,6 +151,36 @@ def test_mcp_server_registers_every_current_esp_tool(
     assert server.mcp.kwargs["version"] == module.VERSION
 
 
+def test_native_tools_run_on_hass_and_call_is_conservatively_annotated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Discovery is read-only, but the generic native caller can write or flash."""
+    from unittest.mock import AsyncMock
+
+    module = _load_server_module(monkeypatch)
+    bridge = AsyncMock(side_effect=_run_inline)
+    monkeypatch.setattr(module, "_run_on_hass", bridge)
+    discover = AsyncMock(return_value={"success": True, "tools": []})
+    call = AsyncMock(return_value={"success": True, "result": {"content": []}})
+    monkeypatch.setattr(module, "native_device_builder_tools", discover)
+    monkeypatch.setattr(module, "call_native_device_builder_tool", call)
+    hass = SimpleNamespace(loop=None)
+    server = module.EspHomeMCPServer(hass)
+    listing = server.mcp.tools["esp_native_tools"]
+    caller = server.mcp.tools["esp_native_call"]
+    assert listing.annotations["readOnlyHint"] is True
+    assert caller.annotations == {
+        "readOnlyHint": False, "destructiveHint": True, "idempotentHint": False
+    }
+    assert _run(listing.func(tool="get_config", slug="addon", timeout=90))["success"] is True
+    assert _run(caller.func(name="get_config", arguments={"configuration": "x.yaml"}))["success"]
+    discover.assert_awaited_once_with(hass, tool="get_config", slug="addon", timeout=90)
+    call.assert_awaited_once_with(
+        hass, name="get_config", arguments={"configuration": "x.yaml"}, slug=None, timeout=60
+    )
+    assert bridge.await_count == 2
+
+
 def test_ha_search_tools_filter_snapshot_and_report_overview(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
