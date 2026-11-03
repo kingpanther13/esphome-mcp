@@ -113,3 +113,35 @@ def test_manifest_requirements_reject_unknown_markers(tmp_path: Path) -> None:
         )
     with pytest.raises(SystemExit, match="unhandled marker"):
         vendor_fastmcp.manifest_requirements(tmp_path)
+
+
+@pytest.mark.xfail(strict=True, raises=SystemExit, reason="PR #198 Python marker regression")
+@pytest.mark.parametrize(
+    ("marker", "included"),
+    [
+        ("(python_version >= '3.15')", False),
+        ("python_version < '3.15'", True),
+        ('(python_version >= "3.14")', True),
+        ("python_version >= '3.9'", True),
+        ("python_version > '3.14'", False),
+        ("python_version <= '3.14'", True),
+        ("python_version == '3.14'", True),
+        ("python_version != '3.14'", False),
+    ],
+)
+def test_manifest_python_markers_use_the_ha_target(
+    tmp_path: Path, marker: str, included: bool
+) -> None:
+    """The runner's Python version must not determine HA's dependencies."""
+    for spec in vendor_fastmcp.PACKAGES:
+        tree = tmp_path / spec.package
+        tree.mkdir()
+        (tree / vendor_fastmcp.REQUIRES_NAME).write_text(
+            f"beartype>=0.23.0rc2; {marker}\n", encoding="utf-8"
+        )
+    try:
+        requirements = vendor_fastmcp.manifest_requirements(tmp_path)
+    except SystemExit as error:
+        assert "unhandled marker in vendored requirement" in str(error)
+        raise
+    assert requirements == (["beartype>=0.23.0rc2"] if included else [])
