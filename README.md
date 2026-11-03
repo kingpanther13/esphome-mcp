@@ -29,6 +29,10 @@ use, including Nabu Casa Remote UI.
 - Network/package-install access on first setup so Home Assistant can install
   any missing packages listed in the component manifest.
 
+On older supported Core versions that do not provide a compatible `httpx2`,
+setup also installs that dependency through Home Assistant's requirement manager.
+Core's compatible version is reused when present.
+
 The Home Assistant registry tools can still report ESPHome integration devices
 and entities anywhere this custom component can run, but the add-on and Device
 Builder tools need Supervisor.

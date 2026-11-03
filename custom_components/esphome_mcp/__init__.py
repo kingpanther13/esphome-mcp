@@ -11,6 +11,10 @@ if TYPE_CHECKING:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up the ESPHome MCP server entry."""
+    from .runtime_compat import async_ensure_runtime_compat
+
+    await async_ensure_runtime_compat(hass)
+
     from .embedded_entry import async_setup_server_entry
 
     return await async_setup_server_entry(hass, entry)

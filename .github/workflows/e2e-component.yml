@@ -201,7 +201,7 @@ jobs:
         run: ls -lh /tmp/haos-test-image.qcow2
 
       - name: Run HAOS embedded component E2E
-        if: ${{ !inputs.dev_minutes }}
+        if: ${{ !(inputs.dev_minutes > 0) }}
         run: |
           cd tests
           pytest src/e2e/haos_only/test_embedded_server_haos.py \
@@ -271,7 +271,7 @@ jobs:
           done
 
       - name: Extract HA diagnostics from booted qcow2
-        if: ${{ always() && !inputs.dev_minutes }}
+        if: ${{ always() && !(inputs.dev_minutes > 0) }}
         run: |
           sudo chmod +r /boot/vmlinuz-* || true
           mkdir -p /tmp/haos-embedded-diagnostics
@@ -300,7 +300,7 @@ jobs:
           python scripts/redact_diagnostics_secrets.py /tmp/haos-embedded-diagnostics
 
       - name: Upload HAOS embedded diagnostics
-        if: ${{ always() && !inputs.dev_minutes }}
+        if: ${{ always() && !(inputs.dev_minutes > 0) }}
         uses: actions/upload-artifact@v7
         with:
           name: haos-embedded-diagnostics
