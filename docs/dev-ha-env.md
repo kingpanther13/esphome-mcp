@@ -39,8 +39,18 @@ No test or VM runs on your PC. Ordinary PR E2E jobs never open a tunnel.
 4. Connect an MCP client or HTTP shim and exercise `tools/list` and `tools/call`.
    For native integration, discover `esp_native_tools`, invoke `esp_native_call`,
    read back any fixture edits, and confirm the existing HA/file/stream tools.
-   Update the component through HACS and restart Core when iterating, or stop the
-   run and dispatch the new branch commit. The VM starts on the dispatched commit.
+   The VM starts on the dispatched commit. Keep it running while iterating:
+   update Core through Supervisor, apps through their update controls, and this
+   component through Marketplace (`2026.11+`) or HACS (`2026.10`), then restart
+   Core when required. For an unreleased branch, select that branch in the
+   store's download dialog and verify the installed files before testing.
+   These updates do not require rebuilding the image or replacing the VM.
+
+   To test a particular Core version, pass `-f core_version=2026.11.0b4` when
+   dispatching. The fixture upgrades Core in the booted VM and verifies the
+   running version before loading either MCP integration. This works for both
+   dev mode and the ordinary E2E suite and leaves the cached base image's
+   version selection unchanged. Omit it to test the minimum supported Core.
 
 5. Cancel the run when done:
 

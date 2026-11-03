@@ -15,6 +15,11 @@ on:
         type: boolean
         required: false
         default: false
+      core_version:
+        description: 'Optional Core version to install in the booted VM (for example 2026.11.0b4)'
+        type: string
+        required: false
+        default: ''
       dev_minutes:
         description: 'Hold a live HAOS dev environment (0 runs E2E; max 240)'
         type: number
@@ -210,6 +215,7 @@ jobs:
           HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
           HAOS_TEST_MODE: embedded
           HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
+          HAOS_CORE_VERSION: ${{ inputs.core_version }}
 
       - name: Boot live HAOS and open encrypted dev tunnels
         if: inputs.dev_minutes > 0
@@ -219,6 +225,7 @@ jobs:
           HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
           HAOS_TEST_MODE: embedded
           HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
+          HAOS_CORE_VERSION: ${{ inputs.core_version }}
         run: |
           curl --fail --location --retry 3 \
             https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \

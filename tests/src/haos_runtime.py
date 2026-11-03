@@ -144,6 +144,42 @@ def login_for_token(
     return str(token_resp["access_token"])
 
 
+def upgrade_core(base_url: str, token: str, version: str, *, timeout: float = 600) -> None:
+    """Update Core in the running VM, then require the requested version's readback."""
+    config_url = f"{base_url}/api/config"
+    current = _http_json("GET", config_url, token=token)
+    if current.get("version") == version:
+        return
+    LOG.info("Updating running HA Core from %s to %s", current.get("version"), version)
+    try:
+        result = _http_json(
+            "POST",
+            f"{base_url}/api/hassio/core/update",
+            token=token,
+            body={"version": version},
+            timeout=30,
+        )
+        if result.get("result") == "error":
+            raise RuntimeError(f"Core update refused: {result}")
+    except urllib.error.HTTPError:
+        raise
+    except (urllib.error.URLError, OSError):
+        # The accepted update may restart Core before the request can answer.
+        # Never submit it twice; check the running version after reconnecting.
+        LOG.info("Core update connection closed; waiting for version readback")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            current = _http_json("GET", config_url, token=token, timeout=15)
+            if current.get("version") == version and current.get("state") == "RUNNING":
+                LOG.info("Verified running HA Core %s", version)
+                return
+        except (urllib.error.URLError, OSError):
+            pass
+        time.sleep(5)
+    raise TimeoutError(f"Core did not reach {version}; last config: {current}")
+
+
 def enable_config_entry(
     base_url: str,
     token: str,

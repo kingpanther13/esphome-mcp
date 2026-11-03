@@ -21,7 +21,8 @@ use, including Nabu Casa Remote UI.
 ## Requirements
 
 - Home Assistant `2026.10.2` or newer.
-- HACS, if installing through the Home Assistant Community Store.
+- Home Assistant Marketplace on `2026.11` or newer, or HACS on `2026.10`,
+  if installing through the community integration store.
 - Home Assistant OS or Supervised Home Assistant for ESPHome add-on and Device
   Builder tools. These tools require Supervisor.
 - The official ESPHome Device Builder add-on installed and running for the
@@ -37,9 +38,14 @@ The Home Assistant registry tools can still report ESPHome integration devices
 and entities anywhere this custom component can run, but the add-on and Device
 Builder tools need Supervisor.
 
-## HACS Installation
+## Marketplace / HACS Installation
 
-1. In HACS, open **Custom repositories**.
+On Home Assistant `2026.11` and newer, use the built-in **Marketplace** and
+complete its first-run warning and any requested GitHub connection in the UI.
+On `2026.10`, install and use **HACS**. The repository and component format is
+the same for both stores.
+
+1. In Marketplace or HACS, open **Custom repositories**.
 2. Add this repository URL:
 
    ```text
@@ -52,10 +58,10 @@ Builder tools need Supervisor.
 6. Go to **Settings** > **Devices & services** > **Add integration**.
 7. Search for **ESPHome MCP** and create the integration entry.
 
-This repository is release-backed for HACS installs. The release workflow
+This repository is release-backed for Marketplace and HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v1.0.0`, which is the version HACS displays. Do not install a
-seven-character commit version such as `99cdab0`. If HACS has cached an old
+`v1.0.0`, which is the version the store displays. Do not install a
+seven-character commit version such as `99cdab0`. If the store has cached an old
 commit-only entry, refresh the custom repository before installing.
 
 After setup, Home Assistant starts the embedded MCP server and registers the

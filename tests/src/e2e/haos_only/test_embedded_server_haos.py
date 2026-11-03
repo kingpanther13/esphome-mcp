@@ -29,6 +29,7 @@ from haos_runtime import (
     collect_runtime_logs,
     enable_config_entry,
     login_for_token,
+    upgrade_core,
     websocket_command,
 )
 
@@ -232,6 +233,8 @@ def embedded_server() -> Iterator[tuple[str, str | None, str]]:
     with boot_haos_qemu(image_path) as base_url:
         token = login_for_token(base_url)
         try:
+            if core_version := os.environ.get("HAOS_CORE_VERSION"):
+                upgrade_core(base_url, token, core_version)
             # HA-MCP loads its own vendored FastMCP first, the order that used
             # to make ESPHome MCP refuse to start.
             enable_config_entry(base_url, token, HA_MCP_SERVER_ENTRY_ID)
@@ -1055,25 +1058,27 @@ class TestEmbeddedServerOnHaos:
         ).read_bytes()
         assert response.content == expected_icon
 
-    def test_hacs_integration_is_loaded(
+    def test_community_store_is_loaded(
         self,
         embedded_server: tuple[str, str | None, str],
     ) -> None:
         base_url, _session_id, _configuration = embedded_server
         token = login_for_token(base_url)
+        config = _ha_json(base_url, token, "GET", "/api/config", {})
+        store_domain = "marketplace" if "marketplace" in config["components"] else "hacs"
         entries = websocket_command(base_url, token, {"type": "config_entries/get"})
 
         assert isinstance(entries, list), entries
-        hacs_entry = next(
+        store_entry = next(
             (
                 entry
                 for entry in entries
-                if isinstance(entry, dict) and entry.get("domain") == "hacs"
+                if isinstance(entry, dict) and entry.get("domain") == store_domain
             ),
             None,
         )
-        assert isinstance(hacs_entry, dict), entries
-        assert hacs_entry.get("state") == "loaded", hacs_entry
+        assert isinstance(store_entry, dict), entries
+        assert store_entry.get("state") == "loaded", store_entry
 
     def test_options_flow_shows_resolved_webhook_connect_url(
         self,

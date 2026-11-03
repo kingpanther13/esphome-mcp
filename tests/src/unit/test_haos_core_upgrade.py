@@ -47,8 +47,6 @@ def test_current_core_needs_no_update(monkeypatch) -> None:
 
 def test_failed_update_does_not_silently_test_the_old_core(monkeypatch) -> None:
     runtime = _load_module("esphome_mcp_test_haos_runtime", HAOS_RUNTIME_PATH)
-    monkeypatch.setattr(
-        runtime, "_http_json", lambda *args, **kwargs: {"version": "2026.10.2"}
-    )
+    monkeypatch.setattr(runtime, "_http_json", lambda *args, **kwargs: {"version": "2026.10.2"})
     with pytest.raises(TimeoutError, match="2026.11.0b4"):
         runtime.upgrade_core("http://ha", "token", "2026.11.0b4", timeout=0)
