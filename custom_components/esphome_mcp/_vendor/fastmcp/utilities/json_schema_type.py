@@ -5,7 +5,7 @@ for validation with Pydantic. It supports:
 
 - Basic types (string, number, integer, boolean, null)
 - Complex types (arrays, objects)
-- Format constraints (date-time, email, uri)
+- Format constraints (date-time, date, time, duration, uuid, email, uri)
 - Numeric constraints (minimum, maximum, multipleOf)
 - String constraints (minLength, maxLength, pattern)
 - Array constraints (minItems, maxItems, uniqueItems)
@@ -55,6 +55,7 @@ from __future__ import annotations
 import hashlib
 import json
 import keyword
+import math
 import re
 import sys
 import threading
@@ -64,7 +65,7 @@ from collections.abc import Callable, Hashable, Mapping
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import MISSING, dataclass, field, make_dataclass
-from datetime import date, datetime
+from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from typing import (
     Annotated,
@@ -76,6 +77,7 @@ from typing import (
     Union,
     cast,
 )
+from uuid import UUID
 
 from pydantic import (
     AnyUrl,
@@ -85,6 +87,7 @@ from pydantic import (
     EmailStr,
     Field,
     Json,
+    PlainValidator,
     StringConstraints,
     TypeAdapter,
     create_model,
@@ -147,6 +150,10 @@ _UnsatisfiableType = Annotated[Any, BeforeValidator(_reject_all)]
 
 FORMAT_TYPES: dict[str, Any] = {
     "date-time": datetime,
+    "date": date,
+    "time": time,
+    "duration": timedelta,
+    "uuid": UUID,
     "email": EmailStr,
     "uri": AnyUrl,
     "json": Json,
@@ -403,6 +410,7 @@ def _resolve_ref(ref: str, schemas: Mapping[str, Any]) -> Mapping[str, Any]:
     path = ref.replace("#/", "").split("/")
     current = schemas
     for part in path:
+        part = part.replace("~1", "/").replace("~0", "~")
         current = current.get(part, {})
     return current
 
@@ -496,6 +504,52 @@ def _constrain_raw_string(
     ]
 
 
+def _exclusive_bound(schema: Mapping[str, Any], modifier: str, bound: str) -> Any:
+    """Value for a strict bound, or None when the schema states no strict bound.
+
+    ``exclusiveMinimum``/``exclusiveMaximum`` take a number since draft-06. Draft-04
+    instead writes a boolean that tightens the numeric sibling: ``{"minimum": 1,
+    "exclusiveMinimum": true}`` excludes 1. Passing that boolean straight through as
+    Pydantic's ``gt``/``lt`` reads it as the number 1, which rejects every value
+    except 0 regardless of the sibling.
+    """
+    value = schema.get(modifier)
+    if isinstance(value, bool):
+        return schema.get(bound) if value else None
+    return value
+
+
+def _inclusive_bound(
+    schema: Mapping[str, Any], modifier: str, bound: str, *, lower: bool
+) -> Any:
+    """Value for a non-strict bound, or None when a strict bound replaces the sibling.
+
+    A boolean ``true`` (draft-04) always replaces the sibling: ``{"minimum": 1,
+    "exclusiveMinimum": true}`` means exactly ``minimum > 1``.
+
+    A numeric ``exclusiveMinimum``/``exclusiveMaximum`` (draft-06+) is instead a
+    separate keyword, and an instance must satisfy both. The sibling is redundant —
+    and can be dropped — only when the exclusive bound is at least as strict, which
+    compares ``exclusive >= minimum`` for a lower bound and ``exclusive <= maximum``
+    for an upper one. A *looser* numeric exclusive must keep the sibling, otherwise
+    the generated ``lt``/``gt`` widens the accepted range: ``{"maximum": 10,
+    "exclusiveMaximum": 15}`` would accept 12.
+    """
+    value = schema.get(bound)
+    exclusive = schema.get(modifier)
+    if exclusive is True:
+        return None
+    if (
+        isinstance(exclusive, (int, float))
+        and not isinstance(exclusive, bool)
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and (exclusive >= value if lower else exclusive <= value)
+    ):
+        return None
+    return value
+
+
 def _create_numeric_type(
     base: type[int | float], schema: Mapping[str, Any]
 ) -> type | Annotated[Any, ...]:
@@ -506,10 +560,10 @@ def _create_numeric_type(
     constraints = {
         k: v
         for k, v in {
-            "gt": schema.get("exclusiveMinimum"),
-            "ge": schema.get("minimum"),
-            "lt": schema.get("exclusiveMaximum"),
-            "le": schema.get("maximum"),
+            "gt": _exclusive_bound(schema, "exclusiveMinimum", "minimum"),
+            "ge": _inclusive_bound(schema, "exclusiveMinimum", "minimum", lower=True),
+            "lt": _exclusive_bound(schema, "exclusiveMaximum", "maximum"),
+            "le": _inclusive_bound(schema, "exclusiveMaximum", "maximum", lower=False),
             "multiple_of": schema.get("multipleOf"),
         }.items()
         if v is not None
@@ -518,15 +572,108 @@ def _create_numeric_type(
     return Annotated[base, Field(**constraints)] if constraints else base  # type: ignore[return-value]  # ty:ignore[invalid-type-form]
 
 
-def _create_enum(name: str, values: list[Any]) -> type:
+def _create_enum(name: str, values: list[Any]) -> Any:
     """Create enum type from list of values."""
     if not values:
         # Empty enum means no value is valid (same semantics as ``false``
         # schema).  Return the unsatisfiable type instead of ``Literal[()]``
         # which triggers an AssertionError in Pydantic.
-        return _UnsatisfiableType  # type: ignore[return-value]  # ty:ignore[invalid-return-type]
+        return _UnsatisfiableType
     # Always return Literal for enum fields to preserve the literal nature
-    return Literal[tuple(values)]  # type: ignore[return-value]  # ty:ignore[invalid-type-form]
+    literal = Literal[tuple(values)]  # ty:ignore[invalid-type-form]
+    if all(value is None or isinstance(value, str) for value in values):
+        return literal
+
+    try:
+        hash(literal)
+    except TypeError:
+        hashable = False
+    else:
+        hashable = True
+
+    # Pydantic matches Literal values with Python equality, so True would pass
+    # for 1, also inside arrays and objects.
+    def check(value: Any) -> Any:
+        for allowed in values:
+            if _json_values_equal(value, allowed):
+                return allowed if hashable else value
+        raise ValueError(f"Input should be one of {values!r}")
+
+    if not hashable:
+        # A Literal holding an object or array cannot be hashed into a Union.
+        return Annotated[
+            Any, BeforeValidator(check), Field(json_schema_extra={"enum": values})
+        ]
+    return Annotated[literal, PlainValidator(check, json_schema_input_type=literal)]
+
+
+def _json_values_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values without treating booleans as numbers."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+
+    if isinstance(left, Mapping) or isinstance(right, Mapping):
+        if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+            return False
+        return left.keys() == right.keys() and all(
+            _json_values_equal(left[key], right[key]) for key in left
+        )
+
+    if isinstance(left, (list, tuple)) or isinstance(right, (list, tuple)):
+        if not isinstance(left, (list, tuple)) or not isinstance(right, (list, tuple)):
+            return False
+        return len(left) == len(right) and all(
+            _json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+
+    return left == right
+
+
+def _json_value_key(value: Any) -> tuple[Any, ...]:
+    """Build a hashable, type-tagged key for standard JSON values."""
+    value_type = type(value)
+    if value is None:
+        return ("null",)
+    if value_type is bool:
+        return ("boolean", value)
+    if value_type is int or value_type is float:
+        if value_type is float and not math.isfinite(value):
+            raise TypeError("Not a standard JSON number")
+        # Equal ints/floats already share a hash, without rounding large ints.
+        return ("number", value)
+    if value_type is str:
+        return ("string", value)
+    if value_type is list:
+        return ("array", tuple(_json_value_key(item) for item in value))
+    if value_type is dict and all(type(key) is str for key in value):
+        return (
+            "object",
+            frozenset((key, _json_value_key(item)) for key, item in value.items()),
+        )
+    raise TypeError("Not a standard JSON value")
+
+
+def _validate_unique_items(value: Any) -> Any:
+    """Reject duplicate JSON array items while preserving list semantics."""
+    if not isinstance(value, (list, tuple)):
+        return value
+
+    try:
+        seen: set[tuple[Any, ...]] = set()
+        for item in value:
+            key = _json_value_key(item)
+            if key in seen:
+                raise ValueError("Array items must be unique")
+            seen.add(key)
+    except (TypeError, RecursionError):
+        # Preserve existing comparisons for non-JSON Python values, including
+        # equality between those values and standard JSON values.
+        for index, item in enumerate(value):
+            if any(_json_values_equal(item, previous) for previous in value[:index]):
+                raise ValueError("Array items must be unique") from None
+
+    return value
 
 
 def _create_array_type(
@@ -534,9 +681,22 @@ def _create_array_type(
     schemas: Mapping[str, Any],
     resolving_refs: frozenset[str],
 ) -> type | Annotated[Any, ...]:
-    """Create list/set type with optional constraints."""
+    """Create list/tuple type with optional constraints."""
+    prefix_items = schema.get("prefixItems")
     items = schema.get("items", {})
-    if isinstance(items, list):
+    if isinstance(prefix_items, list) and schema.get("minItems") == len(
+        prefix_items
+    ) == schema.get("maxItems"):
+        # A positional schema (JSON Schema 2020-12) whose length is pinned to
+        # the number of positions is an exact tuple — this is the shape a
+        # fixed-length tuple annotation serializes to. Hydrate every position
+        # from its own schema so positional items keep their types instead of
+        # degrading to untyped objects.
+        positional_types = tuple(
+            _schema_to_type(s, schemas, resolving_refs) for s in prefix_items
+        )
+        base = tuple[positional_types]  # type: ignore[valid-type]  # ty:ignore[invalid-type-form]
+    elif isinstance(items, list):
         # Handle positional item schemas
         item_types = [_schema_to_type(s, schemas, resolving_refs) for s in items]
         combined = Union[tuple(item_types)]  # noqa: UP007
@@ -544,8 +704,7 @@ def _create_array_type(
     else:
         # Handle single item schema
         item_type = _schema_to_type(items, schemas, resolving_refs)
-        base_class = set if schema.get("uniqueItems") else list
-        base = base_class[item_type]
+        base = list[item_type]  # type: ignore[valid-type]  # ty:ignore[invalid-type-form]
 
     constraints = {
         k: v
@@ -556,7 +715,15 @@ def _create_array_type(
         if v is not None
     }
 
-    return Annotated[base, Field(**constraints)] if constraints else base  # type: ignore[return-value]  # ty:ignore[invalid-type-form]
+    if schema.get("uniqueItems") is True:
+        constraints["json_schema_extra"] = {"uniqueItems": True}
+        return Annotated[
+            base,
+            BeforeValidator(_validate_unique_items),
+            Field(**constraints),
+        ]  # type: ignore[return-value]
+
+    return Annotated[base, Field(**constraints)] if constraints else base  # type: ignore[return-value]
 
 
 def _return_Any() -> Any:
@@ -686,7 +853,7 @@ def _convert_schema(
         return resolved_refs[ref]
 
     if "const" in schema:
-        return Literal[schema["const"]]  # type: ignore
+        return _create_enum(f"Const_{len(_classes)}", [schema["const"]])
 
     if "enum" in schema:
         return _create_enum(f"Enum_{len(_classes)}", schema["enum"])
@@ -896,7 +1063,22 @@ def _build_pydantic_model(
         # Handle defaults
         default_value = prop_schema.get("default", MISSING)
         if default_value is not MISSING:
-            field_definitions[prop_name] = (field_type, default_value)
+            # Check if the default value is valid against the field type.
+            # Only set validate_default=True when it passes, so that:
+            # 1. Valid defaults get hydrated (e.g., date strings → date objects)
+            # 2. Invalid defaults are preserved as-is rather than causing
+            #    validation errors that would be caught and logged during parsing
+            validate_default = False
+            try:
+                TypeAdapter(field_type).validate_python(default_value)  # ty:ignore[invalid-argument-type]
+                validate_default = True
+            except Exception:  # noqa: S110
+                # Default doesn't satisfy its own type; keep it as-is
+                pass
+            field_definitions[prop_name] = (
+                field_type,
+                Field(default=default_value, validate_default=validate_default),
+            )
         elif prop_name in required:
             field_definitions[prop_name] = (field_type, ...)
         else:

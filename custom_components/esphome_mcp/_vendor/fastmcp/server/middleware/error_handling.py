@@ -9,7 +9,7 @@ from typing import Any
 import anyio
 from custom_components.esphome_mcp._vendor.mcp import MCPError
 
-from custom_components.esphome_mcp._vendor.fastmcp.exceptions import NotFoundError
+from custom_components.esphome_mcp._vendor.fastmcp.exceptions import NotFoundError, ValidationError
 
 from .middleware import CallNext, Middleware, MiddlewareContext
 
@@ -90,7 +90,7 @@ class ErrorHandlingMiddleware(Middleware):
         # Map common exceptions to appropriate MCP error codes
         error_type = type(error.__cause__) if error.__cause__ else type(error)
 
-        if error_type in (ValueError, TypeError):
+        if error_type in (ValueError, TypeError, ValidationError):
             return MCPError(code=-32602, message=f"Invalid params: {error!s}")
         elif error_type in (FileNotFoundError, KeyError, NotFoundError):
             # MCP spec defines -32002 specifically for resource not found
@@ -113,8 +113,11 @@ class ErrorHandlingMiddleware(Middleware):
         except Exception as error:
             self._log_error(error, context)
 
-            # Transform and re-raise
+            # Transform and re-raise. An untransformed error is re-raised as-is;
+            # chaining it from itself would overwrite its original cause.
             transformed_error = self._transform_error(error, context)
+            if transformed_error is error:
+                raise
             raise transformed_error from error
 
     def get_error_stats(self) -> dict[str, int]:
