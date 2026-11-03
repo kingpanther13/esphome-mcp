@@ -104,9 +104,7 @@ _TARGET_MARKERS = {
     "sys_platform == 'win32'": False,
     "sys_platform != 'emscripten'": True,
 }
-_PYTHON_VERSION_MARKER_RE = re.compile(
-    r"python_version\s*(>=|<=|==|!=|<|>)\s*'([0-9]+)\.([0-9]+)'"
-)
+_PYTHON_VERSION_MARKER_RE = re.compile(r"python_version\s*(>=|<=|==|!=|<|>)\s*'([0-9]+)\.([0-9]+)'")
 _REQUIREMENT_RE = re.compile(
     r"\A(?P<name>[A-Za-z0-9._-]+)(?:\[(?P<extras>[^\]]*)\])?(?P<spec>[^;]*)(?:;(?P<marker>.*))?\Z"
 )
