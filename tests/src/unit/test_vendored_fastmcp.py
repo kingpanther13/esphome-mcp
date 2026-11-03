@@ -104,6 +104,20 @@ def test_manifest_requirement_merge_keeps_the_highest_floor() -> None:
     assert vendor_fastmcp._merge_clauses({"<0.5.0", ">=0.4.4"}) == ["<0.5.0", ">=0.4.4"]
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="PR #198 Core-owned certifi")
+def test_manifest_omits_core_dependencies_from_vendored_metadata(tmp_path: Path) -> None:
+    """Upstream requirements must not redeclare packages supplied by HA Core."""
+    requirements = (
+        "certifi>=2026.10.19\nhttpx2>=2.10.0\npackaging>=24.0\n"
+        "pyjwt>=2.10\npyyaml>=6.0\ntyping-extensions>=4.0\nanyio>=4.10\n"
+    )
+    for spec in vendor_fastmcp.PACKAGES:
+        tree = tmp_path / spec.package
+        tree.mkdir()
+        (tree / vendor_fastmcp.REQUIRES_NAME).write_text(requirements, encoding="utf-8")
+    assert vendor_fastmcp.manifest_requirements(tmp_path) == ["anyio>=4.10"]
+
+
 @pytest.mark.parametrize(
     "marker",
     [
