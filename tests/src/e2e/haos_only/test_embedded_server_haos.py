@@ -299,10 +299,15 @@ def _native_call(
     base_url: str, session_id: str | None, name: str, arguments: dict[str, Any]
 ) -> dict[str, Any]:
     """Exercise the native gateway through the actual embedded MCP endpoint."""
-    return _tool_payload(_tool_call(
-        base_url, session_id, "esp_native_call",
-        {"name": name, "arguments": arguments, "timeout": 120}, timeout=150,
-    ))
+    return _tool_payload(
+        _tool_call(
+            base_url,
+            session_id,
+            "esp_native_call",
+            {"name": name, "arguments": arguments, "timeout": 120},
+            timeout=150,
+        )
+    )
 
 
 def _native_text(payload: dict[str, Any]) -> str:
@@ -749,8 +754,15 @@ class TestEmbeddedServerOnHaos:
         assert catalog["success"] is True, catalog
         assert catalog["server_info"]["name"] == "ESPHome Device Builder", catalog
         tools = {row["name"]: row for row in catalog["tools"]}
-        assert {"get_config", "update_config", "search_components", "search_boards",
-                "get_available_automations", "upsert_automation", "delete_automation"} <= tools.keys()
+        assert {
+            "get_config",
+            "update_config",
+            "search_components",
+            "search_boards",
+            "get_available_automations",
+            "upsert_automation",
+            "delete_automation",
+        } <= tools.keys()
         assert "expected" in tools["update_config"]["inputSchema"]["required"]
         for name, arguments, field in (
             ("search_components", {"query": "template", "limit": 3}, "components"),
@@ -773,27 +785,46 @@ class TestEmbeddedServerOnHaos:
         original = _native_text(_native_call(base_url, session_id, "get_config", args))
         revised = original + "\n# native-mcp-roundtrip\n"
         try:
-            written = _native_call(base_url, session_id, "update_config", {
-                **args, "content": revised, "expected": original,
-            })
+            written = _native_call(
+                base_url,
+                session_id,
+                "update_config",
+                {
+                    **args,
+                    "content": revised,
+                    "expected": original,
+                },
+            )
             _native_text(written)
-            readback = _tool_payload(_tool_call(
-                base_url, session_id, "esp_get_yaml", args
-            ))
+            readback = _tool_payload(_tool_call(base_url, session_id, "esp_get_yaml", args))
             assert readback["success"] is True, readback
             assert readback["content"] == revised
-            stale = _native_call(base_url, session_id, "update_config", {
-                **args, "content": original + "\n# must-not-write\n", "expected": original,
-            })
+            stale = _native_call(
+                base_url,
+                session_id,
+                "update_config",
+                {
+                    **args,
+                    "content": original + "\n# must-not-write\n",
+                    "expected": original,
+                },
+            )
             assert stale["success"] is False, stale
             assert stale["result"]["isError"] is True, stale
             assert "precondition_failed" in stale["result"]["content"][0]["text"], stale
             assert _native_text(_native_call(base_url, session_id, "get_config", args)) == revised
         finally:
             current = _native_text(_native_call(base_url, session_id, "get_config", args))
-            restored = _native_call(base_url, session_id, "update_config", {
-                **args, "content": original, "expected": current,
-            })
+            restored = _native_call(
+                base_url,
+                session_id,
+                "update_config",
+                {
+                    **args,
+                    "content": original,
+                    "expected": current,
+                },
+            )
             _native_text(restored)
             assert _native_text(_native_call(base_url, session_id, "get_config", args)) == original
 
@@ -806,31 +837,60 @@ class TestEmbeddedServerOnHaos:
         original = _native_text(_native_call(base_url, session_id, "get_config", args))
         location = {"kind": "script", "id": "native_mcp_test_script"}
         try:
-            docs = _native_call(base_url, session_id, "get_automation_docs", {
-                "refs": [{"type": "actions", "id": "delay"}],
-            })
+            docs = _native_call(
+                base_url,
+                session_id,
+                "get_automation_docs",
+                {
+                    "refs": [{"type": "actions", "id": "delay"}],
+                },
+            )
             assert "actions/delay" in json.loads(_native_text(docs))
-            inserted = _native_call(base_url, session_id, "upsert_automation", {
-                **args, "location": location,
-                "automation": {"actions": [{"action_id": "delay", "params": {"value": "1s"}}]},
-            })
+            inserted = _native_call(
+                base_url,
+                session_id,
+                "upsert_automation",
+                {
+                    **args,
+                    "location": location,
+                    "automation": {"actions": [{"action_id": "delay", "params": {"value": "1s"}}]},
+                },
+            )
             assert "yaml_diff" in json.loads(_native_text(inserted))
-            rows = json.loads(_native_text(_native_call(base_url, session_id, "list_automations", args)))
+            rows = json.loads(
+                _native_text(_native_call(base_url, session_id, "list_automations", args))
+            )
             row = next(row for row in rows if row["location"] == location)
             assert "delay" in row["raw_yaml"], row
-            deleted = _native_call(base_url, session_id, "delete_automation", {
-                **args, "location": row["location"], "expected": row["raw_yaml"],
-            })
+            deleted = _native_call(
+                base_url,
+                session_id,
+                "delete_automation",
+                {
+                    **args,
+                    "location": row["location"],
+                    "expected": row["raw_yaml"],
+                },
+            )
             _native_text(deleted)
-            remaining = json.loads(_native_text(_native_call(
-                base_url, session_id, "list_automations", args
-            )))
+            remaining = json.loads(
+                _native_text(_native_call(base_url, session_id, "list_automations", args))
+            )
             assert not any(row["location"] == location for row in remaining)
         finally:
             current = _native_text(_native_call(base_url, session_id, "get_config", args))
-            _native_text(_native_call(base_url, session_id, "update_config", {
-                **args, "content": original, "expected": current,
-            }))
+            _native_text(
+                _native_call(
+                    base_url,
+                    session_id,
+                    "update_config",
+                    {
+                        **args,
+                        "content": original,
+                        "expected": current,
+                    },
+                )
+            )
             assert _native_text(_native_call(base_url, session_id, "get_config", args)) == original
 
     def test_initialize_and_list_esp_tools(

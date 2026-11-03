@@ -44,7 +44,8 @@ class EspHomeMCPServer:
                 "Home Assistant. Tool names use the esp_ prefix. Discover Device Builder's "
                 "native tools and schemas with esp_native_tools, then use esp_native_call "
                 "for native config editing, component/board discovery and structured automations. "
-                "Existing tools add HA context, supporting files, search, logs and firmware options."
+                "Existing tools add HA context, supporting files, search, logs "
+                "and firmware options."
             ),
         )
         self._register_tools()

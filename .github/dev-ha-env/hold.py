@@ -16,10 +16,15 @@ def test_hold(embedded_server: tuple[str, str | None, str]) -> None:  # noqa: F8
     """Keep the ordinary HAOS fixture available until the requested deadline."""
     base_url, _session_id, _configuration = embedded_server
     targets = Path(os.environ["DEVENV_TARGETS"])
-    targets.write_text(json.dumps({
-        "ha": base_url, "mcp": base_url,
-        "mcp_path": f"/api/webhook/{ESPHOME_MCP_SERVER_WEBHOOK_ID}",
-    }))
+    targets.write_text(
+        json.dumps(
+            {
+                "ha": base_url,
+                "mcp": base_url,
+                "mcp_path": f"/api/webhook/{ESPHOME_MCP_SERVER_WEBHOOK_ID}",
+            }
+        )
+    )
     minutes = min(240, max(1, int(os.environ["DEVENV_MINUTES"])))
     deadline = time.monotonic() + minutes * 60
     print("STATUS HAOS dev environment ready", flush=True)

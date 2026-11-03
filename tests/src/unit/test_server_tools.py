@@ -170,7 +170,9 @@ def test_native_tools_run_on_hass_and_call_is_conservatively_annotated(
     caller = server.mcp.tools["esp_native_call"]
     assert listing.annotations["readOnlyHint"] is True
     assert caller.annotations == {
-        "readOnlyHint": False, "destructiveHint": True, "idempotentHint": False
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
     }
     assert _run(listing.func(tool="get_config", slug="addon", timeout=90))["success"] is True
     assert _run(caller.func(name="get_config", arguments={"configuration": "x.yaml"}))["success"]

@@ -1,4 +1,5 @@
-# Quick tunnels for dev-ha-env.yml, sourced by its boot and keep-running steps.
+# Adapted from homeassistant-ai/ha-mcp's MIT-licensed dev environment.
+# Quick tunnels for Component E2E's opt-in dev mode, sourced by its boot/hold steps.
 #
 # A quick tunnel gets a new URL every time it starts, so a tunnel that fails
 # to start is retried and one that dies is restarted; either way the URLs are

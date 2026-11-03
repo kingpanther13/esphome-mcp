@@ -226,11 +226,14 @@ def test_native_cancellation_propagates(monkeypatch: pytest.MonkeyPatch) -> None
         _run(discover(_hass()))
 
 
-@pytest.mark.parametrize("payload", [
-    {"protocolVersion": "2099-01-01", "capabilities": {"tools": {}}, "serverInfo": {}},
-    {"protocolVersion": "2025-11-25", "capabilities": {}, "serverInfo": {}},
-    {"protocolVersion": [], "capabilities": {"tools": {}}, "serverInfo": {}},
-])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"protocolVersion": "2099-01-01", "capabilities": {"tools": {}}, "serverInfo": {}},
+        {"protocolVersion": "2025-11-25", "capabilities": {}, "serverInfo": {}},
+        {"protocolVersion": [], "capabilities": {"tools": {}}, "serverInfo": {}},
+    ],
+)
 def test_native_rejects_incompatible_initialization(
     monkeypatch: pytest.MonkeyPatch, payload: dict[str, Any]
 ) -> None:
@@ -240,15 +243,16 @@ def test_native_rejects_incompatible_initialization(
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("payload", [
-    {"jsonrpc": "2.0", "id": "wrong", "result": {}},
-    {"jsonrpc": "2.0", "id": "initialize", "result": {}, "error": {}},
-    {"jsonrpc": "2.0", "id": "initialize", "result": []},
-    [],
-])
-def test_native_rejects_invalid_rpc_envelope(
-    monkeypatch: pytest.MonkeyPatch, payload: Any
-) -> None:
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"jsonrpc": "2.0", "id": "wrong", "result": {}},
+        {"jsonrpc": "2.0", "id": "initialize", "result": {}, "error": {}},
+        {"jsonrpc": "2.0", "id": "initialize", "result": []},
+        [],
+    ],
+)
+def test_native_rejects_invalid_rpc_envelope(monkeypatch: pytest.MonkeyPatch, payload: Any) -> None:
     _native_server(monkeypatch, initialize=Response(payload))
     result = _run(_api("native_device_builder_tools")(_hass()))
     assert result["error_code"] == "native_protocol_error"
@@ -256,9 +260,10 @@ def test_native_rejects_invalid_rpc_envelope(
 
 def test_native_json_rpc_error_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
     error = {"code": -32602, "message": "Unknown tool: update_config"}
-    calls = _native_server(monkeypatch, **{"tools/call": Response({
-        "jsonrpc": "2.0", "id": "tools/call", "error": error
-    })})
+    calls = _native_server(
+        monkeypatch,
+        **{"tools/call": Response({"jsonrpc": "2.0", "id": "tools/call", "error": error})},
+    )
     result = _run(_api("call_native_device_builder_tool")(_hass(), name="update_config"))
     assert result["success"] is False
     assert result["native_error"] == error
@@ -266,9 +271,13 @@ def test_native_json_rpc_error_is_preserved(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_native_catalog_pagination_preserves_nested_schema(monkeypatch: pytest.MonkeyPatch) -> None:
-    nested = {"name": "new_tool", "inputSchema": {
-        "type": "object", "properties": {"location": {"oneOf": [{"type": "string"}]}}
-    }}
+    nested = {
+        "name": "new_tool",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"location": {"oneOf": [{"type": "string"}]}},
+        },
+    }
 
     def page(body: dict[str, Any]) -> dict[str, Any]:
         if "cursor" not in body["params"]:
@@ -304,7 +313,9 @@ def test_native_malformed_tool_result_is_not_success(monkeypatch: pytest.MonkeyP
     assert result["error_code"] == "native_protocol_error"
 
 
-def test_native_success_preserves_structured_and_text_content(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_native_success_preserves_structured_and_text_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     reply = {"content": [{"type": "text", "text": "ok"}], "structuredContent": {"ok": True}}
     _native_server(monkeypatch, **{"tools/call": reply})
     result = _run(_api("call_native_device_builder_tool")(_hass(), name="get_config"))
