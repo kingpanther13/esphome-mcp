@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[3]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
 
 EXPECTED_ESP_TOOLS = {
+    "esp_native_tools",
+    "esp_native_call",
     "esp_overview",
     "esp_list_devices",
     "esp_list_entities",

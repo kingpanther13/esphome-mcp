@@ -26,7 +26,9 @@ class Response:
         self.content = self
 
     async def read(self, size: int = -1) -> bytes:
-        return self.raw if size < 0 else self.raw[:size]
+        chunk = self.raw if size < 0 else self.raw[:size]
+        self.raw = self.raw[len(chunk):]
+        return chunk
 
     async def __aenter__(self) -> Response:
         return self

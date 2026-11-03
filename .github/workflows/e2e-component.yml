@@ -15,6 +15,16 @@ on:
         type: boolean
         required: false
         default: false
+      dev_minutes:
+        description: 'Hold a live HAOS dev environment (0 runs E2E; max 240)'
+        type: number
+        required: false
+        default: 0
+      public_key:
+        description: 'Dev mode only: base64-encoded RSA public PEM for encrypted tunnel URLs'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -27,10 +37,23 @@ jobs:
   haos-e2e-embedded:
     name: HAOS E2E Tests (embedded)
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.dev_minutes > 0 && 330 || 60 }}
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Validate dev environment inputs
+        if: inputs.dev_minutes > 0
+        env:
+          DEVENV_PUBLIC_KEY: ${{ inputs.public_key }}
+          DEVENV_MINUTES: ${{ inputs.dev_minutes }}
+        run: |
+          [[ "$DEVENV_MINUTES" =~ ^[0-9]+$ ]] && [ "$DEVENV_MINUTES" -le 240 ]
+          printf '%s' "$DEVENV_PUBLIC_KEY" | base64 --decode > "$RUNNER_TEMP/url-key.pem"
+          openssl rsa -pubin -in "$RUNNER_TEMP/url-key.pem" -noout
+          printf 'key-validation' | openssl pkeyutl -encrypt -pubin \
+            -inkey "$RUNNER_TEMP/url-key.pem" -pkeyopt rsa_padding_mode:oaep \
+            -out "$RUNNER_TEMP/key-validation.enc"
 
       - name: Compute image cache key
         id: key
@@ -178,6 +201,7 @@ jobs:
         run: ls -lh /tmp/haos-test-image.qcow2
 
       - name: Run HAOS embedded component E2E
+        if: ${{ !inputs.dev_minutes }}
         run: |
           cd tests
           pytest src/e2e/haos_only/test_embedded_server_haos.py \
@@ -187,8 +211,63 @@ jobs:
           HAOS_TEST_MODE: embedded
           HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
 
+      - name: Boot live HAOS and open encrypted dev tunnels
+        if: inputs.dev_minutes > 0
+        env:
+          DEVENV_MINUTES: ${{ inputs.dev_minutes }}
+          DEVENV_TARGETS: ${{ github.workspace }}/targets.json
+          HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
+          HAOS_TEST_MODE: embedded
+          HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o cloudflared
+          chmod +x cloudflared
+          cp .github/dev-ha-env/hold.py tests/src/e2e/haos_only/test_dev_ha_env_hold.py
+          nohup python -m pytest tests/src/e2e/haos_only/test_dev_ha_env_hold.py \
+            -v -s --timeout=0 > env.log 2>&1 &
+          echo $! > hold.pid
+          for i in $(seq 1 420); do
+            [ -s targets.json ] && break
+            kill -0 "$(cat hold.pid)" 2>/dev/null || break
+            sleep 5
+          done
+          if [ ! -s targets.json ]; then
+            echo 'HAOS dev fixture did not start'
+            tail -100 env.log
+            exit 1
+          fi
+          target() { python -c "import json,sys;print(json.load(open('targets.json'))[sys.argv[1]])" "$1"; }
+          target mcp_path > mcp-path
+          source .github/dev-ha-env/tunnels.sh
+          start_tunnel ha "$(target ha)" || exit 1
+          start_tunnel mcp "$(target mcp)" || exit 1
+          publish_urls
+          rm targets.json
+          grep STATUS env.log | tail -3
+
+      - name: Upload encrypted dev URLs
+        if: inputs.dev_minutes > 0
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-ha-env-urls
+          path: out/dev-ha-env-urls.enc
+          retention-days: 1
+
+      - name: Keep running
+        if: inputs.dev_minutes > 0
+        run: source .github/dev-ha-env/tunnels.sh && keep_running last
+
+      - name: Stop dev processes
+        if: ${{ always() && inputs.dev_minutes > 0 }}
+        run: |
+          for pidfile in hold.pid tunnel-ha.pid tunnel-mcp.pid; do
+            [ ! -f "$pidfile" ] || kill "$(cat "$pidfile")" 2>/dev/null || true
+          done
+
       - name: Extract HA diagnostics from booted qcow2
-        if: always()
+        if: ${{ always() && !inputs.dev_minutes }}
         run: |
           sudo chmod +r /boot/vmlinuz-* || true
           mkdir -p /tmp/haos-embedded-diagnostics
@@ -217,7 +296,7 @@ jobs:
           python scripts/redact_diagnostics_secrets.py /tmp/haos-embedded-diagnostics
 
       - name: Upload HAOS embedded diagnostics
-        if: always()
+        if: ${{ always() && !inputs.dev_minutes }}
         uses: actions/upload-artifact@v7
         with:
           name: haos-embedded-diagnostics

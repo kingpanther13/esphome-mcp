@@ -67,6 +67,8 @@ VENDOR_PINS_PATH = (
 )
 
 EXPECTED_ESP_TOOLS = {
+    "esp_native_tools",
+    "esp_native_call",
     "esp_overview",
     "esp_list_devices",
     "esp_list_entities",
