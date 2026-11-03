@@ -25,6 +25,8 @@ if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 _MAX_RESPONSE_SIZE = 50 * 1024
+_MAX_NATIVE_RESPONSE_SIZE = 2 * 1024 * 1024
+_NATIVE_PROTOCOL_VERSIONS = {"2025-06-18", "2025-11-25"}
 _MAX_WS_MESSAGES = 1000
 _DEVICE_BUILDER_RESULT_EVENTS = {"result"}
 _DEVICE_BUILDER_STOPPABLE_STREAMS = {
@@ -58,6 +60,272 @@ def _normalize_supervisor_payload(payload: Any) -> Any:
     if "data" in payload and set(payload).issubset({"result", "data"}):
         return payload["data"]
     return payload
+
+
+class _NativeMCPError(Exception):
+    """Carry an actionable error without leaking ingress URLs or cookies."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+        super().__init__(str(payload.get("error", "Native MCP failed")))
+
+
+async def _native_mcp_request(
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: dict[str, str],
+    method: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Make one bounded stateless JSON-RPC request; never retry a tool call."""
+    notification = method == "notifications/initialized"
+    body: dict[str, Any] = {"jsonrpc": "2.0", "method": method, "params": params}
+    if not notification:
+        body["id"] = method
+    async with session.request(
+        "POST", url, headers=headers, json=body, allow_redirects=False
+    ) as response:
+        if response.status in {404, 405} and method == "initialize":
+            raise _NativeMCPError(
+                _error(
+                    "This Device Builder has no native /api/mcp endpoint. Update the add-on "
+                    "or use the existing ESPHome tools.",
+                    code="native_mcp_unavailable",
+                )
+            )
+        if notification and response.status == 202:
+            return {}
+        if response.status != 200:
+            raise _NativeMCPError(
+                _error(
+                    f"Native MCP returned HTTP {response.status}.",
+                    code="native_http_error",
+                    status_code=response.status,
+                )
+            )
+        if "application/json" not in response.headers.get("Content-Type", "").lower():
+            raise _NativeMCPError(
+                _error("Native MCP did not return JSON.", code="native_protocol_error")
+            )
+        raw = bytearray()
+        while chunk := await response.content.read(65536):
+            raw.extend(chunk)
+            if len(raw) > _MAX_NATIVE_RESPONSE_SIZE:
+                raise _NativeMCPError(
+                    _error(
+                        "Native MCP response exceeded 2 MiB; use narrower tool arguments.",
+                        code="native_response_too_large",
+                    )
+                )
+        try:
+            payload = json.loads(raw)
+        except (ValueError, UnicodeError) as err:
+            raise _NativeMCPError(
+                _error("Native MCP returned malformed JSON.", code="native_protocol_error")
+            ) from err
+        if (
+            not isinstance(payload, dict)
+            or payload.get("jsonrpc") != "2.0"
+            or payload.get("id") != body.get("id")
+            or ("result" in payload) == ("error" in payload)
+        ):
+            raise _NativeMCPError(
+                _error(
+                    "Native MCP returned an invalid JSON-RPC envelope.",
+                    code="native_protocol_error",
+                )
+            )
+        if "error" in payload:
+            raise _NativeMCPError(
+                _error(
+                    "Native MCP rejected the request.",
+                    code="native_rpc_error",
+                    native_error=payload["error"],
+                )
+            )
+        if not isinstance(payload["result"], dict):
+            raise _NativeMCPError(
+                _error("Native MCP returned an invalid result.", code="native_protocol_error")
+            )
+        return payload["result"]
+
+
+async def _native_device_builder(
+    hass: HomeAssistant,
+    *,
+    slug: str | None,
+    tool: str | None,
+    arguments: dict[str, Any] | None,
+    call: bool,
+    timeout: int,
+) -> dict[str, Any]:
+    """Discover the running add-on on each call, then optionally invoke a tool."""
+    if not 1 <= timeout <= 1800:
+        return _error("timeout must be between 1 and 1800 seconds.", code="invalid_args")
+    if call and (not isinstance(tool, str) or not tool.strip()):
+        return _error("A native tool name is required.", code="invalid_args")
+    if arguments is not None and not isinstance(arguments, dict):
+        return _error("arguments must be an object.", code="invalid_args")
+    try:
+        async with asyncio.timeout(timeout):
+            resolved = await _resolve_esphome_addon(hass, slug)
+            if not resolved.get("success"):
+                return resolved
+            addon = resolved["addon"]
+            if addon.get("state") != "started":
+                return _error("ESPHome add-on is not running.", code="addon_not_running")
+            route = await _route_for_addon(hass, addon, "api/mcp", port=None, websocket=False)
+            if isinstance(route, dict):
+                return route
+            url, headers = route
+            headers = {**headers, "Accept": "application/json, text/event-stream"}
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as session:
+                initialized = await _native_mcp_request(
+                    session,
+                    url,
+                    headers,
+                    "initialize",
+                    {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "clientInfo": {"name": "esphome-mcp", "version": "1"},
+                    },
+                )
+                protocol = initialized.get("protocolVersion")
+                capabilities = initialized.get("capabilities")
+                if (
+                    not isinstance(protocol, str)
+                    or protocol not in _NATIVE_PROTOCOL_VERSIONS
+                    or not isinstance(capabilities, dict)
+                    or not isinstance(capabilities.get("tools"), dict)
+                    or not isinstance(initialized.get("serverInfo"), dict)
+                ):
+                    return _error(
+                        "Unsupported native MCP initialization.", code="native_protocol_error"
+                    )
+                headers["MCP-Protocol-Version"] = protocol
+                await _native_mcp_request(session, url, headers, "notifications/initialized", {})
+                tools: list[dict[str, Any]] = []
+                cursors: set[str] = set()
+                params: dict[str, Any] = {}
+                total_size = 0
+                for _ in range(20):
+                    page = await _native_mcp_request(session, url, headers, "tools/list", params)
+                    entries = page.get("tools")
+                    if not isinstance(entries, list) or any(
+                        not isinstance(entry, dict)
+                        or not isinstance(entry.get("name"), str)
+                        or not isinstance(entry.get("inputSchema"), dict)
+                        for entry in entries
+                    ):
+                        return _error("Invalid native tool catalog.", code="native_protocol_error")
+                    total_size += len(json.dumps(entries).encode())
+                    if total_size > _MAX_NATIVE_RESPONSE_SIZE:
+                        return _error(
+                            "Native tool catalog exceeded 2 MiB.", code="native_response_too_large"
+                        )
+                    tools.extend(entries)
+                    cursor = page.get("nextCursor")
+                    if cursor is None:
+                        break
+                    if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                        return _error(
+                            "Invalid native catalog cursor.", code="native_protocol_error"
+                        )
+                    cursors.add(cursor)
+                    params = {"cursor": cursor}
+                else:
+                    return _error("Native catalog exceeded 20 pages.", code="native_protocol_error")
+                selected = [entry for entry in tools if tool is None or entry["name"] == tool]
+                if tool is not None and not selected:
+                    return _error(
+                        f"Native tool {tool!r} is not available on this Device Builder.",
+                        code="native_tool_unavailable",
+                    )
+                metadata = {
+                    "source": "native_mcp",
+                    "slug": addon.get("slug") or slug,
+                    "server_info": initialized["serverInfo"],
+                    "protocol_version": protocol,
+                }
+                if not call:
+                    return {"success": True, **metadata, "tools": selected, "count": len(selected)}
+                result = await _native_mcp_request(
+                    session,
+                    url,
+                    headers,
+                    "tools/call",
+                    {
+                        "name": tool,
+                        "arguments": arguments or {},
+                    },
+                )
+                content = result.get("content")
+                if (
+                    not isinstance(content, list)
+                    or not isinstance(result.get("isError", False), bool)
+                    or any(
+                        not isinstance(item, dict)
+                        or not isinstance(item.get("type"), str)
+                        or (item["type"] == "text" and not isinstance(item.get("text"), str))
+                        for item in content
+                    )
+                ):
+                    return _error("Invalid native tool result.", code="native_protocol_error")
+                response = {
+                    "success": not result.get("isError", False),
+                    **metadata,
+                    "tool": tool,
+                    "result": result,
+                }
+                if result.get("isError"):
+                    response.update(
+                        error_code="native_tool_error",
+                        error="Native tool failed; see result.content for details.",
+                    )
+                return response
+    except _NativeMCPError as err:
+        return err.payload
+    except TimeoutError:
+        return _error(
+            "Native MCP timed out. A submitted write may have completed; read back "
+            "its state before retrying.",
+            code="timeout",
+        )
+    except aiohttp.ClientError:
+        return _error(
+            "Native MCP connection failed. Read back any submitted write before retrying.",
+            code="connection_failed",
+        )
+
+
+async def native_device_builder_tools(
+    hass: HomeAssistant,
+    *,
+    slug: str | None = None,
+    tool: str | None = None,
+    timeout: int = 60,
+) -> dict[str, Any]:
+    """Return installed native tool schemas, optionally selecting one by name."""
+    return await _native_device_builder(
+        hass, slug=slug, tool=tool, arguments=None, call=False, timeout=timeout
+    )
+
+
+async def call_native_device_builder_tool(
+    hass: HomeAssistant,
+    *,
+    name: str,
+    arguments: dict[str, Any] | None = None,
+    slug: str | None = None,
+    timeout: int = 60,
+) -> dict[str, Any]:
+    """Invoke an installed native tool once and preserve its MCP result."""
+    return await _native_device_builder(
+        hass, slug=slug, tool=name, arguments=arguments, call=True, timeout=timeout
+    )
 
 
 async def _supervisor_api_call(
@@ -940,7 +1208,30 @@ async def read_device_builder_config(
     timeout: int,
     debug: bool,
 ) -> dict[str, Any]:
-    """Read one ESPHome YAML file from Device Builder."""
+    """Prefer native MCP for compatible reads, preserving the legacy response."""
+    # Native MCP intentionally accepts bare .yaml filenames only. Retain the
+    # existing WS behavior for paths/aliases outside that native contract.
+    if configuration.endswith(".yaml") and not any(c in configuration for c in "/\\"):
+        native = await call_native_device_builder_tool(
+            hass,
+            name="get_config",
+            arguments={"configuration": configuration},
+            slug=slug,
+            timeout=timeout,
+        )
+        if native.get("success"):
+            content = native["result"].get("content", [])
+            if len(content) != 1 or content[0].get("type") != "text":
+                return _error(
+                    "Native get_config returned unexpected content.", code="native_protocol_error"
+                )
+            return {
+                "success": True,
+                "configuration": configuration,
+                "content": content[0]["text"],
+            }
+        if native.get("error_code") not in {"native_mcp_unavailable", "native_tool_unavailable"}:
+            return native
     response = await _device_builder_command(
         hass,
         slug=slug,

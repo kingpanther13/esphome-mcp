@@ -29,6 +29,7 @@ from haos_runtime import (
     collect_runtime_logs,
     enable_config_entry,
     login_for_token,
+    upgrade_core,
     websocket_command,
 )
 
@@ -67,6 +68,8 @@ VENDOR_PINS_PATH = (
 )
 
 EXPECTED_ESP_TOOLS = {
+    "esp_native_tools",
+    "esp_native_call",
     "esp_overview",
     "esp_list_devices",
     "esp_list_entities",
@@ -230,6 +233,8 @@ def embedded_server() -> Iterator[tuple[str, str | None, str]]:
     with boot_haos_qemu(image_path) as base_url:
         token = login_for_token(base_url)
         try:
+            if core_version := os.environ.get("HAOS_CORE_VERSION"):
+                upgrade_core(base_url, token, core_version)
             # HA-MCP loads its own vendored FastMCP first, the order that used
             # to make ESPHome MCP refuse to start.
             enable_config_entry(base_url, token, HA_MCP_SERVER_ENTRY_ID)
@@ -291,6 +296,30 @@ def _tool_payload(parsed: dict[str, Any]) -> dict[str, Any]:
         raise AssertionError(f"tool response was not JSON: {text[:500]}") from err
     assert isinstance(payload, dict), payload
     return payload
+
+
+def _native_call(
+    base_url: str, session_id: str | None, name: str, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """Exercise the native gateway through the actual embedded MCP endpoint."""
+    return _tool_payload(
+        _tool_call(
+            base_url,
+            session_id,
+            "esp_native_call",
+            {"name": name, "arguments": arguments, "timeout": 120},
+            timeout=150,
+        )
+    )
+
+
+def _native_text(payload: dict[str, Any]) -> str:
+    assert payload["success"] is True, payload
+    assert payload["source"] == "native_mcp", payload
+    assert payload["result"].get("isError", False) is False, payload
+    content = payload["result"]["content"]
+    assert len(content) == 1 and content[0]["type"] == "text", payload
+    return content[0]["text"]
 
 
 def _device_builder_command(
@@ -719,6 +748,154 @@ async def _exercise_live_host_device_in_haos(
 
 
 class TestEmbeddedServerOnHaos:
+    def test_native_catalog_and_discovery_through_ingress(
+        self, embedded_server: tuple[str, str | None, str]
+    ) -> None:
+        """Native schemas and upstream discovery survive both MCP and Supervisor ingress."""
+        base_url, session_id, configuration = embedded_server
+        catalog = _tool_payload(_tool_call(base_url, session_id, "esp_native_tools"))
+        assert catalog["success"] is True, catalog
+        assert catalog["server_info"]["name"] == "ESPHome Device Builder", catalog
+        tools = {row["name"]: row for row in catalog["tools"]}
+        assert {
+            "get_config",
+            "update_config",
+            "search_components",
+            "search_boards",
+            "get_available_automations",
+            "upsert_automation",
+            "delete_automation",
+        } <= tools.keys()
+        assert "expected" in tools["update_config"]["inputSchema"]["required"]
+        for name, arguments, field in (
+            ("search_components", {"query": "template", "limit": 3}, "components"),
+            ("search_boards", {"query": "esp32", "limit": 3}, "boards"),
+        ):
+            result = json.loads(_native_text(_native_call(base_url, session_id, name, arguments)))
+            assert result[field], result
+            assert len(result[field]) <= 3, result
+        available = _native_call(
+            base_url, session_id, "get_available_automations", {"configuration": configuration}
+        )
+        assert isinstance(json.loads(_native_text(available)), dict)
+
+    def test_native_guarded_yaml_roundtrip_and_stale_write_rejection(
+        self, embedded_server: tuple[str, str | None, str]
+    ) -> None:
+        """Native expected guards reject a stale edit without a WebSocket replay."""
+        base_url, session_id, configuration = embedded_server
+        args = {"configuration": configuration}
+        original = _native_text(_native_call(base_url, session_id, "get_config", args))
+        revised = original + "\n# native-mcp-roundtrip\n"
+        try:
+            written = _native_call(
+                base_url,
+                session_id,
+                "update_config",
+                {
+                    **args,
+                    "content": revised,
+                    "expected": original,
+                },
+            )
+            _native_text(written)
+            readback = _tool_payload(_tool_call(base_url, session_id, "esp_get_yaml", args))
+            assert readback["success"] is True, readback
+            assert readback["content"] == revised
+            stale = _native_call(
+                base_url,
+                session_id,
+                "update_config",
+                {
+                    **args,
+                    "content": original + "\n# must-not-write\n",
+                    "expected": original,
+                },
+            )
+            assert stale["success"] is False, stale
+            assert stale["result"]["isError"] is True, stale
+            assert "precondition_failed" in stale["result"]["content"][0]["text"], stale
+            assert _native_text(_native_call(base_url, session_id, "get_config", args)) == revised
+        finally:
+            current = _native_text(_native_call(base_url, session_id, "get_config", args))
+            restored = _native_call(
+                base_url,
+                session_id,
+                "update_config",
+                {
+                    **args,
+                    "content": original,
+                    "expected": current,
+                },
+            )
+            _native_text(restored)
+            assert _native_text(_native_call(base_url, session_id, "get_config", args)) == original
+
+    def test_native_structured_automation_edit_and_delete(
+        self, embedded_server: tuple[str, str | None, str]
+    ) -> None:
+        """The native structured editor saves, lists, and removes a throwaway script."""
+        base_url, session_id, configuration = embedded_server
+        args = {"configuration": configuration}
+        original = _native_text(_native_call(base_url, session_id, "get_config", args))
+        location = {"kind": "script", "id": "native_mcp_test_script"}
+        try:
+            docs = _native_call(
+                base_url,
+                session_id,
+                "get_automation_docs",
+                {
+                    "refs": [{"type": "actions", "id": "delay"}],
+                },
+            )
+            assert "actions/delay" in json.loads(_native_text(docs))
+            inserted = _native_call(
+                base_url,
+                session_id,
+                "upsert_automation",
+                {
+                    **args,
+                    "location": location,
+                    "automation": {"actions": [{"action_id": "delay", "params": {"id": "1s"}}]},
+                },
+            )
+            assert "yaml_diff" in json.loads(_native_text(inserted))
+            rows = json.loads(
+                _native_text(_native_call(base_url, session_id, "list_automations", args))
+            )
+            row = next(row for row in rows if row["location"] == location)
+            assert "delay" in row["raw_yaml"], row
+            deleted = _native_call(
+                base_url,
+                session_id,
+                "delete_automation",
+                {
+                    **args,
+                    "location": row["location"],
+                    "expected": row["raw_yaml"],
+                },
+            )
+            _native_text(deleted)
+            remaining = json.loads(
+                _native_text(_native_call(base_url, session_id, "list_automations", args))
+            )
+            assert not any(row["location"] == location for row in remaining)
+        finally:
+            current = _native_text(_native_call(base_url, session_id, "get_config", args))
+            _native_text(
+                _native_call(
+                    base_url,
+                    session_id,
+                    "update_config",
+                    {
+                        **args,
+                        "content": original,
+                        "expected": current,
+                    },
+                )
+            )
+            assert _native_text(_native_call(base_url, session_id, "get_config", args)) == original
+
     def test_initialize_and_list_esp_tools(
         self,
         embedded_server: tuple[str, str | None, str],
@@ -881,25 +1058,27 @@ class TestEmbeddedServerOnHaos:
         ).read_bytes()
         assert response.content == expected_icon
 
-    def test_hacs_integration_is_loaded(
+    def test_community_store_is_loaded(
         self,
         embedded_server: tuple[str, str | None, str],
     ) -> None:
         base_url, _session_id, _configuration = embedded_server
         token = login_for_token(base_url)
+        config = _ha_json(base_url, token, "GET", "/api/config", {})
+        store_domain = "marketplace" if "marketplace" in config["components"] else "hacs"
         entries = websocket_command(base_url, token, {"type": "config_entries/get"})
 
         assert isinstance(entries, list), entries
-        hacs_entry = next(
+        store_entry = next(
             (
                 entry
                 for entry in entries
-                if isinstance(entry, dict) and entry.get("domain") == "hacs"
+                if isinstance(entry, dict) and entry.get("domain") == store_domain
             ),
             None,
         )
-        assert isinstance(hacs_entry, dict), entries
-        assert hacs_entry.get("state") == "loaded", hacs_entry
+        assert isinstance(store_entry, dict), entries
+        assert store_entry.get("state") == "loaded", store_entry
 
     def test_options_flow_shows_resolved_webhook_connect_url(
         self,

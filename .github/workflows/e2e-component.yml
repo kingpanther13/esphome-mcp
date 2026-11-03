@@ -15,6 +15,21 @@ on:
         type: boolean
         required: false
         default: false
+      core_version:
+        description: 'Core target: empty for minimum supported, beta for current beta, or an exact version'
+        type: string
+        required: false
+        default: ''
+      dev_minutes:
+        description: 'Hold a live HAOS dev environment (0 runs E2E; max 240)'
+        type: number
+        required: false
+        default: 0
+      public_key:
+        description: 'Dev mode only: base64-encoded RSA public PEM for encrypted tunnel URLs'
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -25,12 +40,50 @@ env:
 
 jobs:
   haos-e2e-embedded:
-    name: HAOS E2E Tests (embedded)
+    name: HAOS E2E Tests (embedded ${{ matrix.lane }})
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.dev_minutes > 0 && 330 || 60 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        lane: ${{ fromJSON(github.event_name == 'pull_request' && '["minimum", "beta"]' || '["selected"]') }}
 
     steps:
       - uses: actions/checkout@v7
+
+      - name: Resolve Core test version
+        id: core
+        env:
+          CORE_TARGET: ${{ matrix.lane == 'beta' && 'beta' || inputs.core_version }}
+        run: |
+          version="$CORE_TARGET"
+          if [ "$version" = beta ]; then
+            metadata=$(curl --fail --silent --show-error --retry 3 \
+              https://version.home-assistant.io/beta.json)
+            version=$(python3 -c \
+              'import json,sys; print(json.load(sys.stdin)["homeassistant"]["qemux86-64"])' \
+              <<< "$metadata")
+            test -n "$version"
+          fi
+          if [ -n "$version" ] && ! [[ "$version" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+([.]dev[0-9]+|b[0-9]+|rc[0-9]+)?$ ]]; then
+            echo "::error::Invalid Core test version"
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          printf 'Core test target: %s\n' "${version:-minimum supported}"
+
+      - name: Validate dev environment inputs
+        if: inputs.dev_minutes > 0
+        env:
+          DEVENV_PUBLIC_KEY: ${{ inputs.public_key }}
+          DEVENV_MINUTES: ${{ inputs.dev_minutes }}
+        run: |
+          [[ "$DEVENV_MINUTES" =~ ^[0-9]+$ ]] && [ "$DEVENV_MINUTES" -le 240 ]
+          printf '%s' "$DEVENV_PUBLIC_KEY" | base64 --decode > "$RUNNER_TEMP/url-key.pem"
+          openssl rsa -pubin -in "$RUNNER_TEMP/url-key.pem" -noout
+          printf 'key-validation' | openssl pkeyutl -encrypt -pubin \
+            -inkey "$RUNNER_TEMP/url-key.pem" -pkeyopt rsa_padding_mode:oaep \
+            -out "$RUNNER_TEMP/key-validation.enc"
 
       - name: Compute image cache key
         id: key
@@ -178,6 +231,7 @@ jobs:
         run: ls -lh /tmp/haos-test-image.qcow2
 
       - name: Run HAOS embedded component E2E
+        if: ${{ !(inputs.dev_minutes > 0) }}
         run: |
           cd tests
           pytest src/e2e/haos_only/test_embedded_server_haos.py \
@@ -186,9 +240,70 @@ jobs:
           HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
           HAOS_TEST_MODE: embedded
           HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
+          HAOS_CORE_VERSION: ${{ steps.core.outputs.version }}
+
+      - name: Boot live HAOS and open encrypted dev tunnels
+        if: inputs.dev_minutes > 0
+        env:
+          DEVENV_MINUTES: ${{ inputs.dev_minutes }}
+          DEVENV_TARGETS: ${{ github.workspace }}/targets.json
+          HAOS_TEST_IMAGE_PATH: /tmp/haos-test-image.qcow2
+          HAOS_TEST_MODE: embedded
+          HAOS_QEMU_HOST_GATEWAY: 10.0.2.2
+          HAOS_CORE_VERSION: ${{ steps.core.outputs.version }}
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+            -o cloudflared
+          chmod +x cloudflared
+          cp .github/dev-ha-env/hold.py tests/src/e2e/haos_only/test_dev_ha_env_hold.py
+          nohup bash -c '
+            python -m pytest tests/src/e2e/haos_only/test_dev_ha_env_hold.py -v -s --timeout=0
+            status=$?
+            printf "%s\n" "$status" > hold.exit
+            exit "$status"
+          ' > env.log 2>&1 &
+          echo $! > hold.pid
+          for i in $(seq 1 420); do
+            [ -s targets.json ] && break
+            kill -0 "$(cat hold.pid)" 2>/dev/null || break
+            sleep 5
+          done
+          if [ ! -s targets.json ]; then
+            echo 'HAOS dev fixture did not start'
+            tail -100 env.log
+            exit 1
+          fi
+          target() { python -c "import json,sys;print(json.load(open('targets.json'))[sys.argv[1]])" "$1"; }
+          target mcp_path > mcp-path
+          source .github/dev-ha-env/tunnels.sh
+          start_tunnel ha "$(target ha)" || exit 1
+          start_tunnel mcp "$(target mcp)" || exit 1
+          publish_urls
+          rm targets.json
+          grep STATUS env.log | tail -3
+
+      - name: Upload encrypted dev URLs
+        if: inputs.dev_minutes > 0
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-ha-env-urls
+          path: out/dev-ha-env-urls.enc
+          retention-days: 1
+
+      - name: Keep running
+        if: inputs.dev_minutes > 0
+        run: source .github/dev-ha-env/tunnels.sh && keep_running last
+
+      - name: Stop dev processes
+        if: ${{ always() && inputs.dev_minutes > 0 }}
+        run: |
+          for pidfile in hold.pid tunnel-ha.pid tunnel-mcp.pid; do
+            [ ! -f "$pidfile" ] || kill "$(cat "$pidfile")" 2>/dev/null || true
+          done
 
       - name: Extract HA diagnostics from booted qcow2
-        if: always()
+        if: ${{ always() && !(inputs.dev_minutes > 0) }}
         run: |
           sudo chmod +r /boot/vmlinuz-* || true
           mkdir -p /tmp/haos-embedded-diagnostics
@@ -217,13 +332,25 @@ jobs:
           python scripts/redact_diagnostics_secrets.py /tmp/haos-embedded-diagnostics
 
       - name: Upload HAOS embedded diagnostics
-        if: always()
+        if: ${{ always() && !(inputs.dev_minutes > 0) }}
         uses: actions/upload-artifact@v7
         with:
-          name: haos-embedded-diagnostics
+          name: haos-embedded${{ matrix.lane == 'beta' && '-beta' || '' }}-diagnostics
           path: |
             /tmp/haos-embedded-diagnostics/
             /tmp/haos-diagnostics/
             /tmp/haos-e2e-serial.log
           if-no-files-found: warn
           retention-days: 7
+
+  haos-e2e-required:
+    # Preserve the existing required check, now covering both matrix lanes.
+    name: HAOS E2E Tests (embedded)
+    needs: haos-e2e-embedded
+    if: ${{ always() && !(inputs.dev_minutes > 0) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every HAOS lane to pass
+        env:
+          E2E_RESULT: ${{ needs.haos-e2e-embedded.result }}
+        run: test "$E2E_RESULT" = success
