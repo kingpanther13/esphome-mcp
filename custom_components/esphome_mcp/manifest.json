@@ -20,7 +20,6 @@
   "requirements": [
     "anyio>=4.10",
     "authlib>=1.6.11",
-    "certifi>=2026.10.19",
     "cyclopts>=4.0.0",
     "exceptiongroup>=1.2.2",
     "griffelib>=2.0.0",

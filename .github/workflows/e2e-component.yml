@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        lane: ${{ fromJSON(github.event_name == 'pull_request' && '["minimum", "beta"]' || '["selected"]') }}
+        lane: [minimum, beta]
 
     steps:
       - uses: actions/checkout@v7
