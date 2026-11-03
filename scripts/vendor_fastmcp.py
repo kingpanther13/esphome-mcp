@@ -89,6 +89,7 @@ _NOT_DECLARED = frozenset(
         "mcp",
         "mcp-types",
         "websockets",
+        "certifi",
         # New HA Core supplies httpx2. runtime_compat handles older supported Core.
         "httpx2",
         "packaging",

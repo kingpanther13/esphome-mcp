@@ -104,7 +104,6 @@ def test_manifest_requirement_merge_keeps_the_highest_floor() -> None:
     assert vendor_fastmcp._merge_clauses({"<0.5.0", ">=0.4.4"}) == ["<0.5.0", ">=0.4.4"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="PR #198 Core-owned certifi")
 def test_manifest_omits_core_dependencies_from_vendored_metadata(tmp_path: Path) -> None:
     """Upstream requirements must not redeclare packages supplied by HA Core."""
     requirements = (
