@@ -10,6 +10,22 @@ import pytest
 TUNNELS = Path(__file__).resolve().parents[3] / ".github" / "dev-ha-env" / "tunnels.sh"
 
 
+def test_haos_http_seed_accepts_runner_proxy_without_pending_trial() -> None:
+    """Cloudflare's forwarded request must be accepted by the HAOS test image."""
+    import json
+
+    root = Path(__file__).resolve().parents[3]
+    store = json.loads((root / "tests/initial_test_state/.storage/http").read_text())
+    assert store["version"] == 2
+    assert store["data"]["pending"] is None
+    assert store["data"]["yaml_migration_done"] is True
+    stable = store["data"]["stable"]
+    assert stable["server_port"] == 8123
+    assert stable["use_x_forwarded_for"] is True
+    assert "10.0.2.2" in stable["trusted_proxies"]
+    assert "0.0.0.0/0" not in stable["trusted_proxies"]
+
+
 @pytest.mark.parametrize("exit_status, expected", [("0", 0), ("7", 7), (None, 1)])
 def test_dev_holder_reports_exit_status(
     tmp_path: Path, exit_status: str | None, expected: int
