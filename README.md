@@ -14,13 +14,15 @@ use, including Nabu Casa Remote UI.
 - MCP tool names with the `esp_` prefix.
 - Searchable Home Assistant ESPHome registry context.
 - Device Builder device, YAML, log, validation, and firmware tools.
+- Access to the installed Device Builder's native MCP tools and schemas.
 - Supervisor-backed ESPHome add-on lifecycle and config management.
 - Webhook access with either a secret URL or Home Assistant administrator sign-in.
 
 ## Requirements
 
 - Home Assistant `2026.10.2` or newer.
-- HACS, if installing through the Home Assistant Community Store.
+- Home Assistant Marketplace on `2026.11` or newer, or HACS on `2026.10`,
+  if installing through the community integration store.
 - Home Assistant OS or Supervised Home Assistant for ESPHome add-on and Device
   Builder tools. These tools require Supervisor.
 - The official ESPHome Device Builder add-on installed and running for the
@@ -28,13 +30,22 @@ use, including Nabu Casa Remote UI.
 - Network/package-install access on first setup so Home Assistant can install
   any missing packages listed in the component manifest.
 
+On older supported Core versions that do not provide a compatible `httpx2`,
+setup also installs that dependency through Home Assistant's requirement manager.
+Core's compatible version is reused when present.
+
 The Home Assistant registry tools can still report ESPHome integration devices
 and entities anywhere this custom component can run, but the add-on and Device
 Builder tools need Supervisor.
 
-## HACS Installation
+## Marketplace / HACS Installation
 
-1. In HACS, open **Custom repositories**.
+On Home Assistant `2026.11` and newer, use the built-in **Marketplace** and
+complete its first-run warning and any requested GitHub connection in the UI.
+On `2026.10`, install and use **HACS**. The repository and component format is
+the same for both stores.
+
+1. In Marketplace or HACS, open **Custom repositories**.
 2. Add this repository URL:
 
    ```text
@@ -47,10 +58,10 @@ Builder tools need Supervisor.
 6. Go to **Settings** > **Devices & services** > **Add integration**.
 7. Search for **ESPHome MCP** and create the integration entry.
 
-This repository is release-backed for HACS installs. The release workflow
+This repository is release-backed for Marketplace and HACS installs. The release workflow
 publishes the component manifest version as a GitHub Release tag such as
-`v1.0.0`, which is the version HACS displays. Do not install a
-seven-character commit version such as `99cdab0`. If HACS has cached an old
+`v1.0.0`, which is the version the store displays. Do not install a
+seven-character commit version such as `99cdab0`. If the store has cached an old
 commit-only entry, refresh the custom repository before installing.
 
 After setup, Home Assistant starts the embedded MCP server and registers the
@@ -119,6 +130,53 @@ container-port routing is available only when explicitly requested with `port`.
 
 ### Device Builder
 
+Use `esp_native_tools` to discover the running Device Builder's native tools,
+then `esp_native_call` to use them through the same authenticated ESPHome MCP
+connection. No additional server URL or login is needed: requests pass through
+Supervisor ingress to the add-on's `/api/mcp` endpoint.
+
+| Tool | Purpose |
+| --- | --- |
+| `esp_native_tools` | Return the installed native catalog and input schemas; pass `tool` to select one schema, and `slug` to select an add-on. |
+| `esp_native_call` | Call a discovered `name` with its `arguments`, preserving the native MCP reply in `result`. |
+
+The native API is the preferred path for component/board discovery, structured
+automation editing, and config edits with conflict detection. For example:
+
+```text
+esp_native_tools(tool="get_config")
+esp_native_call(name="get_config", arguments={"configuration": "kitchen.yaml"})
+esp_native_tools(tool="update_config")
+esp_native_call(name="update_config", arguments={
+  "configuration": "kitchen.yaml",
+  "content": "<revised YAML>",
+  "expected": "<exact text returned by get_config>"
+})
+```
+
+Tool availability and required arguments come from the installed add-on, rather
+than a copied catalog. Current native capabilities include `search_components`,
+`get_component`, `search_boards`, `list_automations`, `get_available_automations`,
+`get_automation_docs`, `upsert_automation`, and `delete_automation`, alongside
+config, secrets, validation, and firmware tools. Always discover the schema first.
+See the [official API contract](https://github.com/esphome/device-builder/blob/1.25.0/docs/API.md#mcp-endpoint-post-apimcp).
+
+Native tool errors return `success: false` and retain `result.isError` and
+`result.content`; JSON-RPC errors retain `native_error`. Writes are never retried
+or replayed through WebSocket. If a call times out or loses its connection, read
+back the state before retrying: the write may have completed. Because
+`esp_native_call` can invoke writes and firmware installs, it is advertised as
+potentially destructive even when the selected native tool only reads.
+
+Older add-ons without `/api/mcp` return an actionable capability error from the
+native tools. Existing tools remain available. `esp_get_yaml` uses native
+`get_config` for bare `.yaml` filenames when available and preserves its existing
+`content` response; it falls back only when the endpoint/tool is absent. Other
+filename forms retain the WebSocket route. Authentication errors, malformed
+replies, and timeouts never cause a fallback.
+
+The following tools retain behavior that differs from the native API:
+
 | Tool | Purpose |
 | --- | --- |
 | `esp_dashboard_devices` | List and search configured and importable ESPHome Device Builder devices. |
@@ -133,11 +191,21 @@ container-port routing is available only when explicitly requested with `port`.
 | `esp_get_firmware_job` | Return one firmware job by ID. |
 | `esp_follow_firmware_job` | Follow one firmware job stream and return collected output. |
 
-These tools target ESPHome Device Builder's current multiplexed `/ws` API,
+Except for the compatible native reads described above, these tools target
+ESPHome Device Builder's current multiplexed `/ws` API,
 including `devices/list`, `yaml/search`, `devices/get_config`,
 `devices/update_config`, `devices/validate`, `devices/logs`,
 `devices/stop_stream`, `firmware/compile`, `firmware/install`,
 `firmware/get_jobs`, `firmware/get_job`, and `firmware/follow_job`.
+
+They preserve dashboard filters/importable devices, cross-file YAML search,
+`allow_wipe` editing, streaming validation/log output, explicit compile/install
+flags (`force_local`, `bootloader`), and firmware-job listing/following. The
+existing `esp_update_yaml` retains its legacy wipe guards; use native
+`update_config` when you need the `expected` stale-write check. HA registry
+context, Supervisor management, and supporting-file creation remain local tools.
+
+For repository-hosted live testing, see [the HAOS dev environment](docs/dev-ha-env.md).
 
 ### Configuration Folders and Supporting Files
 

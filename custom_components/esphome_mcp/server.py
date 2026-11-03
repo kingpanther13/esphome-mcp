@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Annotated, Any, Literal
 
 from homeassistant.core import HomeAssistant
@@ -13,11 +13,13 @@ from pydantic import Field
 
 from ._vendor.fastmcp import FastMCP
 from .addon_tools import (
+    call_native_device_builder_tool,
     follow_device_builder_firmware_job,
     get_device_builder_firmware_job,
     list_device_builder_devices,
     list_device_builder_firmware_jobs,
     manage_esphome_addon,
+    native_device_builder_tools,
     queue_device_builder_firmware_job,
     read_device_builder_config,
     run_device_builder_stream,
@@ -39,13 +41,64 @@ class EspHomeMCPServer:
             version=VERSION,
             instructions=(
                 "ESPHome MCP exposes ESPHome device and entity context from "
-                "Home Assistant. Tool names use the esp_ prefix."
+                "Home Assistant. Tool names use the esp_ prefix. Discover Device Builder's "
+                "native tools and schemas with esp_native_tools, then use esp_native_call "
+                "for native config editing, component/board discovery and structured automations. "
+                "Existing tools add HA context, supporting files, search, logs "
+                "and firmware options."
             ),
         )
         self._register_tools()
 
     def _register_tools(self) -> None:
         """Register the initial ESPHome tool set."""
+
+        @self.mcp.tool(
+            name="esp_native_tools",
+            annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True},
+        )
+        async def esp_native_tools(
+            tool: str | None = None,
+            slug: str | None = None,
+            timeout: Annotated[int, Field(ge=1, le=1800)] = 60,
+        ) -> dict[str, Any]:
+            """Discover this Device Builder's native MCP tools and exact input schemas.
+
+            Omit tool for the catalog, or name one for its full schema. Use esp_native_call
+            with the returned name/arguments for component and board discovery, structured
+            automations, guarded config edits, secrets and native firmware operations.
+            Availability depends on the installed Device Builder. Existing esp_ tools remain
+            available on older add-ons without native MCP. slug defaults to auto-detection.
+            """
+            return await _run_on_hass(
+                self.hass,
+                native_device_builder_tools(self.hass, tool=tool, slug=slug, timeout=timeout),
+            )
+
+        @self.mcp.tool(
+            name="esp_native_call",
+            annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False},
+        )
+        async def esp_native_call(
+            name: str,
+            arguments: dict[str, Any] | None = None,
+            slug: str | None = None,
+            timeout: Annotated[int, Field(ge=1, le=1800)] = 60,
+        ) -> dict[str, Any]:
+            """Call a native tool using the exact schema from esp_native_tools.
+
+            This can change configs/secrets or flash devices. Read before editing and pass
+            the original content as expected when required by the native schema. The native
+            MCP result is preserved in result, including isError/content; success is false
+            for errors. Calls are never retried or replayed through WebSocket. After timeout
+            or connection failure, read back the state before considering another write.
+            """
+            return await _run_on_hass(
+                self.hass,
+                call_native_device_builder_tool(
+                    self.hass, name=name, arguments=arguments, slug=slug, timeout=timeout
+                ),
+            )
 
         @self.mcp.tool(name="esp_overview")
         async def esp_overview() -> dict[str, Any]:
@@ -768,8 +821,14 @@ async def _async_snapshot(hass: HomeAssistant) -> dict[str, Any]:
     entity_registry = er.async_get(hass)
 
     devices = []
-    for device in device_registry.devices.values():
-        config_entries = set(getattr(device, "config_entries", set()) or set())
+    registered_devices = device_registry.devices
+    if isinstance(registered_devices, Mapping):
+        registered_devices = registered_devices.values()
+    for device in registered_devices:
+        if hasattr(device, "config_entry_id"):
+            config_entries = {device.config_entry_id} if device.config_entry_id else set()
+        else:
+            config_entries = set(getattr(device, "config_entries", set()) or set())
         identifiers = sorted([list(item) for item in getattr(device, "identifiers", set())])
         if not (config_entries & entry_ids or any(item[0] == "esphome" for item in identifiers)):
             continue

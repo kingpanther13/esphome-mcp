@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[3]
 COMPONENT = ROOT / "custom_components" / "esphome_mcp"
 
 EXPECTED_ESP_TOOLS = {
+    "esp_native_tools",
+    "esp_native_call",
     "esp_overview",
     "esp_list_devices",
     "esp_list_entities",
@@ -147,6 +149,38 @@ def test_mcp_server_registers_every_current_esp_tool(
     assert set(server.mcp.tools) == EXPECTED_ESP_TOOLS
     assert server.mcp.kwargs["name"] == "esphome-mcp"
     assert server.mcp.kwargs["version"] == module.VERSION
+
+
+def test_native_tools_run_on_hass_and_call_is_conservatively_annotated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Discovery is read-only, but the generic native caller can write or flash."""
+    from unittest.mock import AsyncMock
+
+    module = _load_server_module(monkeypatch)
+    bridge = AsyncMock(side_effect=_run_inline)
+    monkeypatch.setattr(module, "_run_on_hass", bridge)
+    discover = AsyncMock(return_value={"success": True, "tools": []})
+    call = AsyncMock(return_value={"success": True, "result": {"content": []}})
+    monkeypatch.setattr(module, "native_device_builder_tools", discover)
+    monkeypatch.setattr(module, "call_native_device_builder_tool", call)
+    hass = SimpleNamespace(loop=None)
+    server = module.EspHomeMCPServer(hass)
+    listing = server.mcp.tools["esp_native_tools"]
+    caller = server.mcp.tools["esp_native_call"]
+    assert listing.annotations["readOnlyHint"] is True
+    assert caller.annotations == {
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+    }
+    assert _run(listing.func(tool="get_config", slug="addon", timeout=90))["success"] is True
+    assert _run(caller.func(name="get_config", arguments={"configuration": "x.yaml"}))["success"]
+    discover.assert_awaited_once_with(hass, tool="get_config", slug="addon", timeout=90)
+    call.assert_awaited_once_with(
+        hass, name="get_config", arguments={"configuration": "x.yaml"}, slug=None, timeout=60
+    )
+    assert bridge.await_count == 2
 
 
 def test_ha_search_tools_filter_snapshot_and_report_overview(
@@ -558,8 +592,10 @@ def test_device_builder_tool_wrappers_forward_expected_arguments(
     }
 
 
+@pytest.mark.parametrize("modern_devices", [False, True])
 def test_snapshot_collects_only_esphome_registry_records(
     monkeypatch: pytest.MonkeyPatch,
+    modern_devices: bool,
 ) -> None:
     """Registry snapshots include ESPHome records and ignore unrelated HA records."""
     module = _load_server_module(monkeypatch)
@@ -684,9 +720,32 @@ def test_snapshot_collects_only_esphome_registry_records(
                 return None
             return SimpleNamespace(state=states[entity_id])
 
+    registry_devices = devices
+    if modern_devices:
+
+        class ModernDevice(SimpleNamespace):
+            @property
+            def config_entries(self):
+                raise AssertionError("Use config_entry_id on modern HA")
+
+        modern_entries = []
+        for device in devices.values():
+            fields = vars(device).copy()
+            fields["config_entry_id"] = next(iter(fields.pop("config_entries")))
+            modern_entries.append(ModernDevice(**fields))
+
+        class DeviceCollection:
+            def __iter__(self):
+                return iter(modern_entries)
+
+            def values(self):
+                raise AssertionError("Iterate modern registry devices directly")
+
+        registry_devices = DeviceCollection()
+
     hass = SimpleNamespace(
         config_entries=_FakeConfigEntries(),
-        device_registry=SimpleNamespace(devices=devices),
+        device_registry=SimpleNamespace(devices=registry_devices),
         entity_registry=SimpleNamespace(entities=entities),
         states=_FakeStates(),
     )

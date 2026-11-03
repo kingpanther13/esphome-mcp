@@ -121,7 +121,9 @@ def test_manifest_requirements_cover_the_vendored_runtime() -> None:
 
     assert requirements == vendor_fastmcp.manifest_requirements(COMPONENT / "_vendor")
     names = {Requirement(requirement).name.lower() for requirement in requirements}
-    assert {"starlette", "uvicorn", "sse-starlette", "pydantic", "httpx2"} <= names
+    assert {"starlette", "uvicorn", "sse-starlette", "pydantic"} <= names
+    # Core owns httpx2; test_runtime_compat covers installation on older Core.
+    assert "httpx2" not in names
     # Vendored packages and the contested shared websockets copy stay undeclared.
     assert not names & {"fastmcp", "fastmcp-slim", "mcp", "mcp-types", "websockets", "ha-mcp"}
     for requirement in map(Requirement, requirements):
@@ -212,7 +214,7 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
     assert "## What You Get" in readme
     assert "## Requirements" in readme
-    assert "## HACS Installation" in readme
+    assert "## Marketplace / HACS Installation" in readme
     assert "https://github.com/kingpanther13/esphome-mcp" in readme
     assert "## Connecting An MCP Client" in readme
     assert "## Tools" in readme
