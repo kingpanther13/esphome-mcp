@@ -89,7 +89,7 @@ revive_tunnels() {
 # urls_changed=true so the workflow uploads the URLs artifact again; with
 # "last", keep going and leave the new URLs in the job log only.
 keep_running() {
-  while kill -0 "$(cat hold.pid)" 2>/dev/null; do
+  while [ ! -f hold.exit ] && kill -0 "$(cat hold.pid)" 2>/dev/null; do
     sleep 60
     grep -E "STATUS|Traceback|Error" env.log | tail -3 || true
     URLS_CHANGED=""
@@ -100,4 +100,9 @@ keep_running() {
     fi
   done
   tail -80 env.log
+  if [ ! -f hold.exit ]; then
+    echo "::error::The dev holder stopped unexpectedly without an exit status."
+    return 1
+  fi
+  return "$(cat hold.exit)"
 }

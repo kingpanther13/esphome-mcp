@@ -225,8 +225,12 @@ jobs:
             -o cloudflared
           chmod +x cloudflared
           cp .github/dev-ha-env/hold.py tests/src/e2e/haos_only/test_dev_ha_env_hold.py
-          nohup python -m pytest tests/src/e2e/haos_only/test_dev_ha_env_hold.py \
-            -v -s --timeout=0 > env.log 2>&1 &
+          nohup bash -c '
+            python -m pytest tests/src/e2e/haos_only/test_dev_ha_env_hold.py -v -s --timeout=0
+            status=$?
+            printf "%s\n" "$status" > hold.exit
+            exit "$status"
+          ' > env.log 2>&1 &
           echo $! > hold.pid
           for i in $(seq 1 420); do
             [ -s targets.json ] && break
