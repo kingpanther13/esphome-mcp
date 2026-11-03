@@ -77,6 +77,30 @@ jobs:
           python scripts/vendor_fastmcp.py
           git status --porcelain -- custom_components/esphome_mcp
           test -z "$(git status --porcelain -- custom_components/esphome_mcp)"
+      - name: Simulate PR 198 without changing its branch
+        run: |
+          set -euo pipefail
+          sed -i 's/^fastmcp-slim==.*/fastmcp-slim==4.1.4/' custom_components/esphome_mcp/_vendor/requirements.txt
+          python scripts/vendor_fastmcp.py
+          git diff --binary > "$RUNNER_TEMP/candidate-vendoring.patch"
+          python scripts/vendor_fastmcp.py
+          git diff --binary > "$RUNNER_TEMP/candidate-vendoring-again.patch"
+          cmp "$RUNNER_TEMP/candidate-vendoring.patch" "$RUNNER_TEMP/candidate-vendoring-again.patch"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          requirements = json.loads(Path('custom_components/esphome_mcp/manifest.json').read_text())['requirements']
+          assert 'openapi-pydantic>=0.6.0' in requirements, requirements
+          assert not any(item.startswith('beartype') for item in requirements), requirements
+          PY
+          python -m pip install -e '.[dev]'
+          pytest tests/src/unit
+      - name: Save candidate regeneration evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: fastmcp-4.1.4-regeneration
+          path: ${{ runner.temp }}/candidate-vendoring.patch
+          retention-days: 3
 
   unit:
     name: Unit Tests
