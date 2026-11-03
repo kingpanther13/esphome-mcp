@@ -214,7 +214,7 @@ def test_readme_has_hacs_facing_usage_information() -> None:
 
     assert "## What You Get" in readme
     assert "## Requirements" in readme
-    assert "## HACS Installation" in readme
+    assert "## Marketplace / HACS Installation" in readme
     assert "https://github.com/kingpanther13/esphome-mcp" in readme
     assert "## Connecting An MCP Client" in readme
     assert "## Tools" in readme

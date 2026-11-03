@@ -146,24 +146,29 @@ def login_for_token(
 
 def upgrade_core(base_url: str, token: str, version: str, *, timeout: float = 600) -> None:
     """Update Core in the running VM, then require the requested version's readback."""
+    from websockets.exceptions import ConnectionClosed
+
     config_url = f"{base_url}/api/config"
     current = _http_json("GET", config_url, token=token)
     if current.get("version") == version:
         return
     LOG.info("Updating running HA Core from %s to %s", current.get("version"), version)
     try:
-        result = _http_json(
-            "POST",
-            f"{base_url}/api/hassio/core/update",
-            token=token,
-            body={"version": version},
-            timeout=30,
+        result = websocket_command(
+            base_url,
+            token,
+            {
+                "type": "supervisor/api",
+                "endpoint": "/core/update",
+                "method": "post",
+                "data": {"version": version},
+                "timeout": 600,
+            },
+            timeout=60,
         )
         if result.get("result") == "error":
             raise RuntimeError(f"Core update refused: {result}")
-    except urllib.error.HTTPError:
-        raise
-    except (urllib.error.URLError, OSError):
+    except (ConnectionClosed, OSError, TimeoutError):
         # The accepted update may restart Core before the request can answer.
         # Never submit it twice; check the running version after reconnecting.
         LOG.info("Core update connection closed; waiting for version readback")
@@ -177,7 +182,7 @@ def upgrade_core(base_url: str, token: str, version: str, *, timeout: float = 60
         except (urllib.error.URLError, OSError):
             pass
         time.sleep(5)
-    raise TimeoutError(f"Core did not reach {version}; last config: {current}")
+    raise TimeoutError(f"Core did not reach {version}; last version: {current.get('version')}")
 
 
 def enable_config_entry(

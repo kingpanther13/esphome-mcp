@@ -46,4 +46,13 @@ ingress. All test execution and builds run on repository branches in Actions.
 
 ## Evidence
 
-Pending remote validation and live HAOS run.
+- Remote tests-first run confirmed the missing native gateway, then subsequent
+  unit and host-device runs exercised routing, error handling and compatibility.
+- Core 2026.10.2: all 21 HAOS E2E cases passed in Actions run 41658345705,
+  including native catalog, guarded YAML and structured-automation roundtrips.
+- Retained dev run 41655097072 was upgraded in place to Core 2026.11.0b4.
+  Native edits, stale-write refusal, automation insert/delete with successful
+  validation, HA overview and YAML search passed through the live MCP endpoint;
+  the fixture was restored exactly. Marketplace and ESPHome MCP loaded after
+  the migration. No production instance or local test runner was used.
+- Use the PR's current-head checks and review threads for final CI/review status.
