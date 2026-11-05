@@ -20,7 +20,7 @@ use, including Nabu Casa Remote UI.
 
 ## Requirements
 
-- Home Assistant `2026.10.4` or newer.
+- Home Assistant `2026.11.0` or newer.
 - Home Assistant Marketplace on `2026.11` or newer, or HACS on `2026.10`,
   if installing through the community integration store.
 - Home Assistant OS or Supervised Home Assistant for ESPHome add-on and Device
