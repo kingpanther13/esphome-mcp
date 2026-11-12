@@ -19,18 +19,18 @@
   "issue_tracker": "https://github.com/kingpanther13/esphome-mcp/issues",
   "requirements": [
     "anyio>=4.10",
-    "authlib>=1.6.11",
+    "authlib>=1.9.5",
     "cyclopts>=4.0.0",
     "exceptiongroup>=1.2.2",
     "griffelib>=2.0.0",
-    "joserfc>=1.5.0",
+    "joserfc>=1.7.6",
     "jsonref>=1.1.0",
     "jsonschema>=4.20.0",
     "jsonschema-path>=0.3.4",
     "openapi-pydantic>=0.6.0",
     "opentelemetry-api>=1.28.0",
     "platformdirs>=4.0.0",
-    "py-key-value-aio[filetree,memory]<0.5.0,>=0.4.4",
+    "py-key-value-aio[filetree,memory]<0.5.0,>=0.4.6",
     "pydantic[email]>=2.12.0",
     "pydantic-settings>=2.0.0",
     "pyperclip>=1.9.0",
@@ -44,5 +44,5 @@
     "uvicorn>=0.35",
     "watchfiles>=1.0.0"
   ],
-  "version": "2.2.1"
+  "version": "2.2.2"
 }
