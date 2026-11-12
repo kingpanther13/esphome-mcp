@@ -18,6 +18,7 @@ from custom_components.esphome_mcp._vendor.fastmcp.resources import (
     ResourceResult,
     ResourceTemplate,
 )
+from custom_components.esphome_mcp._vendor.fastmcp.resources.template import template_param_key
 from custom_components.esphome_mcp._vendor.fastmcp.server.dependencies import get_http_headers
 from custom_components.esphome_mcp._vendor.fastmcp.tools.base import Tool, ToolResult
 from custom_components.esphome_mcp._vendor.fastmcp.tools.function_tool import _strict_input_validation
@@ -451,7 +452,10 @@ class OpenAPIResourceTemplate(ResourceTemplate):
             if parameter.name in params:
                 arguments[argument_name] = params[parameter.name]
                 continue
-            normalized_name = parameter.name.replace("-", "_")
+            # The matcher keys params by the sanitized group name; try that
+            # for parameter names the URI grammar allows but Python does not
+            # (e.g. `{$top}` matches as `_top`).
+            normalized_name = template_param_key(parameter.name)
             if normalized_name in params:
                 arguments[argument_name] = params[normalized_name]
 
