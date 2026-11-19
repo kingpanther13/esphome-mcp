@@ -32,13 +32,15 @@ from custom_components.esphome_mcp._vendor.fastmcp.server.providers.base import 
 from custom_components.esphome_mcp._vendor.fastmcp.server.providers.fastmcp_provider import FastMCPProvider
 from custom_components.esphome_mcp._vendor.fastmcp.server.providers.filesystem import FileSystemProvider
 from custom_components.esphome_mcp._vendor.fastmcp.server.providers.local_provider import LocalProvider
-from custom_components.esphome_mcp._vendor.fastmcp.server.providers.skills import (
-    ClaudeSkillsProvider,
-    SkillProvider,
-    SkillsDirectoryProvider,
-)
 
 if TYPE_CHECKING:
+    from custom_components.esphome_mcp._vendor.fastmcp.server.providers.skills import (
+        ClaudeSkillsProvider as ClaudeSkillsProvider,
+    )
+    from custom_components.esphome_mcp._vendor.fastmcp.server.providers.skills import SkillProvider as SkillProvider
+    from custom_components.esphome_mcp._vendor.fastmcp.server.providers.skills import (
+        SkillsDirectoryProvider as SkillsDirectoryProvider,
+    )
     from custom_components.esphome_mcp._vendor.fastmcp.server.providers.openapi import OpenAPIProvider as OpenAPIProvider
     from custom_components.esphome_mcp._vendor.fastmcp.server.providers.proxy import ProxyProvider as ProxyProvider
 
@@ -66,4 +68,9 @@ def __getattr__(name: str) -> object:
         from custom_components.esphome_mcp._vendor.fastmcp.server.providers.openapi import OpenAPIProvider
 
         return OpenAPIProvider
+    if name in ("SkillProvider", "SkillsDirectoryProvider", "ClaudeSkillsProvider"):
+        # Deprecated providers; constructing one warns with the replacement.
+        from custom_components.esphome_mcp._vendor.fastmcp.server.providers import skills
+
+        return getattr(skills, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
