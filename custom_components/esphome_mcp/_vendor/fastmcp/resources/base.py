@@ -12,6 +12,8 @@ from custom_components.esphome_mcp._vendor import mcp_types
 if TYPE_CHECKING:
     from custom_components.esphome_mcp._vendor.fastmcp.resources.function_resource import FunctionResource
 
+from typing import Self
+
 import pydantic
 import pydantic_core
 from custom_components.esphome_mcp._vendor.mcp_types import Annotations, Icon
@@ -25,7 +27,6 @@ from pydantic import (
     model_validator,
 )
 from pydantic.json_schema import SkipJsonSchema
-from typing_extensions import Self
 
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.authorization import AuthCheck
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.components import FastMCPComponent, public_result_meta
