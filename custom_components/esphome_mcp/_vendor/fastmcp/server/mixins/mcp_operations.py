@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from custom_components.esphome_mcp._vendor import mcp_types
 from custom_components.esphome_mcp._vendor.mcp.server.context import ServerRequestContext
@@ -47,7 +46,7 @@ from custom_components.esphome_mcp._vendor.fastmcp.utilities.async_utils import 
 )
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.json_schema import is_object_schema
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.logging import get_logger
-from custom_components.esphome_mcp._vendor.fastmcp.utilities.pagination import paginate_sequence
+from custom_components.esphome_mcp._vendor.fastmcp.utilities.pagination import paginate_request
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.versions import VersionSpec, dedupe_with_versions
 
 if TYPE_CHECKING:
@@ -56,25 +55,6 @@ if TYPE_CHECKING:
     from custom_components.esphome_mcp._vendor.fastmcp.server.server import FastMCP
 
 logger = get_logger(__name__.removeprefix("custom_components.esphome_mcp._vendor."))
-
-PaginateT = TypeVar("PaginateT")
-
-
-def _apply_pagination(
-    items: Sequence[PaginateT],
-    cursor: str | None,
-    page_size: int | None,
-) -> tuple[list[PaginateT], str | None]:
-    """Apply pagination to items, raising MCPError for invalid cursors.
-
-    If page_size is None, returns all items without pagination.
-    """
-    if page_size is None:
-        return list(items), None
-    try:
-        return paginate_sequence(items, cursor, page_size)
-    except ValueError as e:
-        raise MCPError(code=INVALID_PARAMS, message=str(e)) from e
 
 
 def _normalize_call_tool_result(
@@ -209,7 +189,7 @@ class MCPOperationsMixin:
                 }
             )
             cursor = params.cursor if params else None
-            page, next_cursor = _apply_pagination(
+            page, next_cursor = paginate_request(
                 sdk_tools, cursor, self._list_page_size
             )
             return mcp_types.ListToolsResult(tools=page, next_cursor=next_cursor)
@@ -231,7 +211,7 @@ class MCPOperationsMixin:
                 for resource in resources
             ]
             cursor = params.cursor if params else None
-            page, next_cursor = _apply_pagination(
+            page, next_cursor = paginate_request(
                 sdk_resources, cursor, self._list_page_size
             )
             return mcp_types.ListResourcesResult(
@@ -255,7 +235,7 @@ class MCPOperationsMixin:
                 for template in templates
             ]
             cursor = params.cursor if params else None
-            page, next_cursor = _apply_pagination(
+            page, next_cursor = paginate_request(
                 sdk_templates, cursor, self._list_page_size
             )
             return mcp_types.ListResourceTemplatesResult(
@@ -276,7 +256,7 @@ class MCPOperationsMixin:
             )
             sdk_prompts = [prompt.to_mcp_prompt(name=prompt.name) for prompt in prompts]
             cursor = params.cursor if params else None
-            page, next_cursor = _apply_pagination(
+            page, next_cursor = paginate_request(
                 sdk_prompts, cursor, self._list_page_size
             )
             return mcp_types.ListPromptsResult(prompts=page, next_cursor=next_cursor)

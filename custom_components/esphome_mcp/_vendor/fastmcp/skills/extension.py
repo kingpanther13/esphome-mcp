@@ -13,7 +13,6 @@ from custom_components.esphome_mcp._vendor.mcp_types.version import MODERN_PROTO
 
 from custom_components.esphome_mcp._vendor.fastmcp.server.context import Context
 from custom_components.esphome_mcp._vendor.fastmcp.server.extensions import MethodBinding, ServerExtension
-from custom_components.esphome_mcp._vendor.fastmcp.server.mixins.mcp_operations import _apply_pagination
 from custom_components.esphome_mcp._vendor.fastmcp.server.providers.base import Provider
 from custom_components.esphome_mcp._vendor.fastmcp.skills._composition import _mounted_source
 from custom_components.esphome_mcp._vendor.fastmcp.skills._constants import SKILLS_EXTENSION_ID
@@ -27,6 +26,7 @@ from custom_components.esphome_mcp._vendor.fastmcp.skills.models import (
 )
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.async_utils import gather
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.logging import get_logger
+from custom_components.esphome_mcp._vendor.fastmcp.utilities.pagination import paginate_request
 
 if TYPE_CHECKING:
     from custom_components.esphome_mcp._vendor.fastmcp.server.server import FastMCP
@@ -202,7 +202,7 @@ class SkillsExtension(ServerExtension):
         params: ListSkillsParams,
     ) -> ListSkillsResult:
         entries = await self._list_entries(context)
-        page, next_cursor = _apply_pagination(
+        page, next_cursor = paginate_request(
             entries, params.cursor, self.server._list_page_size
         )
         return ListSkillsResult(skills=page, next_cursor=next_cursor)
