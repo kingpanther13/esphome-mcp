@@ -41,7 +41,7 @@ from custom_components.esphome_mcp._vendor.fastmcp.tools.base import (
     ToolResult,
 )
 from custom_components.esphome_mcp._vendor.fastmcp.utilities.logging import get_logger
-from custom_components.esphome_mcp._vendor.fastmcp.utilities.types import FastMCPBaseModel
+from custom_components.esphome_mcp._vendor.fastmcp.utilities.types import CacheScope, FastMCPBaseModel
 
 logger: Logger = get_logger(name=__name__.removeprefix("custom_components.esphome_mcp._vendor."))
 
@@ -103,6 +103,8 @@ class CacheableResourceResult(FastMCPBaseModel):
 
     contents: list[CacheableResourceContent]
     meta: dict[str, Any] | None = None
+    ttl_ms: int | None = None
+    cache_scope: CacheScope | None = None
 
     def get_size(self) -> int:
         return len(self.model_dump_json())
@@ -124,6 +126,8 @@ class CacheableResourceResult(FastMCPBaseModel):
                 for item in value.contents
             ],
             meta=value.meta,
+            ttl_ms=value.ttl_ms,
+            cache_scope=value.cache_scope,
         )
 
     def unwrap(self) -> ResourceResult:
@@ -139,6 +143,8 @@ class CacheableResourceResult(FastMCPBaseModel):
                 for item in self.contents
             ],
             meta=self.meta,
+            ttl_ms=self.ttl_ms,
+            cache_scope=self.cache_scope,
         )
 
 
